@@ -17,3 +17,5 @@ def test_unknown_subcommand_exits_2():
     result = subprocess.run([sys.executable, str(AF), "nonsense"],
                             capture_output=True, text=True)
     assert result.returncode == 2
+    # Distinguishes parser rejection from `python3 <missing-file>`, which also exits 2.
+    assert "invalid choice" in result.stderr
