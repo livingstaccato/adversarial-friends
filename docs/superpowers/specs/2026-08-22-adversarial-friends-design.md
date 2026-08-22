@@ -401,19 +401,38 @@ Normalized `effort`, verified 2026-08-22:
 | Normalized | claude | codex | agy | opencode |
 |---|---|---|---|---|
 | model | `--model` | `-m` | `--model` | `-m provider/model` |
-| low | `--effort low` | `-c model_reasoning_effort=low` | `--effort low` | `--variant minimal` |
-| medium | `--effort medium` | `-c model_reasoning_effort=medium` | `--effort medium` | `--variant medium` * |
-| high | `--effort high` | `-c model_reasoning_effort=high` | `--effort high` | `--variant high` |
+| low | `--effort low` | `-c model_reasoning_effort=low` | `--effort low` † | `--variant minimal` |
+| medium | `--effort medium` | `-c model_reasoning_effort=medium` | `--effort medium` † | `--variant medium` * |
+| high | `--effort high` | `-c model_reasoning_effort=high` | `--effort high` † | `--variant high` |
 | xhigh | `--effort xhigh` | `-c model_reasoning_effort=xhigh` | unsupported | unsupported |
 | max | `--effort max` | unsupported | unsupported | `--variant max` |
 
 \* opencode's `--variant` is provider-specific; only `minimal`, `high`, `max` appear in
 its help. `medium` must be probed per provider before the adapter claims it.
 
-**`agy` exposes effort twice** — baked into model ids (`gemini-3.1-pro-high`,
-`gemini-3.7-flash-low`) and as `--effort`. Precedence when they disagree is unknown.
-Until probed, the agy adapter emits `--effort` only and rejects a `model` value
-carrying an effort suffix.
+† **agy's effort ladder is per-model, not per-CLI.** Probed 2026-08-22:
+
+| Invocation | Result |
+|---|---|
+| `--model gemini-3.1-pro-high --effort low` | error, exit 1, before any call: "conflicts with" |
+| `--model gemini-3.1-pro-high --effort high` | accepted |
+| `--model claude-sonnet-4-6 --effort high` | error: "`--effort` is not supported for model" |
+| `--effort medium` (default model) | error: `gemini-3.1-pro has no "medium" effort (available: low, high)` |
+
+So there is **no precedence to resolve**: agy rejects a disagreement outright rather than
+silently choosing, which is the behavior to want. Two consequences the flat table above
+cannot express:
+
+- `gemini-3.1-pro` offers only `low` and `high`; `gemini-3.7-flash` offers
+  `low`/`medium`/`high`; `claude-sonnet-4-6` offers none. A normalized `effort` is
+  therefore only meaningful against a chosen model.
+- `agy models` encodes each ladder in its id suffixes, so the adapter derives the valid
+  set at roster-resolve time rather than assuming one. The adapter emits either a
+  suffixed model id or `--effort`, never both unless they agree, and validates the
+  requested level against that model's ladder before spawning.
+
+This generalizes beyond agy: normalized effort is not portable **within** a single CLI,
+let alone across them, which sharpens §10.1's warning about `thorough` being uneven.
 
 Unsupported knobs produce a recorded downgrade in `run.json` and a header line.
 
@@ -786,7 +805,9 @@ Exit codes and their precedence: §7.6.
 7. **`--merge=exact` under-merges.** Two friends describing one defect in different
    words produce two claims, inflating apparent finding count and costing a round.
    `--merge=orchestrator` fixes it at the cost of a halt.
-8. **agy's dual effort surface is unprobed** (§10).
+8. **opencode's `--variant` ladder is still unprobed** and, by analogy with agy (§10),
+   is likely per-provider rather than per-CLI. The adapter must probe before claiming
+   any level beyond the `minimal`/`high`/`max` its help documents.
 
 ## 19. Revision history
 
@@ -840,3 +861,4 @@ Also folded in from v2's §19.1 backlog and from operating the CLIs directly:
 | `claude -p --permission-mode plan` writes to a plan file | §11.2; read-only is `--tools` |
 | `-p`/`-s` collide across CLIs | §11.2 adapters spell flags long |
 | CLI-internal timeouts unreconciled; 300s too short | §11.3 default 900s, runner deadline strictly greater |
+| agy's dual effort surface (v2 §19.1 item 3) | Probed and resolved: no precedence, agy errors on conflict; ladders are per-model and derived from `agy models` (§10) |
