@@ -417,8 +417,7 @@ same need on demand.
 ## 11. Adapters
 
 One declarative record per CLI in `adapters/`. Adding a friend is adding a record.
-Verified locally 2026-08-22 (claude 2.1.240, codex 0.149.0, gemini, opencode);
-`agy` is unverified and web-sourced.
+Verified locally 2026-08-22: claude 2.1.240, codex 0.149.0, opencode, and `agy`.
 
 | Friend | Invoke | Read-only | Structured output |
 |---|---|---|---|
@@ -426,19 +425,45 @@ Verified locally 2026-08-22 (claude 2.1.240, codex 0.149.0, gemini, opencode);
 | codex | `exec --json --output-schema <f> -o <out>` | `-s read-only` | native schema |
 | gemini | `-p -o json` | `--approval-mode plan` | prompt-level contract |
 | opencode | `run --format json` | **none** | prompt-level contract |
-| agy (antigravity) | `-p --output-format json` | policy-based | prompt-level contract |
+| agy (antigravity) | `--mode plan --output-format json -p <prompt>` | `--mode plan` | **native** `--json-schema` (string or path) |
 
 Diff artifacts: top-level `codex review --base <branch>` / `--uncommitted` /
 `--commit <sha>` is documented as non-interactive and accepts custom instructions on
 stdin. `codex exec review` is the equivalent under `exec`.
 
-**Trap, verified:** `codex resume` and `codex fork` are the *interactive* commands —
-`codex resume --help` reads "Resume a previous interactive session (picker by
-default)". They carry no `--json`, `--output-schema`, or `-o`. The non-interactive
-forms are `codex exec resume` and `codex exec fork`. Version 1 of this spec named the
-interactive ones, which would have dropped round 2 into a TUI picker with no parseable
-output. Moot in practice now that rounds are stateless (§4.1), but recorded so nobody
-reintroduces it.
+### 11.2 Verified invocation traps
+
+Both of the following were found by running into them, not by reading `--help`. They
+share a failure mode: **the CLI accepts the malformed invocation and reports success.**
+Every adapter needs a smoke test that asserts on output, not on exit status.
+
+**`codex` — interactive resume.** `codex resume` and `codex fork` are the
+*interactive* commands; `codex resume --help` reads "Resume a previous interactive
+session (picker by default)". They carry no `--json`, `--output-schema`, or `-o`. The
+non-interactive forms are `codex exec resume` and `codex exec fork`. Version 1 of this
+spec named the interactive ones, which would have dropped round 2 into a TUI picker
+with no parseable output. Moot now that rounds are stateless (§4.1), but recorded so
+nobody reintroduces it.
+
+**`agy` — `--print` is a string flag.** `-p` / `--print` / `--prompt` take the prompt
+**as their value**; they are not boolean. So:
+
+```
+agy -p --mode plan "<prompt>"      # WRONG: print="--mode", prompt is an ignored positional
+agy --mode plan -p "<prompt>"      # correct: flags first, prompt as the value of -p
+```
+
+Observed on the wrong form: agy answered the literal prompt `--mode` ("It looks like
+you just typed `--mode`. Could you clarify…"), emitted part of its own system prompt to
+stdout, ran unsandboxed because `--mode plan` was never parsed as a flag, and **exited
+0**. A runner trusting exit status would have recorded a successful round that found
+nothing.
+
+Adapter rule this implies: for any CLI whose prompt arrives as a flag value rather than
+a positional, the prompt must be the **last** thing on the command line, and
+`extra_args` (§10) must be inserted *before* it rather than appended — the "appended
+last" rule in §10 is overridden for these adapters, and the adapter record declares
+which discipline it needs.
 
 **Not usable, for the record:** `claude mcp serve` exposes Claude Code's *toolbox*
 (26 tools — `Read`, `Bash`, `Agent`, `Skill`, …) to a host. It does not expose the
@@ -634,8 +659,11 @@ resolved capability set, and every downgrade a run would record.
 
 ## 18. Risks
 
-1. **`agy` is unverified.** Every antigravity flag is web-sourced, not probed. The
-   adapter ships marked experimental until someone runs it.
+1. **`gemini` is not a usable friend on at least some accounts.** The `gemini` CLI
+   returns `IneligibleTierError` — "This client is no longer supported for Gemini Code
+   Assist for individuals… migrate to the Antigravity suite" — making it unusable on a
+   free tier. `agy` is the supported path and is verified (§11.2). Treat the gemini
+   adapter as legacy; see §19 for the pending v3 decision on removing it.
 2. **Prompt-level JSON contracts drift.** Gemini, opencode, and agy have no native
    schema validation. Beyond one repair attempt the runner halts for orchestrator
    extraction, which is correct but costs a round-trip on every flaky friend.
@@ -681,3 +709,34 @@ Changes, mapped to findings:
 | Timeouts orphaned descendant processes | §14.1 process groups |
 | Zero-config goal contradicted self-exclusion | §2 reworded; §8.4 degraded single-friend mode |
 | Evidence enforcement was asymmetric | §6.5 `evidence_assessment` on every dispositive verdict |
+
+### 19.1 Pending for v3
+
+Open items raised while running v2's own review round against `codex`, `claude`, and
+`agy`. Recorded here rather than folded in, because the `claude` review had not
+returned when this section was written.
+
+1. **Exit status is not a success signal.** `agy` exited 0 while answering the wrong
+   prompt entirely (§11.2). §7.3 counts a round dry when "every required friend
+   completed successfully" and §14 keys failure off nonzero exit — both would have
+   accepted that run as a clean round finding nothing, and two in a row would have
+   terminated `loop` as converged. Needs: output validation as part of "completed
+   successfully", and a distinction between *returned zero claims* and *returned
+   nothing parseable*.
+2. **The roster's unit should be `(cli, model, effort, lens)`, not `(cli, lens)`.**
+   `agy models` offers Gemini 3.x, Claude Sonnet/Opus 4.6, and GPT-OSS from one binary.
+   Model diversity therefore does not require CLI diversity, which weakens the §8.1
+   degraded-mode trigger — a single multi-model CLI can still cross-examine — and
+   changes lens assignment from round-robin over binaries to round-robin over
+   configured friends.
+3. **`agy` exposes effort twice**: baked into model ids (`gemini-3.7-flash-high`,
+   `gemini-3.1-pro-low`) and as `--effort low|medium|high`. Precedence when the two
+   disagree is unknown and must be probed before §10.1 claims a mapping.
+4. **Auth-failure detection cannot pattern-match stderr.** `gemini` emits unrelated
+   extension-loader errors, a true-color warning, and a ripgrep notice to stderr on
+   every invocation, successful or not. §14 needs a more specific signal than a stderr
+   substring match.
+5. **Remediation is not always a command.** §14 says to print the remediation command
+   for auth failures; gemini's remediation is a product migration behind a URL. The
+   field must accept prose and links.
+6. **Decide whether the `gemini` adapter ships at all**, given §18.1.
