@@ -263,10 +263,21 @@ def test_valid_friend_names_accepted(name):
     "has space",
     "a" * 33,                  # too long
     "",
+    "codex-ops\n",             # trailing newline: `$` would accept this
+    "codex-ops\n.raw",
+    "codex\tops",
+    "codex\x00ops",
 ])
 def test_invalid_friend_names_rejected(name):
     with pytest.raises(UsageError):
         ids.validate_friend_name(name)
+
+
+@pytest.mark.parametrize("cid", ["c-0007@1\n", "c-\u0660\u0660\u0660\u0667@1"])
+def test_claim_id_rejects_newline_and_non_ascii_digits(cid):
+    """`$` accepts a trailing newline; bare `\d` accepts Arabic-Indic digits."""
+    with pytest.raises(UsageError):
+        ids.parse_claim_id(cid)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -289,8 +300,12 @@ import re
 
 from .errors import UsageError
 
-CLAIM_ID_RE = re.compile(r"^c-(\d{4,})@(\d+)$")
-FRIEND_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+# fullmatch, not match + $: Python's `$` also matches immediately before a
+# single trailing newline, so `^...$` accepts "codex-ops\n". Friend names
+# become path components, so that is a bypass rather than a curiosity.
+# [0-9] rather than \d: \d matches any Unicode decimal digit without re.ASCII.
+CLAIM_ID_RE = re.compile(r"c-([0-9]{4,})@([0-9]+)")
+FRIEND_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
 def format_claim_id(n: int, version: int = 1) -> str:
@@ -298,7 +313,7 @@ def format_claim_id(n: int, version: int = 1) -> str:
 
 
 def parse_claim_id(cid: str) -> tuple[int, int]:
-    match = CLAIM_ID_RE.match(cid)
+    match = CLAIM_ID_RE.fullmatch(cid)
     if match is None:
         raise UsageError(f"malformed claim id: {cid!r} (expected e.g. c-0007@1)")
     return int(match.group(1)), int(match.group(2))
@@ -315,7 +330,7 @@ def base_claim_id(cid: str) -> str:
 
 
 def validate_friend_name(name: str) -> str:
-    if FRIEND_NAME_RE.match(name) is None:
+    if FRIEND_NAME_RE.fullmatch(name) is None:
         raise UsageError(
             f"invalid friend name {name!r}: must match {FRIEND_NAME_RE.pattern}"
         )
