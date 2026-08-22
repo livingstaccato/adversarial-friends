@@ -40,7 +40,13 @@ Adversarial Friends automates the loop and fixes all four.
 - Not a code review tool. It challenges artifacts — specs, plans, and *the output of
   other review tools*. It does not generate the first review.
 - Not a fixer. It does not edit artifacts.
-- No live model calls in CI.
+- **End-to-end tests against local models.** The rule is no *metered* calls, not no
+  live calls. Local models (§11.5) make real multi-friend runs free, so mode drivers
+  are tested against genuine agent behavior as well as the fake-friend binary.
+- **Never invoke a metered provider from a test or a probe.** Gateway-backed model ids
+  (`cloudflare-ai-gateway/*` and equivalents) bill the operator's own account per token.
+  Probing defaults to local models, and any test that would reach a paid endpoint must
+  fail closed rather than spend.
 
 ## 4. Architecture
 
@@ -359,7 +365,9 @@ reviews, including the fatal §7.1 defect that the other reviewer missed.
 
 ### 8.3 Degraded single-friend mode
 
-Triggered when fewer than two *friends* resolve — not fewer than two CLIs.
+Triggered when fewer than two *friends* resolve — not fewer than two CLIs. Local
+models (§11.5) make this rare: ollama alone can supply several friends on a machine
+with a single agent CLI installed.
 
 - `report` runs, the header states prominently that no cross-examination occurred, and
   the run exits 0.
@@ -407,8 +415,16 @@ Normalized `effort`, verified 2026-08-22:
 | xhigh | `--effort xhigh` | `-c model_reasoning_effort=xhigh` | unsupported | unsupported |
 | max | `--effort max` | unsupported | unsupported | `--variant max` |
 
-\* opencode's `--variant` is provider-specific; only `minimal`, `high`, `max` appear in
-its help. `medium` must be probed per provider before the adapter claims it.
+\* **opencode does not validate `--variant` at all.** Probed 2026-08-22 against a local
+model: `--variant totally-not-a-real-variant` exits 0 and succeeds identically to
+`high`, `medium`, `minimal`, and `max`. No error, no warning. This is the exact inverse
+of agy, which rejects a bad combination before dispatch.
+
+Consequence: a typo produces a run at the provider's default effort while the header
+claims the requested level — the same "argv does not determine behavior" failure §11.1
+exists to prevent, arriving through a value the roster is allowed to set. The runner
+validates variants itself, and records opencode's effort as **`unverified`** rather
+than echoing back what was asked for.
 
 † **agy's effort ladder is per-model, not per-CLI.** Probed 2026-08-22:
 
@@ -547,6 +563,50 @@ defaults to 5m, and a real review of this 700-line spec exceeded it.
 Defined in §7.3. Restated here because it is an adapter obligation: the adapter must be
 able to distinguish *no findings* from *no output*, which requires either a native
 schema with a `no_findings` field or a prompt-level contract that mandates the marker.
+
+### 11.5 Local models
+
+Local models remove the two constraints that shape everything else in this design:
+cost and auth. They matter in two distinct roles.
+
+**As a friend.** The runner talks to ollama's HTTP API directly —
+`POST /api/generate` or `/v1/chat/completions` on `OLLAMA_HOST` (default
+`127.0.0.1:11434`). Such a friend has **no tool loop at all**, which makes it the only
+friend in the design that is read-only by construction: §12.2's sandbox problem simply
+does not arise, because there is nothing to sandbox. It is `scope = "doc"` necessarily —
+it cannot read the repository — and every pulled model is a separate friend, giving
+model diversity at zero cost.
+
+**Do not shell out to `ollama run`.** It emits spinner frames and cursor control
+sequences to stdout even when stdout is not a terminal, interleaved *inside* the
+payload:
+
+```
+{"[?25l[?25hfind[?25l[?25hings[?25l[?25h":[{"[?25l[?25hclaim...
+```
+
+`--format json` and `--think low|medium|high` both work, but the output is not
+machine-readable without stripping ANSI. The HTTP API returns clean JSON. Use it.
+
+**As a backing provider for an agent CLI**, which keeps the tool loop and therefore
+repo scope, still at zero cost:
+
+| Path | Automatable | Notes |
+|---|---|---|
+| `codex exec --oss --local-provider ollama` | **yes** | Native flag; keeps codex's agent loop |
+| opencode provider config → `http://localhost:11434/v1` | **yes** | Verified working. Requires a **tool-capable** model — `gemma3:latest` is rejected with "does not support tools"; `qwen3:0.6b` works |
+| `ollama launch <cli>` | **no** | See below |
+
+**`ollama launch` is an operator setup step, not a transport.** It fronts 18
+integrations including `claude`, `codex`, `opencode`, `droid`, and `qwen`, and it
+reconfigures the target client's own config to point at local models (`--restore`
+undoes this). But it requires a TTY — `Error: stdin is not a terminal` without one —
+and given a pty it opens a full-screen interactive TUI that `-y` does not bypass. The
+runner must never invoke it. It is how a human wires a client to local models; the
+runner then discovers the result through ordinary capability probing (§11.1).
+
+Roster consequence: a machine with one agent CLI plus ollama can still field several
+genuinely different friends, which makes §8.3's degraded mode rare rather than routine.
 
 ## 12. Isolation
 
@@ -754,7 +814,13 @@ adversarial-friends/
   rounds becomes `discarded` and disappears from the round-3 slice.
 - **Process-group test**: a friend spawning a sleeping child and hanging leaves no
   survivors.
-- No live model calls in CI.
+- **End-to-end tests against local models.** The rule is no *metered* calls, not no
+  live calls. Local models (§11.5) make real multi-friend runs free, so mode drivers
+  are tested against genuine agent behavior as well as the fake-friend binary.
+- **Never invoke a metered provider from a test or a probe.** Gateway-backed model ids
+  (`cloudflare-ai-gateway/*` and equivalents) bill the operator's own account per token.
+  Probing defaults to local models, and any test that would reach a paid endpoint must
+  fail closed rather than spend.
 
 ## 17. CLI surface
 
@@ -805,9 +871,10 @@ Exit codes and their precedence: §7.6.
 7. **`--merge=exact` under-merges.** Two friends describing one defect in different
    words produce two claims, inflating apparent finding count and costing a round.
    `--merge=orchestrator` fixes it at the cost of a halt.
-8. **opencode's `--variant` ladder is still unprobed** and, by analogy with agy (§10),
-   is likely per-provider rather than per-CLI. The adapter must probe before claiming
-   any level beyond the `minimal`/`high`/`max` its help documents.
+8. **opencode's effort level is unknowable from argv.** Probed: `--variant` accepts any
+   string silently (§10), so the runner cannot confirm the level a friend actually ran
+   at. opencode friends report `effort: unverified`, and a `thorough` preset cannot
+   promise anything for them.
 
 ## 19. Revision history
 
@@ -862,3 +929,6 @@ Also folded in from v2's §19.1 backlog and from operating the CLIs directly:
 | `-p`/`-s` collide across CLIs | §11.2 adapters spell flags long |
 | CLI-internal timeouts unreconciled; 300s too short | §11.3 default 900s, runner deadline strictly greater |
 | agy's dual effort surface (v2 §19.1 item 3) | Probed and resolved: no precedence, agy errors on conflict; ladders are per-model and derived from `agy models` (§10) |
+| opencode `--variant` ladder unprobed | Probed: accepts any string silently; effort recorded as `unverified` (§10, §18.8) |
+| Local models unconsidered | §11.5 — ollama as a tool-free friend over HTTP, and as a backing provider for codex and opencode; `ollama launch` excluded as TTY-only |
+| CI forbade all live model calls | §16 — restriction narrowed to *metered* calls; local end-to-end tests added, paid endpoints must fail closed |
