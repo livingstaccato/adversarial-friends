@@ -3151,7 +3151,7 @@ git commit -m "feat: add SKILL.md, lenses, references, and multi-harness manifes
 - Create: `README.md`
 - Create: `docs/README.md`
 - Create: `docs/images/README.md`
-- Create: `docs/images/brand/adversarial-friends-banner.png` (2048×2048 source, converted from `~/Downloads/`)
+- Create: `docs/images/brand/adversarial-friends-banner.png` (1024×1024, converted and downscaled from the 2048×2048 original in `~/Downloads/`)
 - Create: `docs/images/brand/adversarial-friends-logo-{128,256,512}.png` (derived sizes)
 - Create: `docs/architecture/run-flow.puml`
 - Create: `evals/evals.json`
@@ -3182,7 +3182,11 @@ def test_readme_leads_with_the_banner():
 
 def test_all_brand_sizes_exist():
     brand = REPO / "docs" / "images" / "brand"
-    assert (brand / "adversarial-friends-banner.png").stat().st_size > 100_000
+    banner = brand / "adversarial-friends-banner.png"
+    assert banner.stat().st_size > 100_000
+    # Ceiling: a full-resolution PNG of this illustration is several MB, which
+    # does not belong in git history. Regenerate at 1024 if this trips.
+    assert banner.stat().st_size < 4_000_000, "banner too large for the repo"
     for size in (128, 256, 512):
         derived = brand / f"adversarial-friends-logo-{size}.png"
         assert derived.exists(), derived
@@ -3234,9 +3238,12 @@ Expected: FAIL — `README.md` does not exist.
 ```bash
 mkdir -p docs/images/brand docs/architecture evals
 
-# Convert the 2048x2048 source to PNG, then derive the standard sizes.
-# sips ships with macOS; no image dependency is added to the project.
-sips -s format png ~/Downloads/Gemini_Generated_Image_t1exu3t1exu3t1ex.jpg \
+# Convert the 2048x2048 source to PNG at 1024x1024, then derive the standard
+# sizes. sips ships with macOS; no image dependency is added to the project.
+# 1024 rather than 2048: a full-size PNG of a detailed illustration runs to
+# several MB, and the banner is only ever rendered at README width.
+sips -s format png -z 1024 1024 \
+     ~/Downloads/Gemini_Generated_Image_t1exu3t1exu3t1ex.jpg \
      --out docs/images/brand/adversarial-friends-banner.png >/dev/null
 
 for size in 128 256 512; do
@@ -3348,14 +3355,17 @@ docs.
 ```
 docs/images/
 └── brand/
-    ├── adversarial-friends-banner.png      (2048×2048 source, branded mark)
+    ├── adversarial-friends-banner.png      (1024×1024, branded mark)
     ├── adversarial-friends-logo-128.png    (derived size)
     ├── adversarial-friends-logo-256.png
     └── adversarial-friends-logo-512.png
 ```
 
 The banner is the source of truth; the numbered sizes are derived from it with
-`sips -z <n> <n>` and are regenerated rather than edited.
+`sips -z <n> <n>` and are regenerated rather than edited. The 2048×2048
+original is deliberately not committed — a full-resolution PNG of this
+illustration runs to several megabytes and the banner is only ever rendered at
+README width.
 
 **Every image reference in `README.md` uses an absolute
 `https://raw.githubusercontent.com/...` URL, never a relative path.** A
