@@ -120,11 +120,15 @@ flagged `advisory`. Advisory claims are cross-examined but never block a `gate`.
 |---|---|---|
 | `report` | Round 1 only. All friends critique in parallel. Merge, dedup, rank. | 1 round |
 | `crossexam` **(default)** | `report`, then friends verdict each other's claims. Round 3+ revisits only contested claims. | Convergence, deadlock, or max-rounds (default 3) |
-| `gate` | `crossexam`, then every surviving non-advisory claim needs explicit resolution (fixed / rejected-with-reason). Nonzero exit while unresolved. | All claims resolved |
+| `gate` | `crossexam`, then every surviving non-advisory claim needs explicit resolution (fixed / rejected-with-reason). Nonzero exit while unresolved. Defaults to `--preset thorough` (see §10.1). | All claims resolved |
 | `loop` | `crossexam`, artifact revised by orchestrator, re-run until 2 rounds surface nothing new. | 2 dry rounds |
 
 `crossexam` is the default because it is the workflow being replaced. `report` is
 available for a cheap first pass.
+
+`gate` is the one mode that overrides the default preset. Everywhere else effort is
+inherited from each friend's own config; in `gate` the run blocks a human, and cheap
+effort is false economy. An explicit `--preset` on the command line still wins.
 
 ### Termination semantics
 
@@ -205,6 +209,43 @@ set. Only `minimal`, `high`, and `max` appear in its help text; `medium` is assu
 and must be probed per provider before the adapter claims it.
 
 `extra_args` is a raw passthrough escape hatch, appended last, unvalidated.
+
+### 10.1 Defaults resolution
+
+Four layers. Later layers win.
+
+```
+1. the friend's own config      <- default: emit no model/effort flags at all
+2. preset                        (--preset <name>)
+3. roster override               (.adversarial-friends/friends.toml)
+4. invocation flag               (--effort max, --model ...)
+```
+
+**The default is to inherit, not to override.** Each CLI already carries a model and
+effort its owner chose deliberately — `~/.codex/config.toml` on the development
+machine reads `model = "gpt-5.6-sol"`, `model_reasoning_effort = "high"`. A tool
+that silently overrides that produces surprise behavior and surprise cost, and
+inheriting is the only policy that is correct on a machine the author has never
+seen.
+
+Shipped presets:
+
+| Preset | Behavior |
+|---|---|
+| `inherit` **(default, except `gate`)** | Emits no model or effort flags. Every friend runs as its owner configured it. |
+| `thorough` **(default for `gate`)** | Maximum *available* effort per friend, strongest available model per friend. |
+| `cheap` | Low effort, fast models. For `report`-mode sanity passes. |
+
+**`thorough` is inherently uneven and must say so.** Gemini exposes no effort flag;
+opencode's `--variant` values are provider-specific. So `thorough` means "the
+maximum this particular friend supports", which is not a level playing field. The
+report header must state the model and effort each friend actually received.
+Without that, a weak critique from a friend that silently ran at default effort
+reads as a signal about the artifact when it is a signal about the flag matrix.
+
+No blocking first-run wizard. It breaks headless and CI invocation, and first-run
+interrogation is a common reason tools get uninstalled. `af init` (§16) covers the
+same need on demand.
 
 **Unsupported knobs never fail silently.** Requesting `effort = "max"` on codex
 produces a recorded downgrade in `run.json` and a line in the report header.
@@ -305,7 +346,36 @@ same skill and runner.
   verdicts. Covers settle, deadlock, dry-round, and max-rounds termination.
 - No live model calls in CI. Convergence logic must be deterministically testable.
 
-## 16. Risks
+## 16. CLI surface
+
+```
+af run [ARTIFACT] [--mode report|crossexam|gate|loop]
+                  [--preset inherit|thorough|cheap]
+                  [--lens NAME ...] [--friend NAME ...] [--max-friends N]
+                  [--rounds N] [--attributed] [--include-self]
+                  [--model NAME] [--effort LEVEL] [--timeout SECONDS]
+                  [--out DIR] [--json]
+af init   [--force]
+af doctor [--json]
+```
+
+`af run` is the default subcommand; a bare `af <artifact>` is `af run <artifact>`.
+
+**`af init`** probes `$PATH`, checks auth for each discovered CLI, reads each
+friend's own config where the format is known, prints what it found, and writes a
+commented `.adversarial-friends/friends.toml` reflecting discovered reality. The
+output is a file to edit, not a set of answers the user is trapped into. `--force`
+overwrites an existing roster.
+
+**`af doctor`** performs the same probe read-only and writes nothing. It is the
+command that answers "why was gemini skipped" — reporting, per friend: binary path,
+version, auth status, resolved capability set `{schema, readonly, resume, effort}`,
+and every downgrade that a run would record.
+
+Both subcommands exit nonzero when zero usable friends are found, for the same
+reason a run does (§13).
+
+## 17. Risks
 
 1. **`agy` is unverified.** Every antigravity flag is web-sourced, not probed. The
    adapter ships marked experimental until someone runs it.
