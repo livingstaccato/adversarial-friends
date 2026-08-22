@@ -3151,7 +3151,8 @@ git commit -m "feat: add SKILL.md, lenses, references, and multi-harness manifes
 - Create: `README.md`
 - Create: `docs/README.md`
 - Create: `docs/images/README.md`
-- Create: `docs/images/brand/adversarial-friends-banner.jpg` (copied from `~/Downloads/`)
+- Create: `docs/images/brand/adversarial-friends-banner.png` (2048×2048 source, converted from `~/Downloads/`)
+- Create: `docs/images/brand/adversarial-friends-logo-{128,256,512}.png` (derived sizes)
 - Create: `docs/architecture/run-flow.puml`
 - Create: `evals/evals.json`
 - Test: `tests/test_docs.py`
@@ -3179,9 +3180,32 @@ def test_readme_leads_with_the_banner():
     assert first.startswith("![adversarial-friends]")
 
 
-def test_brand_asset_exists_and_is_not_tiny():
-    asset = REPO / "docs" / "images" / "brand" / "adversarial-friends-banner.jpg"
-    assert asset.stat().st_size > 100_000
+def test_all_brand_sizes_exist():
+    brand = REPO / "docs" / "images" / "brand"
+    assert (brand / "adversarial-friends-banner.png").stat().st_size > 100_000
+    for size in (128, 256, 512):
+        derived = brand / f"adversarial-friends-logo-{size}.png"
+        assert derived.exists(), derived
+        assert derived.stat().st_size > 0
+
+
+def test_derived_sizes_have_the_right_dimensions():
+    """PNG dimensions live at a fixed offset in the IHDR chunk — no dependency needed."""
+    import struct
+    brand = REPO / "docs" / "images" / "brand"
+    for size in (128, 256, 512):
+        data = (brand / f"adversarial-friends-logo-{size}.png").read_bytes()[:24]
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        width, height = struct.unpack(">II", data[16:24])
+        assert (width, height) == (size, size)
+
+
+def test_readme_image_links_are_absolute_github_urls():
+    """Relative paths break on PyPI and anywhere the README is mirrored."""
+    import re
+    text = REPO.joinpath("README.md").read_text()
+    for target in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text):
+        assert target.startswith("https://raw.githubusercontent.com/"), target
 
 
 def test_docs_index_links_only_to_existing_files():
@@ -3209,13 +3233,28 @@ Expected: FAIL — `README.md` does not exist.
 
 ```bash
 mkdir -p docs/images/brand docs/architecture evals
-cp ~/Downloads/Gemini_Generated_Image_t1exu3t1exu3t1ex.jpg \
-   docs/images/brand/adversarial-friends-banner.jpg
+
+# Convert the 2048x2048 source to PNG, then derive the standard sizes.
+# sips ships with macOS; no image dependency is added to the project.
+sips -s format png ~/Downloads/Gemini_Generated_Image_t1exu3t1exu3t1ex.jpg \
+     --out docs/images/brand/adversarial-friends-banner.png >/dev/null
+
+for size in 128 256 512; do
+  sips -s format png -z "$size" "$size" \
+       docs/images/brand/adversarial-friends-banner.png \
+       --out "docs/images/brand/adversarial-friends-logo-${size}.png" >/dev/null
+done
+
+# Verify: every derived file must report the size it claims.
+for size in 128 256 512; do
+  sips -g pixelWidth -g pixelHeight \
+       "docs/images/brand/adversarial-friends-logo-${size}.png"
+done
 ```
 
 ```markdown
 <!-- README.md -->
-![adversarial-friends](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/images/brand/adversarial-friends-banner.jpg)
+![adversarial-friends](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/images/brand/adversarial-friends-banner.png)
 
 # Adversarial Friends
 
@@ -3309,11 +3348,31 @@ docs.
 ```
 docs/images/
 └── brand/
-    └── adversarial-friends-banner.jpg   # source banner (2048×2048)
+    ├── adversarial-friends-banner.png      (2048×2048 source, branded mark)
+    ├── adversarial-friends-logo-128.png    (derived size)
+    ├── adversarial-friends-logo-256.png
+    └── adversarial-friends-logo-512.png
 ```
 
-The banner is referenced from `README.md` by absolute `raw.githubusercontent`
-URL so it renders on GitHub and on any package index that mirrors the README.
+The banner is the source of truth; the numbered sizes are derived from it with
+`sips -z <n> <n>` and are regenerated rather than edited.
+
+**Every image reference in `README.md` uses an absolute
+`https://raw.githubusercontent.com/...` URL, never a relative path.** A
+relative path resolves only when the README is rendered inside the repository
+tree — it breaks on PyPI, in package registries, and anywhere the README is
+mirrored or embedded. `test_readme_image_links_are_absolute_github_urls`
+enforces this.
+
+## Regenerating
+
+```bash
+for size in 128 256 512; do
+  sips -s format png -z "$size" "$size" \
+       docs/images/brand/adversarial-friends-banner.png \
+       --out "docs/images/brand/adversarial-friends-logo-${size}.png"
+done
+```
 ```
 
 ```
