@@ -9,8 +9,8 @@ import re
 
 from .errors import UsageError
 
-CLAIM_ID_RE = re.compile(r"^c-(\d{4,})@(\d+)$")
-FRIEND_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+CLAIM_ID_RE = re.compile(r"c-([0-9]{4,})@([0-9]+)")
+FRIEND_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
 def format_claim_id(n: int, version: int = 1) -> str:
@@ -18,7 +18,7 @@ def format_claim_id(n: int, version: int = 1) -> str:
 
 
 def parse_claim_id(cid: str) -> tuple[int, int]:
-    match = CLAIM_ID_RE.match(cid)
+    match = CLAIM_ID_RE.fullmatch(cid)
     if match is None:
         raise UsageError(f"malformed claim id: {cid!r} (expected e.g. c-0007@1)")
     return int(match.group(1)), int(match.group(2))
@@ -35,7 +35,7 @@ def base_claim_id(cid: str) -> str:
 
 
 def validate_friend_name(name: str) -> str:
-    if FRIEND_NAME_RE.match(name) is None:
+    if FRIEND_NAME_RE.fullmatch(name) is None:
         raise UsageError(
             f"invalid friend name {name!r}: must match {FRIEND_NAME_RE.pattern}"
         )

@@ -35,3 +35,20 @@ def test_valid_friend_names_accepted(name):
 def test_invalid_friend_names_rejected(name):
     with pytest.raises(UsageError):
         ids.validate_friend_name(name)
+
+
+@pytest.mark.parametrize("name", [
+    "codex-ops\n",      # trailing newline: Python's $ matches before it
+    "codex-ops\n.raw",
+    "codex\tops",
+    "codex\x00ops",
+])
+def test_control_characters_are_rejected(name):
+    with pytest.raises(UsageError):
+        ids.validate_friend_name(name)
+
+
+@pytest.mark.parametrize("cid", ["c-0007@1\n", "c-٠٠٠٧@1"])
+def test_claim_id_rejects_trailing_newline_and_non_ascii_digits(cid):
+    with pytest.raises(UsageError):
+        ids.parse_claim_id(cid)
