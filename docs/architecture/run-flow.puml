@@ -1,30 +1,90 @@
-@startuml
-title af run --mode report
+@startuml run-flow
+' Activity flow of `afriend run --mode report`, traced against
+' src/adversarial_friends/commands/run.py.
+' Orange = a recorded downgrade (visible in run.json and report.md).
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontSize 12
+skinparam ActivityBorderColor #546E7A
+skinparam ActivityBackgroundColor #ECEFF1
+skinparam ActivityBorderThickness 1
+skinparam ActivityDiamondBackgroundColor #FFF8E1
+skinparam ActivityDiamondBorderColor #F57F17
+skinparam ActivityDiamondFontSize 12
+skinparam PartitionBorderColor #1565C0
+skinparam PartitionBackgroundColor #E3F2FD
+skinparam TitleFontSize 18
+
+title afriend run --mode report
+
+legend top right
+  |<#FFE0B2>    | recorded downgrade |
+  |<#FFCDD2>    | friend failed |
+  |<#C8E6C9>    | success |
+endlegend
 
 start
-:copy artifact into run dir, hash it;
-:snapshot repo (tracked + untracked) into a commit object;
-partition "per friend, in parallel" {
-  :build argv from adapter record;
-  :compute capability from effective argv;
-  if (adapter has a real read-only mode?) then (yes: repo scope)
-    :private git worktree, checked out from the shared snapshot;
-  else (no: doc scope)
-    :doc-only dir holding a copy of the artifact, no repo access;
-  endif
-  :spawn in its own process group;
-  if (timed out?) then (yes)
-    :kill process group; mark failed;
+
+partition "Resolve the roster" {
+  :validate ""--mode"" / ""--preset""\nload bundled adapter records;
+  if (""--friend"" given?) then (yes)
+    :specs from flags\n(replaces discovery entirely);
   else (no)
-    :strip ANSI, extract JSON, validate;
-    if (usable output?) then (yes)
+    :discover CLIs on PATH\nround-robin a lens to each;
+  endif
+  if (any friends?) then (no)
+    :exit 3 — no usable friends;
+    stop
+  endif
+  :if only one friend, record\n"cannot cross-examine" downgrade;<<#FFE0B2>>
+}
+
+partition "Prepare" {
+  :install SIGINT/SIGTERM handlers;
+  :resolve the artifact's git root\n(none → force all friends to doc scope);<<#FFE0B2>>
+  :create run dir, copy + hash artifact;
+  :per friend: build its OWN prompt from\nits OWN lens, write round-1/<friend>.prompt\n(missing lens → generic prompt, downgrade);<<#FFE0B2>>
+  :if any friend is repo scope, take one\nsnapshot commit (tracked + untracked);
+}
+
+partition "Dispatch — parallel, one thread per friend" {
+  if (adapter has a real read-only mode?) then (yes)
+    :private git worktree\nfrom the shared snapshot;
+  else (no)
+    :bare dir with only the artifact;
+  endif
+  :build argv; capability = what was\nactually emitted, never re-derived;
+  :spawn in its own process group\ndeadline = ""--timeout"" + 60s grace;
+  if (timed out / aborted?) then (yes)
+    :SIGTERM the group, then SIGKILL;<<#FFCDD2>>
+  else (no)
+    :unwrap the CLI's JSON envelope,\nstrip ANSI, extract JSON, validate;
+    if (usable payload?) then (yes)
       :emit claims;
     else (no)
-      :mark failed;
+      :mark failed, keep stderr tail;<<#FFCDD2>>
     endif
   endif
 }
-:exact-merge claims into ledger;
-:render report.md;
+
+partition "Merge & report" {
+  :tear down every worktree and isolation dir;
+  :write <friend>.raw / .meta / .err — pass or fail;
+  :exact-merge claims: identical claims become\naliases, origins accumulate as corroboration;
+  :append every claim AND alias to claims.jsonl;
+  :write run.json + report.md, print the run dir;
+}
+
+if (any friend usable?) then (yes)
+  :exit 0;<<#C8E6C9>>
+else (no)
+  :exit 1 — run incomplete;<<#FFCDD2>>
+endif
+
 stop
+
 @enduml

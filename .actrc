@@ -1,0 +1,45 @@
+# act configuration for adversarial-friends
+# https://github.com/nektos/act
+#
+# Run the CI workflow locally:
+#   make act-dry       # validate the workflow without running containers
+#   make act-ci        # run the quality job end-to-end (slow on first pull)
+
+# Runner image. catthehacker/ubuntu:runner-24.04 (~1.4 GB) rather than the
+# smaller act-24.04 (~250 MB): runner-XX.XX puts node in /usr/bin, matching
+# the GitHub-hosted runner layout. act-XX.XX installs node via nvm, which the
+# raw `docker exec` calls act makes do not source -- so the JS actions this
+# workflow uses (actions/checkout, astral-sh/setup-uv) fail with
+# "node: not found". A one-time larger pull buys parity between `make act-ci`
+# and the real CI run.
+-P ubuntu-latest=catthehacker/ubuntu:runner-24.04
+
+# Apple Silicon: force amd64 emulation so amd64 images pull and run.
+--container-architecture linux/amd64
+
+# Give the container a real init as PID 1.
+#
+# act's default entrypoint is `tail -f /dev/null`, which never calls wait(),
+# so orphaned descendants are reparented to it and stay as zombies forever.
+# Their PIDs remain in the process table, so `os.kill(pid, 0)` keeps
+# succeeding and this project's process-group reaping tests read "still
+# alive" -- six of them failed here while passing on macOS and on real CI.
+# GitHub-hosted runners are full VMs with systemd, which reaps normally;
+# --init injects tini to match that. Also cuts the suite from ~350s to ~185s,
+# since the runner no longer waits out its full SIGTERM + SIGKILL grace
+# windows on processes that were already dead.
+--container-options --init
+
+# Colima compatibility: don't bind-mount the host daemon socket path.
+--container-daemon-socket -
+
+# Avoid non-loopback bind selection issues in some local environments.
+--artifact-server-addr 127.0.0.1
+--cache-server-addr 127.0.0.1
+--no-cache-server
+
+# Pull images if needed (first run; cached thereafter).
+--pull
+
+# Default workflow.
+--workflows .github/workflows/ci.yml

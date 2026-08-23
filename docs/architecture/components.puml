@@ -1,0 +1,94 @@
+@startuml components
+' Module architecture of the adversarial_friends package.
+' Mirrors the real layout under src/adversarial_friends/.
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontSize 11
+skinparam TitleFontSize 18
+skinparam componentStyle rectangle
+
+skinparam rectangle {
+  BorderColor #546E7A
+  BackgroundColor #ECEFF1
+  BorderThickness 1
+  FontSize 13
+}
+skinparam package {
+  BorderColor #1565C0
+  BackgroundColor #E3F2FD
+  FontSize 13
+  FontStyle bold
+}
+
+title adversarial_friends — module architecture
+
+package "Entry" {
+  rectangle "cli.py\n<size:11>thin entry + re-exports</size>" as CLI
+  rectangle "cliargs.py\n<size:11>parser, friend specs</size>" as ARGS
+  rectangle "commands/run.py\n<size:11>the report pipeline</size>" as RUN
+  rectangle "commands/doctor.py\n<size:11>capability probe</size>" as DOC
+}
+
+package "Roster & contract" {
+  rectangle "roster.py\n<size:11>discover, assign lenses</size>" as ROSTER
+  rectangle "adapters.py\n<size:11>argv + capability</size>" as ADAPT
+  rectangle "trust.py\n<size:11>allowlist, denied flags</size>" as TRUST
+  rectangle "paths.py\n<size:11>bundled asset lookup</size>" as PATHS
+}
+
+package "Execute" {
+  rectangle "prompt.py\n<size:11>lens prose → prompt</size>" as PROMPT
+  rectangle "isolation.py\n<size:11>snapshot, worktrees</size>" as ISO
+  rectangle "dispatch.py\n<size:11>argv → process</size>" as DISP
+  rectangle "spawn.py\n<size:11>process groups, reaping</size>" as SPAWN
+}
+
+package "Interpret & record" {
+  rectangle "normalize.py\n<size:11>envelope, JSON recovery</size>" as NORM
+  rectangle "claimschema.py\n<size:11>payload validation</size>" as SCHEMA
+  rectangle "merge.py\n<size:11>exact-merge, aliases</size>" as MERGE
+  rectangle "ledger.py\n<size:11>append-only records</size>" as LEDGER
+  rectangle "report.py\n<size:11>ranked report.md</size>" as REPORT
+  rectangle "runstore.py\n<size:11>run dir layout</size>" as STORE
+}
+
+database "assets/\nadapters · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
+cloud "friend CLIs\nclaude · codex\nagy · opencode" as FRIENDS #E8F5E9
+
+CLI --> ARGS
+CLI --> RUN
+CLI --> DOC
+
+RUN --> ROSTER
+RUN --> PROMPT
+RUN --> ISO
+RUN --> DISP
+RUN --> MERGE
+RUN --> STORE
+RUN --> REPORT
+
+ARGS --> ADAPT
+ROSTER --> ADAPT
+ROSTER --> TRUST
+DOC --> ADAPT
+
+PATHS --> ASSETS
+ADAPT ..> PATHS
+PROMPT ..> PATHS
+
+DISP --> ADAPT
+DISP --> TRUST
+DISP --> SPAWN
+SPAWN --> FRIENDS
+SPAWN --> NORM
+NORM --> SCHEMA
+
+MERGE --> LEDGER
+STORE --> LEDGER
+REPORT --> LEDGER
+
+@enduml

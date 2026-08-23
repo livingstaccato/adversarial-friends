@@ -1,0 +1,30 @@
+name = "codex"
+binary = "codex"
+base_argv = ["exec", "--json"]
+prompt_mode = "stdin"
+readonly_argv = ["--sandbox", "read-only"]
+schema_flag = "--output-schema"
+model_flag = "--model"
+internal_timeout_flag = ""
+effort_kind = "native"
+# --json emits an NDJSON event stream, not a single object. Captured from
+# codex 0.149.0 on 2026-08-23: thread.started, turn.started, item.completed,
+# turn.completed -- with the model's answer in the item.completed event whose
+# item.type is "agent_message", at item.text as a JSON-escaped string. Note
+# codex also writes a non-JSON line ("Reading additional input from stdin...")
+# to stdout, so the NDJSON reader must skip unparseable lines rather than fail.
+structured_output = true
+
+[envelope]
+kind = "ndjson"
+match_field = "type"
+
+[[envelope.rules]]
+type = "item.completed"
+field = "item.text"
+
+[effort]
+low = ["--config", "model_reasoning_effort=low"]
+medium = ["--config", "model_reasoning_effort=medium"]
+high = ["--config", "model_reasoning_effort=high"]
+xhigh = ["--config", "model_reasoning_effort=xhigh"]

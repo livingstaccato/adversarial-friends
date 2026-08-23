@@ -1,33 +1,88 @@
 """A scripted stand-in for a real agent CLI. Never makes a model call."""
+
 import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
-from pathlib import Path
 
 MODES = {
-    "good": lambda: print(json.dumps({"findings": [{
-        "severity": "high", "claim": "the guard is missing",
-        "location": "src/auth.py:42", "evidence": "src/auth.py:38",
-        "failure_scenario": "expired token reaches the handler",
-        "suggested_fix": "check exp before dispatch"}]})),
+    "good": lambda: print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "high",
+                        "claim": "the guard is missing",
+                        "location": "src/auth.py:42",
+                        "evidence": "src/auth.py:38",
+                        "failure_scenario": "expired token reaches the handler",
+                        "suggested_fix": "check exp before dispatch",
+                    }
+                ]
+            }
+        )
+    ),
     "empty": lambda: print(json.dumps({"findings": []})),
     "no_findings": lambda: print(json.dumps({"no_findings": True})),
     "offtopic": lambda: print("It looks like you just typed `--mode`."),
     "prose_wrapped": lambda: print(
-        "Sure! " + json.dumps({"no_findings": True}) + " Hope that helps!"),
+        "Sure! " + json.dumps({"no_findings": True}) + " Hope that helps!"
+    ),
     # Not a scripted verdict -- reports this process's own cwd as the
     # "evidence" field, so a caller can directly confirm what directory it
     # was actually run in (e.g. a private isolation worktree/doc dir, not
     # the af process's own working directory). Added for Task 12's
     # end-to-end isolation-wiring tests.
-    "cwd_probe": lambda: print(json.dumps({"findings": [{
-        "severity": "low", "claim": "cwd probe",
-        "location": None, "evidence": str(Path.cwd()),
-        "failure_scenario": "n/a", "suggested_fix": "n/a"}]})),
+    "cwd_probe": lambda: print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "low",
+                        "claim": "cwd probe",
+                        "location": None,
+                        "evidence": str(Path.cwd()),
+                        "failure_scenario": "n/a",
+                        "suggested_fix": "n/a",
+                    }
+                ]
+            }
+        )
+    ),
 }
+
+
+def _await_pidfile(pidfile: str, timeout: float = 30.0) -> None:
+    """Block until a spawned descendant has recorded its pid, or `timeout`.
+
+    Every attack mode below spawns a descendant that must still be alive,
+    and still findable by pid, once this process is done. The descendant
+    records its pid by writing `pidfile` -- but that costs a full Python
+    interpreter startup, which under a loaded test suite can easily take
+    longer than this process needs to print its payload and exit.
+
+    Without this wait the modes race: the runner can correctly reap the
+    whole process group before the descendant ever writes the file, so the
+    pidfile never appears and the test fails with FileNotFoundError while
+    reporting nothing about the behaviour it meant to check. Observed at
+    roughly a 40% failure rate for `exit0_leaves_descendant` under full-suite
+    load, and never in isolation.
+
+    Waiting here does not weaken any of those tests: this process still
+    never `wait()`s on the descendant, and the descendant is still running,
+    still inside this process group, at the moment this process exits --
+    which is the condition actually under test.
+    """
+    deadline = time.monotonic() + timeout
+    target = Path(pidfile)
+    while time.monotonic() < deadline:
+        if target.exists():
+            return
+        time.sleep(0.01)
 
 
 def _descendant(argv: list) -> None:
@@ -75,8 +130,11 @@ def main() -> int:
         # message could plausibly contain (a bracketed value, an angle-
         # bracketed placeholder, asterisks) to prove they render as inert
         # text, not real emphasis/links/raw HTML.
-        print("auth failed: **please** [login](http://evil.example) "
-              "`token` <script>alert(1)</script>", file=sys.stderr)
+        print(
+            "auth failed: **please** [login](http://evil.example) "
+            "`token` <script>alert(1)</script>",
+            file=sys.stderr,
+        )
         return 1
 
     if mode == "_descendant":
@@ -92,6 +150,10 @@ def main() -> int:
         subprocess.Popen(
             [sys.executable, __file__, "_descendant", pidfile_child, pidfile_grandchild]
         )
+        # Two interpreter startups deep before the grandchild records its
+        # pid -- the widest window of any mode here. See _await_pidfile.
+        _await_pidfile(pidfile_child)
+        _await_pidfile(pidfile_grandchild)
         time.sleep(600)
         return 0
 
@@ -102,14 +164,20 @@ def main() -> int:
         # group can never reach it -- a genuine, irreducible escape without
         # OS-level containment (cgroups / job objects / pid namespaces).
         pidfile = sys.argv[2]
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, sys, time\n"
-            "os.setsid()\n"
-            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
-            "time.sleep(600)\n",
-            pidfile,
-        ])
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time\n"
+                "os.setsid()\n"
+                "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                "time.sleep(600)\n",
+                pidfile,
+            ]
+        )
+        # Same race as exit0_leaves_descendant, with more slack (this mode
+        # hangs rather than exiting) but not immunity -- see _await_pidfile.
+        _await_pidfile(pidfile)
         time.sleep(600)
         return 0
 
@@ -133,17 +201,49 @@ def main() -> int:
         # signal (see its module docstring): the output-pump threads are
         # still alive, well past the drain window, even though this
         # process itself already exited cleanly and fast.
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, time\n"
-            "os.setsid()\n"
-            "# af-leaky-escape-marker\n"
-            "time.sleep(600)\n",
-        ])
-        print(json.dumps({"findings": [{
-            "severity": "low", "claim": "leaky escape probe",
-            "location": None, "evidence": "spawned a setsid escapee, then exited",
-            "failure_scenario": "n/a", "suggested_fix": "n/a"}]}))
+        #
+        # The escapee signals *after* os.setsid() returns, and this process
+        # waits for that signal before exiting. Without the wait the mode
+        # races: this process exits, the runner sweeps its group, and the
+        # SIGTERM lands while the escapee is still starting up and still a
+        # member of that group -- so it gets killed instead of escaping,
+        # the inherited pipes close, and orphans_suspected comes back False.
+        # Wide enough on a fast machine to almost never lose; observed
+        # losing consistently under an emulated Linux container, where
+        # interpreter startup is several seconds.
+        escaped_marker = Path(tempfile.gettempdir()) / f"af-leaky-escaped-{os.getpid()}"
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time\n"
+                "os.setsid()\n"
+                "open(sys.argv[1], 'w').write('escaped')\n"
+                "# af-leaky-escape-marker\n"
+                "time.sleep(600)\n",
+                str(escaped_marker),
+            ]
+        )
+        _await_pidfile(str(escaped_marker))
+        # Purely a handshake; the escapee is found by its `ps` marker, not
+        # by this file. Removing it keeps the mode from littering /tmp.
+        escaped_marker.unlink(missing_ok=True)
+        print(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "severity": "low",
+                            "claim": "leaky escape probe",
+                            "location": None,
+                            "evidence": "spawned a setsid escapee, then exited",
+                            "failure_scenario": "n/a",
+                            "suggested_fix": "n/a",
+                        }
+                    ]
+                }
+            )
+        )
         return 0
 
     if mode == "ignore_sigterm":
@@ -171,13 +271,19 @@ def main() -> int:
         # stays alive in the same process group after the round is already
         # marked complete.
         pidfile = sys.argv[2]
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, sys, time\n"
-            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
-            "time.sleep(600)\n",
-            pidfile,
-        ])
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time\n"
+                "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                "time.sleep(600)\n",
+                pidfile,
+            ]
+        )
+        # See _await_pidfile: exiting before the descendant records its pid
+        # makes this mode race the runner's own (correct) group sweep.
+        _await_pidfile(pidfile)
         print(json.dumps({"no_findings": True}))
         return 0
 

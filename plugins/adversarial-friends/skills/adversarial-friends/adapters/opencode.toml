@@ -1,0 +1,32 @@
+# --variant accepts any string silently, so effort can never be verified.
+name = "opencode"
+binary = "opencode"
+base_argv = ["run", "--format", "json"]
+prompt_mode = "trailing-arg"
+readonly_argv = []
+schema_flag = ""
+model_flag = "--model"
+internal_timeout_flag = ""
+effort_kind = "unverified"
+structured_output = true
+
+[effort]
+low = ["--variant", "minimal"]
+high = ["--variant", "high"]
+max = ["--variant", "max"]
+
+# `opencode run --format json` emits NDJSON (one event object per line).
+# Only the "error" event's shape has actually been captured (see
+# normalize.py's module docstring and tests/fixtures/opencode_error.ndjson);
+# a success-carrying event type has not been observed, so no rule for it is
+# declared here rather than guessing one. A stream with no "error" line (and
+# therefore no rule match at all) makes ndjson unwrapping report "found
+# nothing," so normalize() falls back to scanning the raw NDJSON text
+# line-by-line, same as before this adapter had an envelope at all.
+[envelope]
+kind = "ndjson"
+match_field = "type"
+
+[[envelope.rules]]
+type = "error"
+field = "error.data.message"

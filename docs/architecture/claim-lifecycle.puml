@@ -1,0 +1,67 @@
+@startuml claim-lifecycle
+' How independent findings become one corroborated claim.
+' Traced against src/adversarial_friends/merge.py (exact_merge) and
+' src/adversarial_friends/ledger.py.
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontSize 11
+skinparam TitleFontSize 18
+skinparam sequenceMessageAlign center
+
+skinparam participant {
+  BorderColor #546E7A
+  BackgroundColor #ECEFF1
+  FontSize 13
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #F9A825
+  FontSize 12
+}
+
+title How corroboration survives deduplication
+
+participant "friend A\nsecurity lens" as A #E8F5E9
+participant "friend B\nops lens" as B #E8F5E9
+participant "exact_merge" as M
+database "claims.jsonl\nappend-only" as L #FFF8E1
+participant "report.md" as R
+
+A -> M : claim c-0001\n"the guard is missing"\norigin = [fake/security]
+B -> M : claim c-0002\n"The Guard Is  Missing"\norigin = [fake/ops]
+
+note over M
+  Dedup key normalizes **only** whitespace
+  runs and case, plus a strip on location.
+  Nothing else — deliberate under-merge.
+end note
+
+M -> M : keys match →\nc-0002 aliases c-0001
+M -> M : c-0001.origin grows to\n[fake/security, fake/ops]
+
+M -> L : append claim c-0001
+M -> L : append claim c-0002\n<b>(the duplicate too)</b>
+M -> L : append alias\ncanonical=c-0001\nduplicate=c-0002
+
+note over L
+  The duplicate's own claim record is written,
+  not just the alias. Otherwise alias.duplicate
+  would dangle and a reader could not rebuild
+  corroboration from the ledger alone.
+end note
+
+M -> R : one finding, ranked
+R -> R : renders\n"corroborated by 2 friends"\nfake/security · fake/ops
+
+note over R #E8F5E9
+  Two independent models reaching the same
+  conclusion is the strongest signal this
+  tool produces — so it is never collapsed
+  into a single unattributed claim.
+end note
+
+@enduml

@@ -1,10 +1,11 @@
+import contextlib
 import os
+from pathlib import Path
 import signal
 import sys
 import tempfile
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
@@ -58,9 +59,7 @@ def test_timeout_kills_the_whole_process_group(tmp_path):
     extra sleep is needed here to avoid a race against the kill.
     """
     pidfile = tmp_path / "child.pid"
-    result = spawn.run_process(
-        [sys.executable, FAKE, "hang", str(pidfile)], None, 2, Path.cwd()
-    )
+    result = spawn.run_process([sys.executable, FAKE, "hang", str(pidfile)], None, 2, Path.cwd())
     assert result.timed_out is True
     child_pid = int(pidfile.read_text().strip())
     with pytest.raises(ProcessLookupError):
@@ -94,7 +93,9 @@ def test_grandchild_is_reaped_through_two_levels(tmp_path):
     pidfile_grandchild = tmp_path / "grandchild.pid"
     result = spawn.run_process(
         [sys.executable, FAKE, "grandchild", str(pidfile_child), str(pidfile_grandchild)],
-        None, 2, Path.cwd(),
+        None,
+        2,
+        Path.cwd(),
     )
     assert result.timed_out is True
     child_pid = int(pidfile_child.read_text().strip())
@@ -110,7 +111,10 @@ def test_sigterm_ignoring_friend_is_still_killed(tmp_path):
     escalation must still finish it off within the grace windows."""
     pidfile = tmp_path / "self.pid"
     result = spawn.run_process(
-        [sys.executable, FAKE, "ignore_sigterm", str(pidfile)], None, 2, Path.cwd(),
+        [sys.executable, FAKE, "ignore_sigterm", str(pidfile)],
+        None,
+        2,
+        Path.cwd(),
     )
     assert result.timed_out is True
     pid = int(pidfile.read_text().strip())
@@ -123,7 +127,10 @@ def test_closing_stdout_early_does_not_hang_the_runner():
     itself to block waiting for pipe EOF that will never come from that fd;
     the runner still has to notice the process never exits."""
     result = spawn.run_process(
-        [sys.executable, FAKE, "close_stdout_then_hang"], None, 2, Path.cwd(),
+        [sys.executable, FAKE, "close_stdout_then_hang"],
+        None,
+        2,
+        Path.cwd(),
     )
     assert result.timed_out is True
     assert result.failure_reason == "timeout"
@@ -138,10 +145,20 @@ def test_exit0_with_leftover_descendant_is_reaped(tmp_path):
     running past the point the round was marked complete."""
     pidfile = tmp_path / "descendant.pid"
     result = spawn.run_process(
-        [sys.executable, FAKE, "exit0_leaves_descendant", str(pidfile)], None, 30, Path.cwd(),
+        [sys.executable, FAKE, "exit0_leaves_descendant", str(pidfile)],
+        None,
+        30,
+        Path.cwd(),
     )
     assert result.timed_out is False
     assert result.exit_code == 0
+    # fake_friend waits for this file before exiting (see _await_pidfile),
+    # so a missing pidfile is a real regression in that handshake, not the
+    # startup race this test used to lose under load ~40% of the time.
+    assert pidfile.exists(), (
+        "descendant never recorded its pid; fake_friend should not have exited "
+        "until it did -- see _await_pidfile in tests/fake_friend.py"
+    )
     descendant_pid = int(pidfile.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(descendant_pid, signal.SIGTERM)
@@ -158,7 +175,10 @@ def test_setsid_escapee_is_not_reaped(tmp_path):
     doesn't leak past the test suite."""
     pidfile = tmp_path / "escapee.pid"
     result = spawn.run_process(
-        [sys.executable, FAKE, "escape", str(pidfile)], None, 2, Path.cwd(),
+        [sys.executable, FAKE, "escape", str(pidfile)],
+        None,
+        2,
+        Path.cwd(),
     )
     assert result.timed_out is True
     assert result.orphans_suspected is True
@@ -237,7 +257,10 @@ def test_setsid_escape_does_not_leak_pump_threads():
     for i in range(20):
         pidfile = Path(tempfile.mkdtemp()) / f"escapee-{i}.pid"
         result = spawn.run_process(
-            [sys.executable, FAKE, "escape", str(pidfile)], None, 2, Path.cwd(),
+            [sys.executable, FAKE, "escape", str(pidfile)],
+            None,
+            2,
+            Path.cwd(),
         )
         assert result.orphans_suspected is True
         escapee_pids.append(int(pidfile.read_text().strip()))
@@ -251,10 +274,8 @@ def test_setsid_escape_does_not_leak_pump_threads():
     after = threading.active_count()
 
     for pid in escapee_pids:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)  # clean up the 20 escapees directly
-        except ProcessLookupError:
-            pass
 
     assert after == baseline, (
         f"thread count did not return to baseline: before={baseline} after={after}"
@@ -273,9 +294,14 @@ def test_nonzero_exit_with_otherwise_valid_output_is_still_a_failure():
     exit-code check specifically by pairing a nonzero exit with output that
     would otherwise parse as a full success."""
     result = spawn.run_process(
-        [sys.executable, "-c",
-         'import json,sys; print(json.dumps({"no_findings": True})); sys.exit(1)'],
-        None, 30, Path.cwd(),
+        [
+            sys.executable,
+            "-c",
+            'import json,sys; print(json.dumps({"no_findings": True})); sys.exit(1)',
+        ],
+        None,
+        30,
+        Path.cwd(),
     )
     assert result.exit_code == 1
     assert result.result.succeeded is True  # normalize() alone would call this fine
@@ -298,12 +324,18 @@ def test_abort_event_terminates_promptly_instead_of_waiting_out_the_timeout():
     threading.Timer(0.3, abort_event.set).start()
     started = time.monotonic()
     result = spawn.run_process(
-        [sys.executable, FAKE, "hang"], None, 30, Path.cwd(), abort_event=abort_event,
+        [sys.executable, FAKE, "hang"],
+        None,
+        30,
+        Path.cwd(),
+        abort_event=abort_event,
     )
     elapsed = time.monotonic() - started
     assert result.failure_reason == "aborted"
     assert result.timed_out is False  # distinct from a real timeout
-    assert elapsed < 5, f"took {elapsed:.1f}s -- should return within ~1s of the event, not near the 30s timeout"
+    assert elapsed < 5, (
+        f"took {elapsed:.1f}s -- should return within ~1s of the event, not near the 30s timeout"
+    )
 
 
 def test_abort_event_reaps_the_whole_process_group(tmp_path):
@@ -311,7 +343,10 @@ def test_abort_event_reaps_the_whole_process_group(tmp_path):
     abort_event = threading.Event()
     threading.Timer(0.3, abort_event.set).start()
     result = spawn.run_process(
-        [sys.executable, FAKE, "hang", str(pidfile)], None, 30, Path.cwd(),
+        [sys.executable, FAKE, "hang", str(pidfile)],
+        None,
+        30,
+        Path.cwd(),
         abort_event=abort_event,
     )
     assert result.failure_reason == "aborted"

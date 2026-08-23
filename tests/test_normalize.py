@@ -3,8 +3,10 @@ import json
 from adversarial_friends import normalize
 from adversarial_friends.normalize import Envelope, EnvelopeRule, parse_envelope
 
-GOOD = '{"findings": [{"severity": "low", "claim": "c", "location": null, ' \
-       '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}'
+GOOD = (
+    '{"findings": [{"severity": "low", "claim": "c", "location": null, '
+    '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}'
+)
 
 
 def test_plain_json_parses():
@@ -53,9 +55,7 @@ def test_unparseable_output_fails_with_errors():
 
 def test_off_topic_prose_fails():
     """agy answered the literal prompt '--mode' and exited 0."""
-    result = normalize.normalize(
-        "It looks like you just typed `--mode`. Could you clarify?"
-    )
+    result = normalize.normalize("It looks like you just typed `--mode`. Could you clarify?")
     assert result.succeeded is False
 
 
@@ -72,7 +72,7 @@ def test_deeply_nested_json_does_not_raise():
     """normalize() must never raise, even on input crafted to blow the
     interpreter's recursion limit inside json.loads. A friend's output is
     untrusted text; this must surface as a failed parse, not a crash."""
-    deeply_nested = '{"findings": ' + "[" * 3000 + "]" * 3000 + '}'
+    deeply_nested = '{"findings": ' + "[" * 3000 + "]" * 3000 + "}"
     result = normalize.normalize(deeply_nested)  # must not raise
     assert result.succeeded is False
     assert result.errors
@@ -92,12 +92,7 @@ def test_decoy_object_before_real_fenced_answer_is_not_picked():
     test_stray_unmatched_brace_outside_fence_does_not_hide_real_answer below
     for the fixture that actually requires it (verified by disabling
     fence-priority and confirming that one alone fails)."""
-    raw = (
-        'e.g. {"findings": []}. Real answer:\n'
-        "```json\n"
-        "Here it is: " + GOOD + "\n"
-        "```"
-    )
+    raw = 'e.g. {"findings": []}. Real answer:\n```json\nHere it is: ' + GOOD + "\n```"
     result = normalize.normalize(raw)
     assert result.succeeded is True
     assert result.payload["findings"][0]["claim"] == "c"
@@ -190,10 +185,13 @@ def test_parse_envelope_json_path():
 
 
 def test_parse_envelope_ndjson_with_rules():
-    env = parse_envelope({
-        "kind": "ndjson", "match_field": "type",
-        "rules": [{"type": "error", "field": "error.data.message"}],
-    })
+    env = parse_envelope(
+        {
+            "kind": "ndjson",
+            "match_field": "type",
+            "rules": [{"type": "error", "field": "error.data.message"}],
+        }
+    )
     assert env.kind == "ndjson"
     assert env.match_field == "type"
     assert env.rules == (EnvelopeRule(match_value="error", field="error.data.message"),)
@@ -239,12 +237,17 @@ def test_unwrap_json_path_non_json_raw_returns_none():
 
 
 def test_unwrap_ndjson_extracts_matching_lines():
-    envelope = Envelope(kind="ndjson", match_field="type",
-                        rules=(EnvelopeRule(match_value="error", field="error.message"),))
-    raw = "\n".join([
-        json.dumps({"type": "step_finish", "tokens": {"total": 10}}),
-        json.dumps({"type": "error", "error": {"message": "auth failed"}}),
-    ])
+    envelope = Envelope(
+        kind="ndjson",
+        match_field="type",
+        rules=(EnvelopeRule(match_value="error", field="error.message"),),
+    )
+    raw = "\n".join(
+        [
+            json.dumps({"type": "step_finish", "tokens": {"total": 10}}),
+            json.dumps({"type": "error", "error": {"message": "auth failed"}}),
+        ]
+    )
     assert normalize.unwrap_envelope(raw, envelope) == "auth failed"
 
 
@@ -348,11 +351,15 @@ def test_structured_output_hint_can_surface_via_the_raw_retry_after_a_failed_unw
     needs it most -- see test_envelope_fixtures.py's regression tests for
     the real captured shapes this was reproduced against end to end."""
     envelope = Envelope(kind="json_path", path="response")
-    wrapper_with_no_findings_answer = json.dumps({
-        "status": "SUCCESS", "response": json.dumps({"type": "result"}),
-    })
-    result = normalize.normalize(wrapper_with_no_findings_answer, envelope=envelope,
-                                 structured_output=True)
+    wrapper_with_no_findings_answer = json.dumps(
+        {
+            "status": "SUCCESS",
+            "response": json.dumps({"type": "result"}),
+        }
+    )
+    result = normalize.normalize(
+        wrapper_with_no_findings_answer, envelope=envelope, structured_output=True
+    )
     assert result.succeeded is False
     assert any("envelope path" in e for e in result.errors)
 
@@ -364,11 +371,15 @@ def test_structured_output_hint_is_suppressed_when_the_raw_retry_also_forces_it_
     output at all) must still produce no hint anywhere, on the direct
     attempt OR the raw retry."""
     envelope = Envelope(kind="json_path", path="response")
-    wrapper_with_no_findings_answer = json.dumps({
-        "status": "SUCCESS", "response": json.dumps({"type": "result"}),
-    })
-    result = normalize.normalize(wrapper_with_no_findings_answer, envelope=envelope,
-                                 structured_output=False)
+    wrapper_with_no_findings_answer = json.dumps(
+        {
+            "status": "SUCCESS",
+            "response": json.dumps({"type": "result"}),
+        }
+    )
+    result = normalize.normalize(
+        wrapper_with_no_findings_answer, envelope=envelope, structured_output=False
+    )
     assert result.succeeded is False
     assert not any("envelope path" in e for e in result.errors)
 
@@ -380,11 +391,21 @@ def test_envelope_retry_recovers_findings_the_direct_unwrap_alone_would_have_los
     findings are recovered only because normalize() retries against the
     untouched raw text instead of committing to the failed direct attempt."""
     envelope = Envelope(kind="json_path", path="response")
-    raw = json.dumps({
-        "response": "unrelated prose, not the answer",
-        "findings": [{"severity": "low", "claim": "c", "location": None,
-                     "evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}],
-    })
+    raw = json.dumps(
+        {
+            "response": "unrelated prose, not the answer",
+            "findings": [
+                {
+                    "severity": "low",
+                    "claim": "c",
+                    "location": None,
+                    "evidence": "e",
+                    "failure_scenario": "f",
+                    "suggested_fix": "s",
+                }
+            ],
+        }
+    )
     result = normalize.normalize(raw, envelope=envelope)
     assert result.succeeded is True
     assert result.payload["findings"][0]["claim"] == "c"
@@ -392,10 +413,12 @@ def test_envelope_retry_recovers_findings_the_direct_unwrap_alone_would_have_los
 
 def test_ndjson_envelope_retry_recovers_findings_past_a_matched_error_line():
     envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
-    raw = "\n".join([
-        json.dumps({"type": "error", "message": "rate limited, retrying"}),
-        GOOD,
-    ])
+    raw = "\n".join(
+        [
+            json.dumps({"type": "error", "message": "rate limited, retrying"}),
+            GOOD,
+        ]
+    )
     result = normalize.normalize(raw, envelope=envelope)
     assert result.succeeded is True
     assert result.payload["findings"][0]["claim"] == "c"
@@ -406,8 +429,10 @@ def test_structured_output_hint_does_not_fire_for_ordinary_schema_errors():
     that DOES have a findings key but fails schema validation (e.g. a bad
     severity enum) is the friend's own fault, not an envelope problem, and
     must keep its specific, existing error message unpolluted."""
-    raw = ('{"findings": [{"severity": "critical", "claim": "c", "location": null, '
-          '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}')
+    raw = (
+        '{"findings": [{"severity": "critical", "claim": "c", "location": null, '
+        '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}'
+    )
     result = normalize.normalize(raw, structured_output=True)
     assert result.succeeded is False
     assert any("severity" in e for e in result.errors)

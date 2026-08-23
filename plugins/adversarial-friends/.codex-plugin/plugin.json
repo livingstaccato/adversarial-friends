@@ -1,0 +1,35 @@
+{
+  "name": "adversarial-friends",
+  "version": "0.1.0",
+  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers for Codex.",
+  "author": {
+    "name": "Tim",
+    "url": "https://github.com/livingstaccato"
+  },
+  "homepage": "https://github.com/livingstaccato/adversarial-friends",
+  "repository": "https://github.com/livingstaccato/adversarial-friends",
+  "license": "MIT",
+  "keywords": [
+    "review",
+    "adversarial",
+    "multi-agent"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Adversarial Friends",
+    "shortDescription": "Challenge specs, plans, and reviews with other agent CLIs.",
+    "longDescription": "Adversarial Friends dispatches a spec, plan, or another reviewer's findings to other agent CLIs (claude, codex, agy, opencode) as independent adversarial reviewers, then merges their critiques into one ranked findings report.",
+    "developerName": "livingstaccato",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/livingstaccato/adversarial-friends",
+    "defaultPrompt": [
+      "Poke holes in this design doc using other models.",
+      "Get a second opinion on this review's findings.",
+      "Challenge this plan before I commit to it."
+    ]
+  }
+}

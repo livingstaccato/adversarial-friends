@@ -34,12 +34,13 @@ object's own top-level `findings` key). Both still use the real, declared
 `[envelope]` for their adapter -- only the surrounding content is
 constructed to reproduce the regression, not the envelope shape itself.
 """
+
 from pathlib import Path
 
 from adversarial_friends import adapters, normalize
 
 REPO = Path(__file__).resolve().parents[1]
-ADAPTER_DIR = REPO / "skills" / "adversarial-friends" / "adapters"
+ADAPTER_DIR = REPO / "src" / "adversarial_friends" / "assets" / "adapters"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -50,8 +51,9 @@ def _registry():
 def _normalize_fixture(cli_name: str, fixture_name: str) -> normalize.NormalizeResult:
     adapter = _registry()[cli_name]
     raw = (FIXTURES / fixture_name).read_text(encoding="utf-8")
-    return normalize.normalize(raw, envelope=adapter.envelope,
-                               structured_output=adapter.structured_output)
+    return normalize.normalize(
+        raw, envelope=adapter.envelope, structured_output=adapter.structured_output
+    )
 
 
 # --- agy: captured json_path envelope ("response") -------------------------
@@ -116,8 +118,9 @@ def test_opencode_error_ndjson_fixture_unwraps_the_real_error_message():
     adapter = _registry()["opencode"]
     raw = (FIXTURES / "opencode_error.ndjson").read_text(encoding="utf-8")
     unwrapped = normalize.unwrap_envelope(raw, adapter.envelope)
-    assert unwrapped == ("CLOUDFLARE_GATEWAY_ID missing. Set with: "
-                         "export CLOUDFLARE_GATEWAY_ID=<value>")
+    assert unwrapped == (
+        "CLOUDFLARE_GATEWAY_ID missing. Set with: export CLOUDFLARE_GATEWAY_ID=<value>"
+    )
     result = _normalize_fixture("opencode", "opencode_error.ndjson")
     assert result.succeeded is False
     # The unwrapped text (a plain error string, not JSON) fails on its own,
