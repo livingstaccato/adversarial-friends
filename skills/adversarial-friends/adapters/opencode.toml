@@ -5,7 +5,7 @@ base_argv = ["run", "--format", "json"]
 prompt_mode = "trailing-arg"
 readonly_argv = []
 schema_flag = ""
-model_flag = "-m"
+model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "unverified"
 

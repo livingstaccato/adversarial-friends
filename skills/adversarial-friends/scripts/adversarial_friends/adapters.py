@@ -47,11 +47,25 @@ class FriendSpec:
 
 
 def load_adapters(directory: Path) -> dict[str, Adapter]:
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise UsageError(f"adapter directory not found: {directory}")
+
     registry: dict[str, Adapter] = {}
-    for path in sorted(Path(directory).glob("*.toml")):
+    sources: dict[str, Path] = {}
+    for path in sorted(directory.glob("*.toml")):
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-        registry[data["name"]] = Adapter(
-            name=data["name"],
+        if "name" not in data:
+            raise UsageError(f"{path}: adapter TOML is missing required field 'name'")
+        name = data["name"]
+        if name in registry:
+            raise UsageError(
+                f"duplicate adapter name {name!r}: declared in both "
+                f"{sources[name]} and {path}"
+            )
+        sources[name] = path
+        registry[name] = Adapter(
+            name=name,
             binary=data.get("binary", ""),
             base_argv=list(data.get("base_argv", [])),
             prompt_mode=data.get("prompt_mode", "stdin"),
@@ -69,21 +83,31 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
 
 
 def build_argv(adapter: Adapter, spec: FriendSpec, prompt_file: Path,
-               schema_file: Path) -> tuple[list[str], str | None]:
-    """Return (argv, stdin_text).
+               schema_file: Path) -> tuple[list[str], str | None, Capability]:
+    """Return (argv, stdin_text, capability).
 
     Flag order matters: for adapters whose prompt is a flag *value*, every
     other flag must precede it, because a flag appearing after the prompt flag
     is swallowed as the prompt and the real prompt becomes an ignored
     positional — with a zero exit status.
+
+    Capability is computed from the flags this function actually decides to
+    emit, never by scanning the finished argv. The prompt text placed into
+    that argv is the untrusted document under review; a document that
+    happens to contain a flag's literal text (e.g. "Read,Grep,Glob") must
+    not be able to forge a capability by being present in the argv list.
     """
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     argv = [adapter.binary, *adapter.base_argv]
 
-    if spec.scope == "repo" and adapter.readonly_argv:
+    readonly_emitted = bool(spec.scope == "repo" and adapter.readonly_argv)
+    if readonly_emitted:
         argv += adapter.readonly_argv
-    if adapter.schema_flag:
+
+    schema_emitted = bool(adapter.schema_flag)
+    if schema_emitted:
         argv += [adapter.schema_flag, str(schema_file)]
+
     if spec.model and adapter.model_flag:
         argv += [adapter.model_flag, spec.model]
     if spec.effort:
@@ -98,19 +122,14 @@ def build_argv(adapter: Adapter, spec: FriendSpec, prompt_file: Path,
         # cannot silently disagree with the runner's kill deadline.
         argv += [adapter.internal_timeout_flag, f"{spec.timeout}s"]
 
-    if adapter.prompt_mode == "stdin":
-        return argv, prompt
-    if adapter.prompt_mode == "trailing-arg":
-        return argv + [prompt], None
-    if adapter.prompt_mode == "flag-value":
-        return argv + [adapter.prompt_flag, prompt], None
-    raise UsageError(f"unknown prompt_mode {adapter.prompt_mode!r}")
-
-
-def capability_for(adapter: Adapter, argv: list[str]) -> Capability:
-    """Capabilities come from the argv actually used, never from defaults."""
-    readonly = bool(adapter.readonly_argv) and all(
-        token in argv for token in adapter.readonly_argv
+    capability = Capability(
+        schema=schema_emitted, readonly=readonly_emitted, effort=adapter.effort_kind,
     )
-    schema = bool(adapter.schema_flag) and adapter.schema_flag in argv
-    return Capability(schema=schema, readonly=readonly, effort=adapter.effort_kind)
+
+    if adapter.prompt_mode == "stdin":
+        return argv, prompt, capability
+    if adapter.prompt_mode == "trailing-arg":
+        return argv + [prompt], None, capability
+    if adapter.prompt_mode == "flag-value":
+        return argv + [adapter.prompt_flag, prompt], None, capability
+    raise UsageError(f"unknown prompt_mode {adapter.prompt_mode!r}")

@@ -1,6 +1,6 @@
 name = "claude"
 binary = "claude"
-base_argv = ["-p", "--output-format", "json"]
+base_argv = ["--print", "--output-format", "json"]
 prompt_mode = "trailing-arg"
 readonly_argv = ["--tools", "Read,Grep,Glob"]
 schema_flag = "--json-schema"
