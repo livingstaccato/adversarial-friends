@@ -60,7 +60,7 @@ running under. The runner itself is **stdlib-only** — zero runtime
 dependencies.
 
 ```bash
-uv tool install git+ssh://git@github.com/livingstaccato/adversarial-friends
+uv tool install git+https://github.com/livingstaccato/adversarial-friends
 ```
 
 <details>

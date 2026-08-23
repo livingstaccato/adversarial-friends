@@ -32,7 +32,7 @@ afriend run <artifact> --mode report
 This skill drives the `afriend` console script, which comes from the
 `adversarial-friends` Python package. If `afriend` is not on `PATH`, the
 skill cannot run — install it with
-`uv tool install git+ssh://git@github.com/livingstaccato/adversarial-friends`
+`uv tool install git+https://github.com/livingstaccato/adversarial-friends`
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
 
 `<artifact>` is a path to a file — a spec, a plan, a review someone else
