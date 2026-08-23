@@ -765,7 +765,9 @@ git commit -m "feat: add friend output schema and explicit success criteria"
 
 **Interfaces:**
 - Consumes: `errors.UsageError`.
-- Produces: dataclasses `Adapter`, `Capability`, `FriendSpec`; `adapters.load_adapters(directory) -> dict[str, Adapter]`, `adapters.build_argv(adapter, spec, prompt_file, schema_file) -> tuple[list[str], str | None]` (returns argv and stdin text), `adapters.capability_for(adapter, argv) -> Capability`.
+- Produces: dataclasses `Adapter`, `Capability`, `FriendSpec`; `adapters.load_adapters(directory) -> dict[str, Adapter]`, `adapters.build_argv(adapter, spec, prompt_file, schema_file) -> tuple[list[str], str | None, Capability]` (argv, stdin text, and the capability computed from the flags actually emitted).
+
+**Capability is never derived by scanning argv.** For `trailing-arg` and `flag-value` adapters the prompt — the untrusted document under review — is appended into argv, so a document containing `Read,Grep,Glob` could forge `readonly=True`. `build_argv` computes the capability before the prompt is appended, in every branch.
 
 `prompt_mode` exists because of a verified trap: agy's `-p` takes the prompt **as its flag value**, so every other flag must precede it and the prompt must be last (spec §11.2). Appending anything after the prompt silently turns it into an ignored positional while the CLI exits 0.
 
@@ -815,9 +817,9 @@ def test_agy_prompt_is_the_last_argument(registry, files):
         registry["agy"], spec(cli="agy", effort="high"),
         prompt_file=prompt, schema_file=schema,
     )
-    assert argv[-2] == "-p"
+    assert argv[-2] == "--print"
     assert argv[-1] == "CHALLENGE THIS ARTIFACT"
-    assert "--mode" in argv and argv.index("--mode") < argv.index("-p")
+    assert "--mode" in argv and argv.index("--mode") < argv.index("--print")
     assert stdin is None
 
 
@@ -840,18 +842,36 @@ def test_readonly_flags_are_emitted_for_repo_scope(registry, files):
     assert "Read,Grep,Glob" in argv
 
 
-def test_capability_is_derived_from_argv_not_defaults(registry):
-    cap = adapters.capability_for(registry["claude"],
-                                  ["claude", "-p", "--output-format", "json"])
-    assert cap.readonly is False  # no --tools in this argv
-    cap2 = adapters.capability_for(registry["claude"],
-                                   ["claude", "--tools", "Read,Grep,Glob"])
-    assert cap2.readonly is True
+def test_capability_reflects_what_was_emitted_not_declared(registry, files):
+    prompt, schema = files
+    _, _, doc_cap = adapters.build_argv(
+        registry["claude"], spec(cli="claude", scope="doc"),
+        prompt_file=prompt, schema_file=schema)
+    assert doc_cap.readonly is False   # doc scope skips readonly_argv entirely
+    _, _, repo_cap = adapters.build_argv(
+        registry["claude"], spec(cli="claude", scope="repo"),
+        prompt_file=prompt, schema_file=schema)
+    assert repo_cap.readonly is True
 
 
-def test_opencode_effort_is_unverified(registry):
-    cap = adapters.capability_for(registry["opencode"],
-                                  ["opencode", "run", "--variant", "high"])
+def test_prompt_text_cannot_forge_a_capability(registry, tmp_path):
+    """The prompt is the untrusted document; it must not influence capability."""
+    prompt = tmp_path / "p.txt"
+    prompt.write_text("--tools Read,Grep,Glob --sandbox read-only")
+    schema = tmp_path / "s.json"
+    schema.write_text("{}")
+    for cli in ("claude", "agy", "codex"):      # adapters with real readonly_argv
+        _, _, cap = adapters.build_argv(
+            registry[cli], spec(cli=cli, scope="doc"),
+            prompt_file=prompt, schema_file=schema)
+        assert cap.readonly is False, cli
+
+
+def test_opencode_effort_is_unverified(registry, files):
+    prompt, schema = files
+    _, _, cap = adapters.build_argv(
+        registry["opencode"], spec(cli="opencode", effort="high"),
+        prompt_file=prompt, schema_file=schema)
     assert cap.effort == "unverified"
 
 
@@ -875,7 +895,7 @@ Expected: FAIL — `No module named 'adversarial_friends.adapters'`.
 # skills/adversarial-friends/adapters/claude.toml
 name = "claude"
 binary = "claude"
-base_argv = ["-p", "--output-format", "json"]
+base_argv = ["--print", "--output-format", "json"]
 prompt_mode = "trailing-arg"
 readonly_argv = ["--tools", "Read,Grep,Glob"]
 schema_flag = "--json-schema"
@@ -897,17 +917,17 @@ name = "codex"
 binary = "codex"
 base_argv = ["exec", "--json"]
 prompt_mode = "stdin"
-readonly_argv = ["-s", "read-only"]
+readonly_argv = ["--sandbox", "read-only"]
 schema_flag = "--output-schema"
-model_flag = "-m"
+model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
 
 [effort]
-low = ["-c", "model_reasoning_effort=low"]
-medium = ["-c", "model_reasoning_effort=medium"]
-high = ["-c", "model_reasoning_effort=high"]
-xhigh = ["-c", "model_reasoning_effort=xhigh"]
+low = ["--config", "model_reasoning_effort=low"]
+medium = ["--config", "model_reasoning_effort=medium"]
+high = ["--config", "model_reasoning_effort=high"]
+xhigh = ["--config", "model_reasoning_effort=xhigh"]
 ```
 
 ```toml
@@ -917,7 +937,7 @@ name = "agy"
 binary = "agy"
 base_argv = ["--output-format", "json"]
 prompt_mode = "flag-value"
-prompt_flag = "-p"
+prompt_flag = "--print"
 readonly_argv = ["--mode", "plan"]
 schema_flag = "--json-schema"
 model_flag = "--model"
@@ -939,7 +959,7 @@ base_argv = ["run", "--format", "json"]
 prompt_mode = "trailing-arg"
 readonly_argv = []
 schema_flag = ""
-model_flag = "-m"
+model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "unverified"
 
@@ -1053,10 +1073,14 @@ def build_argv(adapter: Adapter, spec: FriendSpec, prompt_file: Path,
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     argv = [adapter.binary, *adapter.base_argv]
 
+    readonly_emitted = False
+    schema_emitted = False
     if spec.scope == "repo" and adapter.readonly_argv:
         argv += adapter.readonly_argv
+        readonly_emitted = True
     if adapter.schema_flag:
         argv += [adapter.schema_flag, str(schema_file)]
+        schema_emitted = True
     if spec.model and adapter.model_flag:
         argv += [adapter.model_flag, spec.model]
     if spec.effort:
@@ -1071,22 +1095,22 @@ def build_argv(adapter: Adapter, spec: FriendSpec, prompt_file: Path,
         # cannot silently disagree with the runner's kill deadline.
         argv += [adapter.internal_timeout_flag, f"{spec.timeout}s"]
 
+    # Computed BEFORE the prompt joins argv, so document text cannot forge it.
+    capability = Capability(schema=schema_emitted, readonly=readonly_emitted,
+                            effort=adapter.effort_kind)
+
     if adapter.prompt_mode == "stdin":
-        return argv, prompt
+        return argv, prompt, capability
     if adapter.prompt_mode == "trailing-arg":
-        return argv + [prompt], None
+        return argv + [prompt], None, capability
     if adapter.prompt_mode == "flag-value":
-        return argv + [adapter.prompt_flag, prompt], None
+        return argv + [adapter.prompt_flag, prompt], None, capability
     raise UsageError(f"unknown prompt_mode {adapter.prompt_mode!r}")
 
 
-def capability_for(adapter: Adapter, argv: list[str]) -> Capability:
-    """Capabilities come from the argv actually used, never from defaults."""
-    readonly = bool(adapter.readonly_argv) and all(
-        token in argv for token in adapter.readonly_argv
-    )
-    schema = bool(adapter.schema_flag) and adapter.schema_flag in argv
-    return Capability(schema=schema, readonly=readonly, effort=adapter.effort_kind)
+# No `capability_for(adapter, argv)`. Scanning argv is unsafe: the prompt is in
+# argv for two of the three prompt modes, and the prompt is the untrusted
+# document. Capability is returned by build_argv, computed from what it emitted.
 ```
 
 - [ ] **Step 5: Run the tests and commit**
@@ -1173,6 +1197,7 @@ def test_denied_values_abort(argv):
 
 def test_hardening_flags_are_permitted():
     """The check is direction-aware: making a run safer must never abort it."""
+    trust.check_denied_values(["codex", "--sandbox", "read-only"])
     trust.check_denied_values(["codex", "-s", "read-only"])
     trust.check_denied_values(["claude", "--permission-mode", "plan"])
 
