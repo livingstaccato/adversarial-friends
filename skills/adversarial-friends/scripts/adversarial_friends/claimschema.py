@@ -47,6 +47,14 @@ def validate_payload(payload: dict) -> list[str]:
     if not isinstance(payload, dict):
         return ["payload is not an object"]
     if payload.get("no_findings") is True:
+        # When no_findings is True, findings must be absent or empty
+        findings = payload.get("findings")
+        if findings is not None:
+            if not isinstance(findings, list) or findings:
+                errors.append(
+                    "payload asserts no_findings but also carries findings; "
+                    "contradictory output indicates confused friend"
+                )
         return errors
     findings = payload.get("findings")
     if not isinstance(findings, list):
@@ -64,6 +72,10 @@ def validate_payload(payload: dict) -> list[str]:
             errors.append(
                 f"findings[{index}].severity {severity!r} not in {SEVERITIES}"
             )
+        # Validate location field - must be string or null
+        location = finding.get("location")
+        if location is not None and not isinstance(location, str):
+            errors.append(f"findings[{index}].location must be string or null, not {type(location).__name__}")
     return errors
 
 
