@@ -29,6 +29,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -410,6 +411,50 @@ def test_cli_run_passes_timeout_through_to_roster_resolve(monkeypatch, tmp_path)
     with pytest.raises(_StopAfterResolve):
         cli.cmd_run(parsed)
     assert captured.get("timeout") == 37
+
+
+def test_cmd_run_from_a_background_thread_completes_rather_than_raising(monkeypatch, tmp_path):
+    """Task 12 re-review, round 2, Finding 1 (Important): signal.signal()
+    only works from the main thread of the main interpreter and raises
+    ValueError from anywhere else. Before this fix, cmd_run called
+    signal.signal() unguarded, so invoking it from a caller's own
+    threading.Thread raised ValueError before cmd_run's own try even
+    began -- no exit code, no report, no teardown attempted. cmd_run's own
+    comment frames it as "library-ish" (the justification for restoring
+    handlers unconditionally), so a non-main-thread caller is an audience
+    the code already contemplates. Threads swallow exceptions raised in
+    their target silently (they do not propagate to the joining thread),
+    so this test captures the outcome through a shared dict rather than
+    wrapping thread.join() in a bare try/except."""
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    parser = cli.build_parser()
+    parsed = parser.parse_args([
+        "run", str(artifact), "--mode", "report",
+        "--out", str(tmp_path / "runs"), "--friend", "fake:good",
+    ])
+    outcome: dict = {}
+
+    def _target():
+        try:
+            outcome["returncode"] = cli.cmd_run(parsed)
+        except BaseException as exc:  # capturing intentionally, any exception counts
+            outcome["exception"] = exc
+
+    thread = threading.Thread(target=_target)
+    thread.start()
+    thread.join(timeout=15)
+
+    assert not thread.is_alive(), "cmd_run did not complete within 15s from a background thread"
+    assert "exception" not in outcome, f"cmd_run raised from a background thread: {outcome.get('exception')!r}"
+    assert outcome.get("returncode") == 0, outcome
+
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert any("main thread" in note for note in meta["downgrades"]), (
+        "run completed but never recorded that signal-based abort was unavailable"
+    )
 
 
 # --- Signal teardown (Task 12 review, Finding 1) -------------------------

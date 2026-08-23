@@ -253,6 +253,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # `finally` blocks below reachable promptly. Handlers are restored
     # unconditionally in the outer `finally` -- a library-ish function
     # should not permanently hijack process-wide signal disposition.
+    downgrades: list[str] = []
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
@@ -272,10 +273,33 @@ def cmd_run(args: argparse.Namespace) -> int:
         if pool is not None:
             pool.shutdown(wait=False, cancel_futures=True)
 
-    previous_sigint = signal.signal(signal.SIGINT, _handle_abort)
-    previous_sigterm = signal.signal(signal.SIGTERM, _handle_abort)
+    # signal.signal() only works from the main thread of the main
+    # interpreter -- called from anywhere else (a caller's own
+    # threading.Thread invoking cmd_run directly, e.g.) it raises
+    # ValueError. cmd_run is "library-ish" (the same premise behind
+    # restoring handlers unconditionally below), so a non-main-thread
+    # caller is a real, contemplated audience, not a hypothetical one --
+    # this must degrade, not crash before the try/finally below even
+    # starts. installed_handlers records exactly which signals were
+    # actually captured so the finally below restores only those, and the
+    # degradation itself is recorded in `downgrades` (the same place an
+    # artifact-outside-a-repo downgrade goes) so a run that cannot be
+    # signal-aborted is visible in run.json rather than looking identical
+    # to one that can be.
+    installed_handlers: dict[int, object] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            installed_handlers[sig] = signal.signal(sig, _handle_abort)
+        except ValueError:
+            pass
+    if len(installed_handlers) < 2:
+        downgrades.append(
+            "signal-based abort handling is unavailable in this context "
+            "(cmd_run was not called from the main thread); Ctrl-C/SIGTERM "
+            "cannot cleanly abort this run -- isolation teardown on a kill "
+            "signal is not guaranteed."
+        )
     try:
-        downgrades: list[str] = []
         repo_root = _resolve_repo_root(artifact)
         if repo_root is None:
             downgrades.append(
@@ -427,8 +451,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # fires before any friend is even dispatched.
         return 0 if any_success else 1
     finally:
-        signal.signal(signal.SIGINT, previous_sigint)
-        signal.signal(signal.SIGTERM, previous_sigterm)
+        for sig, previous in installed_handlers.items():
+            signal.signal(sig, previous)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
