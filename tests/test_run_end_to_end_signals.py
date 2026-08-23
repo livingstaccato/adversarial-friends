@@ -92,6 +92,12 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
         # Wait for the friend (fake_friend.py in "hang" mode) to actually
         # start and for it to have spawned its own child, so the signal is
         # sent to a genuinely live process tree, not a not-yet-started one.
+        # 30s, not the 10s default: repo scope does a snapshot commit and a
+        # `git worktree add` *before* the friend is ever spawned, and on a
+        # cold CI runner those git operations are far slower than locally.
+        # This window only bounds "has it started yet", so being generous
+        # costs nothing on a fast machine and removes a false failure on a
+        # slow one.
         friend_pid = _wait_until(
             lambda: next(
                 (
@@ -100,9 +106,30 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
                     if ppid == proc.pid and "fake_friend.py" in cmd and "hang" in cmd
                 ),
                 None,
-            )
+            ),
+            timeout=30.0,
         )
-        assert friend_pid, "friend process never started within the wait window"
+        if not friend_pid:
+            # Asserting bare here reports "never started" and nothing else,
+            # which is unactionable when it happens on CI and not locally --
+            # the interesting case is afriend having already died before it
+            # ever dispatched, taking its reason with it.
+            if proc.poll() is not None:
+                out, err = proc.communicate(timeout=10)
+                raise AssertionError(
+                    f"friend never started: afriend already exited "
+                    f"{proc.returncode} before dispatching.\n"
+                    f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+                )
+            visible = "\n".join(
+                f"  pid={pid} ppid={ppid} {cmd[:120]}"
+                for pid, ppid, cmd in _ps_all()
+                if "fake_friend" in cmd or "afriend" in cmd or ppid == proc.pid
+            )
+            raise AssertionError(
+                f"friend never started within 30s, but afriend (pid {proc.pid}) "
+                f"is still running. Related processes:\n{visible or '  (none)'}"
+            )
         child_pid = _wait_until(
             lambda: next(
                 (
