@@ -1,6 +1,9 @@
 import os
 import signal
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,7 @@ def test_successful_run_is_marked_succeeded():
     result = spawn.run_process([sys.executable, FAKE, "good"], None, 30, Path.cwd())
     assert result.exit_code == 0
     assert result.result.succeeded is True
+    assert result.orphans_suspected is False
 
 
 def test_nonzero_exit_is_a_failure():
@@ -41,13 +45,17 @@ def test_no_findings_marker_is_a_success():
 
 
 def test_timeout_kills_the_whole_process_group(tmp_path):
-    """Corrected from the brief: rather than parsing a child pid out of
-    stdout captured *after* a SIGKILL (not guaranteed to be flushed/read by
-    then), have the fake friend write its child's pid to a file passed via
-    argv before it hangs, then assert on that file once the timeout has been
-    handled. run_process() only returns once the group has been confirmed
-    gone (see spawn._wait_until_gone), so no extra sleep is needed here to
-    avoid a race against the kill.
+    """Corrected from the brief, as added robustness: rather than parsing a
+    child pid out of stdout captured after a SIGKILL, have the fake friend
+    write its child's pid to a file passed via argv before it hangs, then
+    assert on that file once the timeout has been handled. (The stdout-based
+    approach was checked directly against this implementation and passed
+    5/5 -- the pump threads here drain continuously rather than only after
+    the kill, so it isn't actually at risk of the truncation this rewrite
+    guards against in general. The pidfile is kept anyway: it asserts the
+    property directly instead of through an incidental side channel.)
+    run_process() only returns once the group sweep has completed, so no
+    extra sleep is needed here to avoid a race against the kill.
     """
     pidfile = tmp_path / "child.pid"
     result = spawn.run_process(
@@ -153,12 +161,78 @@ def test_setsid_escapee_is_not_reaped(tmp_path):
         [sys.executable, FAKE, "escape", str(pidfile)], None, 2, Path.cwd(),
     )
     assert result.timed_out is True
+    assert result.orphans_suspected is True
     escapee_pid = int(pidfile.read_text().strip())
     # No ProcessLookupError here: the escapee is still alive. Demonstrate
     # that, then kill it directly (not via the runner) so the test suite
     # doesn't leave a stray sleeping process behind.
     os.kill(escapee_pid, 0)  # does not raise: still alive
     os.kill(escapee_pid, signal.SIGKILL)
+
+
+def test_missing_binary_returns_a_spawn_result_not_an_exception():
+    """run_process's signature says -> SpawnResult. The brief's Step 3 code
+    only wrapped communicate() in try/except, so a missing binary raised
+    FileNotFoundError straight out of Popen(). Task 12 calls this inside a
+    thread pool, where an escaping exception would take down the whole
+    dispatch instead of marking one friend failed."""
+    missing = "/usr/bin/nope-does-not-exist-adversarial-friends"
+    result = spawn.run_process([missing, "--anything"], None, 5, Path.cwd())
+    assert result.exit_code is None
+    assert result.timed_out is False
+    assert result.orphans_suspected is False
+    assert result.stdout == ""
+    assert result.result.succeeded is False
+    assert result.failure_reason == f"binary not found: {missing}"
+
+
+def test_non_executable_binary_returns_a_spawn_result_not_an_exception(tmp_path):
+    not_executable = tmp_path / "not-a-real-cli.sh"
+    not_executable.write_text("#!/bin/sh\necho hi\n")
+    not_executable.chmod(0o644)  # no execute bit
+    result = spawn.run_process([str(not_executable)], None, 5, Path.cwd())
+    assert result.exit_code is None
+    assert result.timed_out is False
+    assert result.orphans_suspected is False
+    assert result.failure_reason == f"binary not executable: {not_executable}"
+
+
+def test_setsid_escape_does_not_leak_pump_threads():
+    """Finding: the earlier implementation's daemon pump threads blocked
+    forever in a plain readline() on a pipe an escaped descendant held
+    open, and never exited -- confirmed to reproduce on the first escape
+    and compound linearly (5 invocations -> 10 leaked threads). The fix
+    (non-blocking reads polled via selectors, gated by a stop_event set
+    once the process-group sweep is done) is verified here directly: run
+    the escape scenario repeatedly and assert the live thread count returns
+    to its starting value instead of growing."""
+    baseline = threading.active_count()
+    escapee_pids = []
+    for i in range(20):
+        pidfile = Path(tempfile.mkdtemp()) / f"escapee-{i}.pid"
+        result = spawn.run_process(
+            [sys.executable, FAKE, "escape", str(pidfile)], None, 2, Path.cwd(),
+        )
+        assert result.orphans_suspected is True
+        escapee_pids.append(int(pidfile.read_text().strip()))
+
+    # Give any thread that is (unexpectedly) still winding down a brief
+    # window, then assert we're back at baseline -- not just "lower than
+    # the worst case during the loop".
+    deadline = time.monotonic() + 2.0
+    while threading.active_count() > baseline and time.monotonic() < deadline:
+        time.sleep(0.05)
+    after = threading.active_count()
+
+    for pid in escapee_pids:
+        try:
+            os.kill(pid, signal.SIGKILL)  # clean up the 20 escapees directly
+        except ProcessLookupError:
+            pass
+
+    assert after == baseline, (
+        f"thread count did not return to baseline: before={baseline} after={after}"
+    )
 
 
 def test_nonzero_exit_with_otherwise_valid_output_is_still_a_failure():
