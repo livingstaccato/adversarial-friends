@@ -7,14 +7,15 @@ schema_flag = "--json-schema"
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
-# --output-format json wraps the answer in an envelope of claude's own; its
-# real shape has not been captured (capturing it costs a metered call --
-# see normalize.py's module docstring), so no [envelope] is declared. Do
-# NOT invent one: structured_output=true alone is enough for normalize() to
-# report an honest, actionable failure ("...may need an envelope path")
-# instead of a silent/confusing "no findings" when this envelope's wrapper
-# object is mistaken for the answer.
+# --output-format json wraps the answer in claude's own envelope. Captured
+# from claude 2.1.240 on 2026-08-23: a single JSON object with
+# type="result", subtype="success", and the model's answer in `result` as a
+# JSON-escaped string, alongside session_id/usage/total_cost_usd.
 structured_output = true
+
+[envelope]
+kind = "json_path"
+path = "result"
 
 [effort]
 low = ["--effort", "low"]

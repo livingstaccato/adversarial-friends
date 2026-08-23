@@ -78,11 +78,13 @@ class Envelope:
       in `rules`, and every match's `field` is extracted (opencode: an
       `"error"` event's `error.data.message`).
 
-    There is deliberately no third kind for "I'm not sure" -- an adapter
-    whose real envelope shape has not been captured (claude, codex) simply
-    has no `envelope` at all; see normalize()'s `structured_output`
-    parameter for how that case is still made legible without guessing a
-    shape.
+    There is deliberately no third kind for "I'm not sure". An adapter whose
+    real envelope shape has not been captured simply has no `envelope` at
+    all; see normalize()'s `structured_output` parameter for how that case
+    is made legible without guessing a shape. All five shipped adapters now
+    declare one, captured from the real CLIs -- but the no-envelope path
+    remains the correct default for any adapter added before someone has
+    run it and saved its stdout.
     """
     kind: str
     path: str = ""

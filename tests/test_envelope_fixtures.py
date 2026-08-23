@@ -13,18 +13,16 @@ real critique, so a second fixture proves the field, once isolated, is
 handed back through the SAME extract/validate logic every other adapter
 uses, not something bespoke to agy.
 
-claude and codex: their real envelope shape has not been captured (doing so
-costs a metered call against a live API, which this suite must never make --
-see the repo's test constraints). No [envelope] is declared for either
-adapter (see adapters/claude.toml, adapters/codex.toml), so normalize() never
-attempts to unwrap their output at all -- it falls straight to the same
-bare-object scan every adapter used before envelopes existed. The two
-`*_UNVERIFIED.json` fixtures below are a synthetic bare-findings-object
-case, included ONLY to prove that scan still works unchanged now that
-structured_output=True is set for these two adapters (see
-test_normalize.py's structured_output tests for the mechanism this enables).
-They are explicitly NOT a claim about what claude/codex's real stdout looks
-like -- nobody should mistake them for captured output.
+claude and codex: captured 2026-08-23 by running each CLI once on its own
+subscription plan (not a metered API key) and saving stdout verbatim.
+claude 2.1.240 emits a single JSON object with type="result" and the answer
+in `result` as a JSON-escaped string. codex 0.149.0 emits an NDJSON event
+stream -- thread.started, turn.started, item.completed, turn.completed --
+with the answer in the item.completed event whose item.type is
+"agent_message", at item.text. codex additionally writes a non-JSON line
+("Reading additional input from stdin...") to stdout, so its fixture also
+exercises the NDJSON reader's requirement to skip unparseable lines rather
+than fail on them.
 
 opencode_error_then_findings.ndjson / agy_response_prose_with_top_level_findings.json:
 added for the whole-branch re-review's Regression 1 -- an envelope rule
@@ -171,22 +169,24 @@ def test_ndjson_stream_with_a_benign_error_event_and_real_findings_still_succeed
     assert result.payload["findings"][0]["claim"] == "the guard is missing"
 
 
-# --- claude / codex: no envelope declared; bare-object case unaffected ----
+# --- claude / codex: real captured stdout through declared envelopes ------
 
 
-def test_claude_bare_object_fixture_still_normalizes_successfully():
-    """UNVERIFIED fixture (see this module's docstring): claude's real
-    envelope shape is unknown, so no [envelope] is declared, so this must
-    hit the exact same bare-object scan path as before envelopes existed.
-    structured_output=True is set for claude, but the enrichment only fires
-    when there's no findings key at all -- this payload has one and
-    validates cleanly, so it must succeed unchanged."""
-    result = _normalize_fixture("claude", "claude_stdout_bare_UNVERIFIED.json")
+def test_claude_captured_stdout_normalizes_successfully():
+    """Real claude 2.1.240 stdout, captured verbatim. The answer lives in
+    `result` as a JSON-escaped string, so this only passes if the declared
+    json_path envelope actually unwraps it -- the bare-object scan alone
+    cannot reach inside a JSON string."""
+    result = _normalize_fixture("claude", "claude_stdout_captured.json")
     assert result.succeeded is True
-    assert result.payload["findings"][0]["claim"] == "missing input validation"
+    assert result.payload == {"no_findings": True}
 
 
-def test_codex_bare_object_fixture_still_normalizes_successfully():
-    result = _normalize_fixture("codex", "codex_stdout_bare_UNVERIFIED.json")
+def test_codex_captured_stdout_normalizes_successfully():
+    """Real codex 0.149.0 stdout, captured verbatim, including the non-JSON
+    "Reading additional input from stdin..." line it writes before the event
+    stream. Passing requires both skipping that line and selecting the
+    item.completed event rather than any other."""
+    result = _normalize_fixture("codex", "codex_stdout_captured.jsonl")
     assert result.succeeded is True
-    assert result.payload["findings"][0]["claim"] == "log line leaks a token"
+    assert result.payload == {"no_findings": True}

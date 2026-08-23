@@ -7,11 +7,21 @@ schema_flag = "--output-schema"
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
-# --json wraps the answer in an envelope of codex's own; its real shape has
-# not been captured (capturing it costs a metered call -- see normalize.py's
-# module docstring), so no [envelope] is declared -- see claude.toml's
-# comment for why that is deliberate, not an oversight.
+# --json emits an NDJSON event stream, not a single object. Captured from
+# codex 0.149.0 on 2026-08-23: thread.started, turn.started, item.completed,
+# turn.completed -- with the model's answer in the item.completed event whose
+# item.type is "agent_message", at item.text as a JSON-escaped string. Note
+# codex also writes a non-JSON line ("Reading additional input from stdin...")
+# to stdout, so the NDJSON reader must skip unparseable lines rather than fail.
 structured_output = true
+
+[envelope]
+kind = "ndjson"
+match_field = "type"
+
+[[envelope.rules]]
+type = "item.completed"
+field = "item.text"
 
 [effort]
 low = ["--config", "model_reasoning_effort=low"]
