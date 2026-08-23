@@ -61,10 +61,13 @@ def exact_merge(existing: list[Claim], incoming: list[Claim],
     origin directly; for a canonical that came from `existing`, the caller
     cannot see that origin grow any other way -- `existing` is read-only
     here -- so `updated_existing` returns a fresh (never the original)
-    `Claim` for every `existing` entry whose origin actually changed, in
-    `existing`'s own order. It is the caller's job to fold these back into
-    whatever list of claims it is tracking (e.g. for later merge calls and
-    for rendering); this module has no ledger/storage concept of its own.
+    `Claim` for every `existing` entry whose origin actually changed, in the
+    order each change was first detected while scanning `incoming` (NOT
+    `existing`'s own order -- a later `existing` entry can be the first one
+    that happens to get aliased into). It is the caller's job to fold these
+    back into whatever list of claims it is tracking (e.g. for later merge
+    calls and for rendering); this module has no ledger/storage concept of
+    its own.
     """
     seen: dict[tuple[str, str], str] = {}
     origin_of: dict[str, list[str]] = {}

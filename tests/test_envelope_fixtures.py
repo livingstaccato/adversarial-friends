@@ -25,6 +25,16 @@ structured_output=True is set for these two adapters (see
 test_normalize.py's structured_output tests for the mechanism this enables).
 They are explicitly NOT a claim about what claude/codex's real stdout looks
 like -- nobody should mistake them for captured output.
+
+opencode_error_then_findings.ndjson / agy_response_prose_with_top_level_findings.json:
+added for the whole-branch re-review's Regression 1 -- an envelope rule
+matching something OTHER than the real answer (a benign "rate limited,
+retrying" error event; a `response` field full of unrelated prose) must not
+make normalize() commit to that match exclusively when real findings are
+sitting elsewhere in the same output (a second NDJSON line; the envelope
+object's own top-level `findings` key). Both still use the real, declared
+`[envelope]` for their adapter -- only the surrounding content is
+constructed to reproduce the regression, not the envelope shape itself.
 """
 from pathlib import Path
 
@@ -59,14 +69,18 @@ def test_agy_success_findings_fixture_unwraps_to_the_real_finding():
 def test_agy_success_response_ok_fixture_is_a_legible_non_json_failure():
     """The literal captured example from the review has response="ok\\n" --
     a trivial, non-JSON answer (not a real critique). Once unwrapped, "ok\\n"
-    correctly fails to parse as JSON; this is NOT the "structured wrapper
-    with no findings" case (that requires the WRAPPER itself, post-fallback,
-    to be the thing that parsed as JSON) -- see the error fixture below for
-    that one."""
+    correctly fails to parse as JSON on its own -- but that failure is not
+    the end of it: normalize() retries the scan against the untouched raw
+    envelope (post-wave regression fix -- see
+    test_ndjson_stream_with_a_benign_error_event_and_real_findings_still_succeeds
+    for why this retry exists at all), and the raw envelope itself DOES
+    parse as JSON (it's the whole wrapper object), just with no findings
+    key -- so the final result carries the structured_output hint, the same
+    outcome as the error fixture below, not a bare 'no parseable JSON'."""
     result = _normalize_fixture("agy", "agy_success_response_ok.json")
     assert result.succeeded is False
-    assert result.payload is None
-    assert "no parseable JSON" in result.errors[0]
+    assert result.payload is not None  # the raw envelope itself parsed as JSON
+    assert any("envelope path" in e for e in result.errors)
 
 
 def test_agy_error_fixture_falls_back_and_reports_legibly():
@@ -82,6 +96,21 @@ def test_agy_error_fixture_falls_back_and_reports_legibly():
     assert any("envelope path" in e for e in result.errors)
 
 
+def test_agy_response_prose_with_top_level_findings_still_succeeds():
+    """Regression (post-wave re-review): a captured-shape envelope whose
+    `response` field holds unrelated prose (agy answering conversationally
+    instead of with JSON) while the ENVELOPE OBJECT ITSELF -- one level up
+    -- also happens to carry a valid top-level `findings` array. Before the
+    fix, committing to the unwrapped `response` text exclusively (it fails
+    to parse, since it's plain prose) discarded this real, schema-valid
+    `findings` array sitting right next to it -- an outcome that used to
+    succeed via the plain raw-text scan, before this adapter had an
+    envelope at all."""
+    result = _normalize_fixture("agy", "agy_response_prose_with_top_level_findings.json")
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "missing rate limit on login endpoint"
+
+
 # --- opencode: captured ndjson envelope (the "error" event only) ----------
 
 
@@ -93,13 +122,18 @@ def test_opencode_error_ndjson_fixture_unwraps_the_real_error_message():
                          "export CLOUDFLARE_GATEWAY_ID=<value>")
     result = _normalize_fixture("opencode", "opencode_error.ndjson")
     assert result.succeeded is False
-    # The unwrapped text is a plain error string, not JSON -- correctly a
-    # "no parseable JSON" failure, not a confusing scan across the whole
-    # NDJSON stream (which would otherwise pick up some other event object
-    # as a false candidate; see the step_finish-only fixture below for that
-    # scan instead firing on the fallback path, which is a REAL success for
-    # the mechanism doing its job on the shape we do know).
-    assert "no parseable JSON" in result.errors[0]
+    # The unwrapped text (a plain error string, not JSON) fails on its own,
+    # so normalize() retries against the raw NDJSON text -- which DOES
+    # contain a parseable JSON object (the error event itself, as its own
+    # bare top-level object), just with no findings key. Same outcome as
+    # the step_finish-only fixture below, reached via the other code path
+    # (there, unwrapping finds nothing at all; here, it finds text that
+    # itself fails to parse) -- see
+    # test_ndjson_stream_with_a_benign_error_event_and_real_findings_still_succeeds
+    # for the case where the retry actually recovers real findings instead.
+    assert result.payload is not None
+    assert "payload has neither" in result.errors[0]
+    assert any("envelope path" in e for e in result.errors)
 
 
 def test_opencode_step_finish_only_fixture_falls_back_and_reports_legibly():
@@ -115,6 +149,26 @@ def test_opencode_step_finish_only_fixture_falls_back_and_reports_legibly():
     assert result.succeeded is False
     assert result.payload is not None
     assert any("envelope path" in e for e in result.errors)
+
+
+def test_ndjson_stream_with_a_benign_error_event_and_real_findings_still_succeeds():
+    """The exact regression reproduced by the re-review: an opencode-shaped
+    NDJSON stream whose FIRST line matches the declared "error" rule with a
+    benign, non-fatal message ("rate limited, retrying" -- opencode's own
+    protocol overloads the "error" event type for transient conditions, not
+    only fatal ones), followed by a second line that is a clean, schema-valid
+    findings object. Before the fix, matching the error rule at all meant
+    the unwrapped (error-message) text was used EXCLUSIVELY -- that text
+    fails to parse, so the real findings sitting one line later were
+    silently discarded and the run reported a status that was actively
+    false ("no parseable JSON object" when the stdout plainly contained
+    one). opencode's only declared rule is the error rule (see
+    adapters/opencode.toml), so before this fix ANY error event anywhere in
+    a stream disabled findings extraction entirely, for every real
+    opencode run that hit one, however transient."""
+    result = _normalize_fixture("opencode", "opencode_error_then_findings.ndjson")
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "the guard is missing"
 
 
 # --- claude / codex: no envelope declared; bare-object case unaffected ----

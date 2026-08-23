@@ -1,0 +1,1 @@
+{"response": "I looked this over and it seems fine to me overall.", "findings": [{"severity": "medium", "claim": "missing rate limit on login endpoint", "location": "src/auth/login.py:12", "evidence": "src/auth/login.py:12 has no throttling", "failure_scenario": "credential stuffing goes undetected", "suggested_fix": "add a per-IP rate limiter"}]}

@@ -67,6 +67,18 @@ def main() -> int:
         print("boom", file=sys.stderr)
         return 1
 
+    if mode == "hostile_stderr":
+        # Whole-branch re-review, Regression 3: a friend's own stderr is
+        # untrusted text that now reaches report.md's friend table (see
+        # cli._stderr_tail). This mode's stderr carries inline
+        # Markdown/HTML constructs an unauthenticated-CLI's real error
+        # message could plausibly contain (a bracketed value, an angle-
+        # bracketed placeholder, asterisks) to prove they render as inert
+        # text, not real emphasis/links/raw HTML.
+        print("auth failed: **please** [login](http://evil.example) "
+              "`token` <script>alert(1)</script>", file=sys.stderr)
+        return 1
+
     if mode == "_descendant":
         _descendant(sys.argv[2:])
         return 0

@@ -1,0 +1,2 @@
+{"type": "error", "timestamp": 1787440000000, "sessionID": "ses_benignRetry", "error": {"name": "RateLimitError", "data": {"message": "rate limited, retrying"}}}
+{"findings": [{"severity": "high", "claim": "the guard is missing", "location": "src/auth.py:42", "evidence": "src/auth.py:38", "failure_scenario": "expired token reaches the handler", "suggested_fix": "check exp before dispatch"}]}

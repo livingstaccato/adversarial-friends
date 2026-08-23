@@ -349,23 +349,55 @@ def normalize(raw: str, envelope: "Envelope | None" = None,
     `envelope`, if given, is tried FIRST: `unwrap_envelope` extracts the
     friend's real answer text from `raw` per the envelope's declared shape,
     and the existing extraction/validation logic runs on THAT text instead.
-    If the envelope finds nothing to extract (a missing key, no matching
-    NDJSON line -- see unwrap_envelope's docstring), this falls through to
-    running the exact same logic on `raw` directly, unchanged from before
-    envelopes existed at all: a currently-working bare-object case must
-    never be made to fail by an envelope declaration that happens not to
-    apply to it (e.g. because the CLI already emits a bare object, or the
-    declared path/rule doesn't match this particular run's output).
+    Two distinct ways this can fail to produce anything, both of which fall
+    back to running the exact same logic on `raw` directly (unchanged from
+    before envelopes existed at all):
 
-    `structured_output` only affects the fallback-on-`raw` path (envelope
-    None, or an envelope that found nothing): see `_normalize_text` for what
-    it adds. It is intentionally NOT applied once an envelope has already
-    been successfully unwrapped -- at that point the friend's own answer
-    text is what's being scanned, not the CLI's wrapper, so "the adapter may
-    need an envelope path" would be a non sequitur.
+    1. The envelope finds nothing to extract at all (a missing key, no
+       matching NDJSON line -- see unwrap_envelope's docstring) --
+       `unwrap_envelope` returns None.
+    2. The envelope DID extract some text, but that text does not itself
+       yield a successful result (e.g. an NDJSON stream whose first
+       matching line is a benign "rate limited, retrying" notice under the
+       declared `error` rule, while a separate, later line in that same
+       stream is a perfectly good, schema-valid findings object; or an agy
+       envelope whose `response` field holds unrelated prose while the
+       envelope object ITSELF -- one level up -- also happens to carry a
+       valid top-level `findings` array). Committing to the unwrapped text
+       exclusively here would silently discard a raw scan that would have
+       succeeded -- and report a status that is actively false ("no
+       parseable JSON object" when the output plainly contained one).
+       Retrying the full scan against the untouched `raw` text is what a
+       currently-working case must never be made to fail by an envelope
+       declaration means in practice: a currently-working case includes one
+       where the envelope's rule matches something irrelevant, not only the
+       case where it matches nothing.
+
+    `structured_output` only affects an attempt that scans `raw` itself
+    (case 1, case 2's retry, or no envelope at all): see `_normalize_text`
+    for what it adds. It is intentionally NOT applied to the FIRST attempt,
+    scanning the freshly unwrapped text -- at that point the friend's own
+    answer text is what's being scanned, not the CLI's wrapper, so "the
+    adapter may need an envelope path" would be a non sequitur there. It IS
+    applied to the raw-text retry in case 2, on purpose: that retry scans
+    the wrapper again, so the hint is exactly as relevant there as it would
+    be with no envelope at all -- forcing it to False on that retry would
+    suppress the one message that explains why the "obvious" unwrap didn't
+    pan out.
     """
     if envelope is not None:
         unwrapped = unwrap_envelope(raw, envelope)
         if unwrapped is not None:
-            return _normalize_text(unwrapped, structured_output=False)
+            unwrapped_result = _normalize_text(unwrapped, structured_output=False)
+            if unwrapped_result.succeeded:
+                return unwrapped_result
+            # Case 2: the envelope matched something, but it wasn't the
+            # answer. Retry against the untouched raw text -- it may still
+            # contain the real findings elsewhere (a different NDJSON line,
+            # or a key on the envelope object itself) -- and return that
+            # attempt's result regardless of whether it succeeds: on
+            # failure it is still the more informative diagnosis (it can
+            # carry the structured_output hint; the unwrapped-only failure
+            # never can, by design -- see above).
+            return _normalize_text(raw, structured_output=structured_output)
     return _normalize_text(raw, structured_output=structured_output)

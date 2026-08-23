@@ -1042,8 +1042,9 @@ def test_unexpected_exception_in_one_friends_dispatch_does_not_end_the_run(monke
 
 def test_oversized_prompt_for_a_non_stdin_adapter_records_an_e2big_downgrade(tmp_path):
     """claude places the whole prompt in one argv element (prompt_mode
-    'trailing-arg'); Linux caps a single argv element near 128KB, so a large
-    artifact can make the real dispatch fail with E2BIG. This is detected
+    'trailing-arg'); Linux commonly caps a single argv element near 128KB
+    (the limit varies by OS -- this test itself may run on macOS), so a
+    large artifact can make the real dispatch fail with E2BIG. This is detected
     and recorded up front (see cmd_run's PROMPT_ARGV_WARN_BYTES check), not
     solved -- switching prompt modes is a design change. The downgrade must
     appear regardless of whether the friend actually resolves (claude is not
@@ -1132,3 +1133,71 @@ def test_successful_friends_status_does_not_carry_a_stderr_tail(tmp_path):
     runs = sorted((tmp_path / "runs").iterdir())
     meta = json.loads((runs[0] / "run.json").read_text())
     assert meta["friends"][0]["status"] == "ok"
+
+
+# --- Regression 3 (whole-branch re-review): the stderr tail is untrusted
+# text on a new path into the report. report._escape_cell alone neutralizes
+# only `\`, `|`, and newlines (enough to keep the table structure intact),
+# not inline Markdown/HTML (`**bold**`, `[text](url)`, `` `code` ``, a raw
+# `<script>`/autolink) -- those still render as real emphasis, a real
+# clickable link, or raw HTML once inside a cell. fake:hostile_stderr
+# (fake_friend.py) prints exactly that shape to stderr and exits 1.
+
+
+def test_stderr_tail_strips_inline_markdown_significant_characters():
+    """Unit-level proof at the source: cli._stderr_tail must not merely cap
+    length, it must strip the characters that make emphasis/links/code
+    spans/raw HTML possible in the first place -- report._escape_cell,
+    applied later to the whole status string, never touches these."""
+    hostile = "auth failed: **please** [login](http://evil.example) `token` <script>alert(1)</script>"
+    tail = cli._stderr_tail(hostile)
+    for char in "`*_[]<>":
+        assert char not in tail, f"{char!r} survived stripping: {tail!r}"
+    assert "auth failed" in tail and "login" in tail  # content otherwise preserved
+
+
+def test_hostile_stderr_does_not_render_as_markdown_in_the_report(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:hostile_stderr",
+                    "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    report = (runs[0] / "report.md").read_text()
+    # Isolate exactly the stderr-tail excerpt cli.py inserted (between
+    # "(stderr: " and the following "; full text in ...") -- the rest of
+    # that table row (the friend name, and the "full text in
+    # round-1/<name>.err" reference cli.py itself generates) legitimately
+    # contains "_" and other characters that have nothing to do with the
+    # sanitizer being tested here.
+    status_line = [ln for ln in report.splitlines()
+                   if ln.startswith("| fake-hostile_stderr")][0]
+    tail_excerpt = status_line.split("(stderr: ", 1)[1].split("; full text in", 1)[0]
+    for char in "`*_[]<>":
+        assert char not in tail_excerpt, f"{char!r} leaked into: {tail_excerpt!r}"
+    assert "auth failed" in tail_excerpt  # the diagnostic content still came through
+    assert "the guard is missing" in report  # the second friend's finding still came through
+
+
+@pytest.mark.skipif(shutil.which("cmark") is None, reason="cmark not installed on this machine")
+def test_hostile_stderr_produces_no_link_or_emphasis_under_cmark(tmp_path):
+    """report.md legitimately uses **bold** labels ("**Claim:**", etc.) for
+    every real finding, which correctly render as <strong> -- a blanket "no
+    <strong> anywhere" assertion would be wrong. What must NOT appear is
+    the hostile content specifically forming a real link, real emphasis, or
+    raw HTML: the "evil.example" URL as a clickable <a href>, "please" (from
+    "**please**") wrapped in <strong>, or the literal <script> tag surviving
+    unescaped."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:hostile_stderr",
+                    "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    report_text = (runs[0] / "report.md").read_text()
+    html = subprocess.run(["cmark"], input=report_text, capture_output=True,
+                          text=True, check=True).stdout
+    assert "evil.example" in html  # the diagnostic text still made it through...
+    assert "<a href" not in html  # ...but never as a real, clickable link
+    assert "<strong>please" not in html
+    assert "<script>alert" not in html

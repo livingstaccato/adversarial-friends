@@ -336,11 +336,17 @@ def test_structured_output_hint_is_suppressed_when_the_adapter_did_not_ask_for_i
     assert not any("envelope path" in e for e in result.errors)
 
 
-def test_structured_output_hint_does_not_appear_once_envelope_unwrapping_succeeded():
-    """Once an envelope has already been successfully unwrapped, the
-    unwrapped text IS the friend's own answer, not the CLI's wrapper -- "the
-    adapter may need an envelope path" would be a non sequitur at that
-    point, so structured_output is not applied to the post-unwrap scan."""
+def test_structured_output_hint_can_surface_via_the_raw_retry_after_a_failed_unwrap():
+    """Post-wave regression fix: when the DIRECT unwrap attempt fails (the
+    extracted text parses as JSON but has no findings key), normalize() no
+    longer commits to that failure exclusively -- it retries the scan
+    against the untouched raw text, with the real structured_output value
+    (not forced False), so the hint can still surface there. Suppressing it
+    unconditionally once ANY text had been extracted (the previous, buggy
+    behavior this test used to assert) would silence the one message that
+    explains why the "obvious" unwrap didn't pan out, exactly when a reader
+    needs it most -- see test_envelope_fixtures.py's regression tests for
+    the real captured shapes this was reproduced against end to end."""
     envelope = Envelope(kind="json_path", path="response")
     wrapper_with_no_findings_answer = json.dumps({
         "status": "SUCCESS", "response": json.dumps({"type": "result"}),
@@ -348,7 +354,51 @@ def test_structured_output_hint_does_not_appear_once_envelope_unwrapping_succeed
     result = normalize.normalize(wrapper_with_no_findings_answer, envelope=envelope,
                                  structured_output=True)
     assert result.succeeded is False
+    assert any("envelope path" in e for e in result.errors)
+
+
+def test_structured_output_hint_is_suppressed_when_the_raw_retry_also_forces_it_false():
+    """The suppress-on-direct-unwrap rule is still real -- it just isn't the
+    ONLY rule anymore. Passing structured_output=False end to end (the
+    caller's real signal that this adapter never asked for structured
+    output at all) must still produce no hint anywhere, on the direct
+    attempt OR the raw retry."""
+    envelope = Envelope(kind="json_path", path="response")
+    wrapper_with_no_findings_answer = json.dumps({
+        "status": "SUCCESS", "response": json.dumps({"type": "result"}),
+    })
+    result = normalize.normalize(wrapper_with_no_findings_answer, envelope=envelope,
+                                 structured_output=False)
+    assert result.succeeded is False
     assert not any("envelope path" in e for e in result.errors)
+
+
+def test_envelope_retry_recovers_findings_the_direct_unwrap_alone_would_have_lost():
+    """Unit-level version of the exact regression reproduced end to end in
+    test_envelope_fixtures.py: unwrapping matches something (a field that
+    isn't the real answer), that direct attempt fails, and the real
+    findings are recovered only because normalize() retries against the
+    untouched raw text instead of committing to the failed direct attempt."""
+    envelope = Envelope(kind="json_path", path="response")
+    raw = json.dumps({
+        "response": "unrelated prose, not the answer",
+        "findings": [{"severity": "low", "claim": "c", "location": None,
+                     "evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}],
+    })
+    result = normalize.normalize(raw, envelope=envelope)
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "c"
+
+
+def test_ndjson_envelope_retry_recovers_findings_past_a_matched_error_line():
+    envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
+    raw = "\n".join([
+        json.dumps({"type": "error", "message": "rate limited, retrying"}),
+        GOOD,
+    ])
+    result = normalize.normalize(raw, envelope=envelope)
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "c"
 
 
 def test_structured_output_hint_does_not_fire_for_ordinary_schema_errors():

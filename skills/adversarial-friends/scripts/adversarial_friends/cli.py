@@ -49,8 +49,12 @@ KILL_GRACE_S = 60
 # A conservative threshold for warning that a friend's prompt may trigger
 # E2BIG ("Argument list too long") when its adapter places the whole prompt
 # in one argv element (prompt_mode != "stdin"). Linux caps a single argv
-# element near 128KiB; this is comfortably under that so the downgrade is
-# visible before a real dispatch would fail, not only after.
+# element near 128KiB; other POSIX platforms this runner may run on (e.g.
+# macOS) size the limit differently, so this threshold is deliberately well
+# under the tightest of those rather than tuned to any one OS -- the
+# downgrade message itself names Linux specifically as the platform this
+# figure is verified against. Comfortably under that limit so the downgrade
+# is visible before a real dispatch would fail, not only after.
 PROMPT_ARGV_WARN_BYTES = 100_000
 
 PROMPT_HEADER = (
@@ -286,14 +290,35 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+# Whole-branch re-review, Regression 3: the stderr tail is untrusted text
+# (a friend's own stderr) on a path into report.md's friend table that
+# report._escape_cell alone does not fully cover -- _escape_cell neutralizes
+# only `\`, `|`, and newlines (enough to keep the TABLE STRUCTURE intact),
+# not the inline Markdown/HTML constructs (`**bold**`, `[text](url)`,
+# `` `code` ``, a raw `<script>`/autolink) that still render as real
+# emphasis, a real clickable link, or raw HTML once inside a cell. Milder
+# than C2 (the table can't be broken and no finding can be forged or
+# hidden), but the same class of hole one file over. Stripped outright
+# rather than backslash-escaped: this string is folded into `status` and
+# THEN passed through _escape_cell, which itself backslash-escapes `\` --
+# escaping here first would double-escape and could reintroduce exactly the
+# construct being neutralized; a short diagnostic snippet loses nothing
+# essential by simply not containing these characters.
+_INLINE_MARKDOWN_STRIP = str.maketrans("", "", "`*_[]<>")
+
+
 def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = 200) -> str:
     """A short, status-column-sized excerpt of a friend's stderr -- not the
     whole capture, which lives in `round-1/<friend>.err` (see cmd_run).
     Takes the LAST non-empty lines: the actionable diagnostic (an auth
     error, a missing env var) is usually near the end of a CLI's stderr,
-    after any banner/progress noise, not the first line."""
+    after any banner/progress noise, not the first line. Inline
+    Markdown/HTML-significant characters are stripped (see
+    _INLINE_MARKDOWN_STRIP above) before the length cap is applied, so
+    `max_chars` bounds what a reader actually sees."""
     lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
     tail = " | ".join(lines[-max_lines:])
+    tail = tail.translate(_INLINE_MARKDOWN_STRIP)
     if len(tail) > max_chars:
         tail = tail[:max_chars - 1].rstrip() + "…"
     return tail
@@ -508,13 +533,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                 downgrades.append(lens_downgrade)
             # claude, opencode, and agy all place the WHOLE prompt in one
             # argv element (prompt_mode "trailing-arg"/"flag-value"); Linux
-            # caps a single argument near 128KB, so a large artifact can
-            # make Popen() fail with E2BIG ("Argument list too long"). This
-            # is detected, not solved -- switching prompt modes is a design
-            # change, out of scope here (see spawn.run_process's OSError
-            # handling for what happens if it fires anyway). Recording the
-            # risk up front means an E2BIG failure is already explained by
-            # the time it's read, not a surprise raw exit code.
+            # commonly caps a single argument near 128KB (the limit varies
+            # by OS -- this runner is not always run on Linux), so a large
+            # artifact can make Popen() fail with E2BIG ("Argument list too
+            # long"). This is detected, not solved -- switching prompt
+            # modes is a design change, out of scope here (see
+            # spawn.run_process's OSError handling for what happens if it
+            # fires anyway). Recording the risk up front means an E2BIG
+            # failure is already explained by the time it's read, not a
+            # surprise raw exit code.
             if spec.cli != "fake":
                 adapter = registry[spec.cli]
                 if adapter.prompt_mode != "stdin":
@@ -523,9 +550,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                         downgrades.append(
                             f"{spec.name}: prompt is {prompt_bytes} bytes and "
                             f"{adapter.name} passes it as a single argv element "
-                            f"(prompt_mode={adapter.prompt_mode!r}); Linux caps a "
-                            "single argument near 128KB, so this friend's dispatch "
-                            "may fail with 'Argument list too long' (E2BIG)."
+                            f"(prompt_mode={adapter.prompt_mode!r}); Linux commonly "
+                            "caps a single argument near 128KB (the limit varies by "
+                            "OS), so this friend's dispatch may fail with 'Argument "
+                            "list too long' (E2BIG)."
                         )
             prompt_path = store.friend_prompt_path(1, spec.name)
             prompt_path.write_text(prompt_text, encoding="utf-8")
