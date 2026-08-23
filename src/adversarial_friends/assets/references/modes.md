@@ -33,7 +33,7 @@ every command in this build:
 |---|---|---|
 | `0` | success | `afriend run --mode report` (at least one friend usable), `afriend doctor` (at least one friend found) |
 | `1` | gate blocked, or run incomplete | `afriend run --mode report` when every dispatched friend fails |
-| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, `--friend ollama:*` (HTTP transport, not implemented), `--mode` set to anything but `report`, or `--preset` set to anything but `inherit` (not implemented) |
+| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--mode` set to anything but `report`, or `--preset` set to anything but `inherit` (not implemented) |
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
 | `10` | needs orchestrator | reserved for `--merge=orchestrator` and parse-halt recovery — not implemented in this build |
 | `11` | ceiling hit | reserved for `crossexam`/`gate`/`loop` round and cost ceilings — not implemented in this build |

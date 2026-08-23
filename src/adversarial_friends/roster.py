@@ -7,9 +7,11 @@ exactly what you want.
 """
 
 from collections.abc import Callable, Mapping
+import os
 import shutil
 from typing import Any
 
+from . import http_transport
 from .adapters import Adapter, FriendSpec
 from .errors import NoFriendsError, UsageError
 from .trust import validate_roster_entry
@@ -36,13 +38,43 @@ def detect_host(env: Mapping[str, str]) -> str | None:
     return None
 
 
+# Set to any non-empty value to keep HTTP friends out of auto-discovery
+# without stopping the server. `--friend ollama:lens:model` still works --
+# this only governs whether a reachable endpoint is *enlisted automatically*.
+# Someone running ollama for unrelated reasons should not find it silently
+# joining every run.
+NO_HTTP_DISCOVERY_ENV = "AF_NO_HTTP_DISCOVERY"
+
+
 def discover_clis(
-    registry: dict[str, Adapter], which: Callable[[str], str | None] = shutil.which
+    registry: dict[str, Adapter],
+    which: Callable[[str], str | None] = shutil.which,
+    probe: Callable[[str], bool] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> list[str]:
+    """Names of the friends actually available right now.
+
+    `which` and `probe` are the two injection points, one per transport, and
+    they exist for the same reason: discovery must be controllable by the
+    caller rather than reaching out to whatever happens to be installed or
+    listening. An HTTP probe that ignored `probe` would silently override a
+    caller's injected `which` -- which is exactly what it did when this
+    transport was first added, enlisting a developer's live local ollama into
+    rosters no test had asked for.
+    """
+    probe_fn = http_transport.probe if probe is None else probe
+    environ = os.environ if env is None else env
+    http_disabled = bool(environ.get(NO_HTTP_DISCOVERY_ENV))
     found = []
     for name, adapter in sorted(registry.items()):
         if adapter.transport == "http":
-            continue  # reachability is probed separately, not via PATH
+            # "Available" means a reachable endpoint, not a binary on PATH.
+            # Probed rather than assumed: an unreachable ollama would
+            # otherwise be dispatched to and fail every round, and discovery
+            # exists precisely to keep unusable friends out of the roster.
+            if not http_disabled and adapter.endpoint and probe_fn(adapter.endpoint):
+                found.append(name)
+            continue
         if adapter.binary and which(adapter.binary):
             found.append(name)
     return found
@@ -109,7 +141,7 @@ def resolve(
         return specs
 
     host = detect_host(env)
-    available = discover_clis(registry, which)
+    available = discover_clis(registry, which, env=env)
     if not include_self and host in available:
         available = [c for c in available if c != host]
     if not available:

@@ -91,21 +91,38 @@ def test_unknown_cli_in_friend_flag_exits_2_not_3(tmp_path):
     assert "no-such-cli" in result.stderr
 
 
-def test_friend_ollama_is_rejected_as_unimplemented_not_a_silent_empty_binary(tmp_path):
-    """I3 (whole-branch review): ollama.toml declares transport="http" with
-    an empty `binary` (there is no HTTP transport in this build -- only
-    exec/Popen dispatch). Before this fix, --friend ollama:x fell straight
-    through to build_argv, which handed spawn.run_process argv[0] == "" and
-    failed opaquely as "binary not found: " -- while README, SKILL.md's
-    frontmatter, afriend doctor, and troubleshooting.md all implied ollama
-    worked. Rejecting outright (exit 2, before dispatch) rather than
-    implementing HTTP transport (a feature, not a fix)."""
+def test_ollama_without_a_model_fails_with_the_fix_not_an_opaque_error(tmp_path):
+    """ollama has no default model and its own error for an omitted one
+    explains nothing, so the runner refuses before dispatch and names the
+    remedy. Supersedes the old "HTTP transport is not implemented" rejection:
+    the transport ships now, but a model is still required.
+
+    Exit 0, not 2 -- this is one friend failing on a run that still completed
+    and wrote a report, which is the same shape as any other failed friend.
+    """
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
-    result = run_af(tmp_path, artifact, "--friend", "ollama:ops")
-    assert result.returncode == 2, result.stderr
-    assert "ollama" in result.stderr
-    assert "not implemented" in result.stderr.lower()
+    result = run_af(tmp_path, artifact, "--friend", "ollama:ops", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    ollama_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("ollama"))
+    assert "requires an explicit model" in ollama_status
+    # The working friend on the same run is unaffected.
+    fake_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("fake"))
+    assert fake_status == "ok"
+
+
+def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path):
+    """`cli:lens:model` is the only way to name a model from the CLI, and
+    ollama is the adapter that cannot run without one."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    run_af(tmp_path, artifact, "--friend", "ollama:security:qwen3:0.6b")
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert meta["friends"][0]["model"] == "qwen3:0.6b"
+    assert meta["friends"][0]["name"] == "ollama-security-0"
 
 
 def test_preset_other_than_inherit_is_rejected(tmp_path):

@@ -277,12 +277,12 @@ def test_doctor_reports_missing_clis_and_exits_3(tmp_path):
     assert "missing" in result.stdout
 
 
-def test_doctor_marks_ollama_unimplemented_not_merely_unprobed(tmp_path):
-    """I3: afriend doctor's http-transport branch previously printed a
-    neutral 'reachability not probed by doctor' line for ollama, which
-    reads as 'supported but unverified' rather than 'not implemented at
-    all in this build' -- misleading given --friend ollama:* is rejected
-    outright."""
+def test_doctor_reports_ollama_reachability_not_a_stub_message(tmp_path):
+    """doctor used to print "unimplemented" for ollama because no HTTP
+    transport existed. It ships now, so doctor probes the endpoint and says
+    whether a server is actually listening -- `found` or `unreachable`,
+    never a build-status message. The safe test env disables HTTP discovery,
+    but doctor reports on every declared adapter regardless."""
     result = subprocess.run(
         [sys.executable, str(AF), "doctor"],
         capture_output=True,
@@ -290,4 +290,6 @@ def test_doctor_marks_ollama_unimplemented_not_merely_unprobed(tmp_path):
         env=_env(),
     )
     ollama_line = next(ln for ln in result.stdout.splitlines() if ln.startswith("ollama"))
-    assert "unimplemented" in ollama_line.lower()
+    assert "unimplemented" not in ollama_line.lower()
+    assert ("found" in ollama_line) or ("unreachable" in ollama_line)
+    assert "readonly=False" in ollama_line  # never claims an enforcement it has not made

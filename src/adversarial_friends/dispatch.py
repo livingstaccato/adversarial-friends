@@ -8,6 +8,7 @@ than re-derived (see _dispatch's own docstring below).
 from pathlib import Path
 import threading
 
+from . import http_transport
 from .adapters import Adapter, Capability, FriendSpec, build_argv
 from .normalize import NormalizeResult
 from .spawn import SpawnResult, run_process
@@ -156,6 +157,17 @@ def _dispatch(
         capability = _FAKE_CAPABILITY
         envelope = None
         structured_output = False
+    elif registry[spec.cli].transport == "http":
+        # No process to spawn, so none of spawn.py's machinery applies --
+        # see http_transport's module docstring. It returns the same
+        # SpawnResult shape, so everything downstream stays
+        # transport-agnostic.
+        adapter = registry[spec.cli]
+        return (
+            spec,
+            http_transport.capability_for(adapter),
+            http_transport.run_request(adapter, spec, prompt_file, spec.timeout),
+        )
     else:
         adapter = registry[spec.cli]
         argv, stdin_text, capability = build_argv(adapter, spec, prompt_file, schema_file)

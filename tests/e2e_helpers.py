@@ -49,6 +49,12 @@ def _env(extra=None):
     env = {
         "PATH": str(_safe_path_dir()),
         "AF_FAKE_FRIEND": f"{sys.executable} {FAKE}",
+        # The safe PATH keeps real agent CLIs out of discovery, but an
+        # HTTP friend is found by probing an endpoint, not by PATH -- so a
+        # developer running ollama locally would otherwise be enlisted into
+        # these runs and tests would pass or fail depending on whether
+        # their server happened to be up.
+        "AF_NO_HTTP_DISCOVERY": "1",
     }
     if "HOME" in os.environ:
         env["HOME"] = os.environ["HOME"]

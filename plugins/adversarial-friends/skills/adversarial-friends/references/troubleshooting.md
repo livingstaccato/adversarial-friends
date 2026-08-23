@@ -21,7 +21,7 @@ output rather than trusting exit codes (see `ledger.md` and `SKILL.md`'s
 | `agy` | `--print`/`-p` takes the prompt as its *value*, so every other flag must precede it on the command line or `--print` swallows the next token as the prompt |
 | `claude` | `-p --permission-mode plan` routes the response into `~/.claude/plans/<name>.md` and prints three lines to stdout instead of the findings; the shipped adapter uses `--tools "Read,Grep,Glob"` for read-only instead, which stays in print mode |
 | `agy` | on a long task, findings can be routed to a brain artifact file with only a summary and a `file://` link printed to stdout |
-| `ollama` | `ollama run` writes ANSI cursor-control codes *inside* its own JSON payload even when stdout is not a terminal — the HTTP API (`POST /api/generate`) avoids that, but this build has no HTTP transport implemented at all; see "ollama does not work" below |
+| `ollama` | `ollama run` writes ANSI cursor-control codes *inside* its own JSON payload even when stdout is not a terminal, which is why the adapter uses the HTTP API (`POST /api/generate`) instead of the CLI |
 
 Short flags also collide across CLIs — confirmed against each CLI's own
 `--help` on 2026-08-22: `-p` is `--print` on `claude` and `agy` but
@@ -61,19 +61,30 @@ effort as `effort=unverified` rather than echoing back whatever was
 requested. Every other shipped adapter (`claude`, `codex`, `agy`) reports
 `effort=native` because each one rejects an unsupported level outright.
 
-## ollama does not work
+## ollama reports unreachable, or a run fails
 
-`adapters/ollama.toml` declares `transport = "http"` (talking to
-`POST /api/generate` avoids `ollama run`'s ANSI-in-JSON problem, see the
-table above), but no HTTP transport is implemented in this build — only
-`exec`/`Popen` dispatch is. `--friend ollama:*` is rejected outright with
-exit `2` ("not implemented in this build") rather than trying to run it: the
-adapter's `binary` field is empty (there is nothing to exec), so without this
-check the failure would instead surface much later and far less clearly, as
-an opaque `binary not found: ` from `spawn.run_process`. `afriend doctor` reports
-`ollama` as `unimplemented`, not merely "found"/"missing", for the same
-reason. Implementing real HTTP dispatch is a feature to build, not a bug to
-fix here.
+`adapters/ollama.toml` declares `transport = "http"` and talks to
+`POST /api/generate` — `ollama run` writes ANSI cursor-control codes inside
+its own JSON payload, so the CLI is unusable as a machine interface.
+
+Two things differ from every other friend:
+
+**Availability is a reachable endpoint, not a binary on `PATH`.** `afriend
+doctor` probes the server and prints `unreachable  (no server listening)` when
+nothing answers. Start it with `ollama serve`.
+
+**A model must be named explicitly.** ollama has no default, and its own error
+for an omitted model explains nothing, so the runner refuses before dispatch.
+Pass one in the third `--friend` slot:
+
+```bash
+afriend run spec.md --friend ollama:security:qwen3:0.6b
+```
+
+An ollama friend reports `schema=False readonly=False`. That is accurate, not
+a downgrade: a bare model behind an endpoint has no filesystem access to
+constrain, so no read-only flag was emitted and nothing was enforced.
+Containment comes from doc scope — it is handed only the artifact text.
 
 ## gemini does not work
 

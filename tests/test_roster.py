@@ -12,6 +12,12 @@ ADAPTER_DIR = (
 )
 LENSES = ["assumptions", "security", "ops"]
 
+# Every test here controls discovery through an injected `which`, which
+# only governs the exec transport. Without this, a developer running
+# ollama locally is discovered over HTTP regardless, and these tests pass
+# or fail depending on whether their server happens to be up.
+NO_HTTP = {"AF_NO_HTTP_DISCOVERY": "1"}
+
 
 @pytest.fixture
 def registry():
@@ -39,24 +45,26 @@ def test_no_host_detected_when_env_is_bare():
 
 
 def test_host_cli_is_excluded_by_default(registry):
-    friends = roster.resolve(registry, LENSES, {"CLAUDECODE": "1"}, which_all)
+    friends = roster.resolve(registry, LENSES, {**NO_HTTP, "CLAUDECODE": "1"}, which_all)
     assert all(f.cli != "claude" for f in friends)
 
 
 def test_include_self_keeps_the_host(registry):
-    friends = roster.resolve(registry, LENSES, {"CLAUDECODE": "1"}, which_all, include_self=True)
+    friends = roster.resolve(
+        registry, LENSES, {**NO_HTTP, "CLAUDECODE": "1"}, which_all, include_self=True
+    )
     assert any(f.cli == "claude" for f in friends)
 
 
 def test_lenses_are_assigned_round_robin(registry):
-    friends = roster.resolve(registry, LENSES, {}, which_all)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all)
     assigned = [f.lens for f in friends]
     assert assigned[:3] == LENSES[:3]
     assert len(set(assigned[:3])) == 3
 
 
 def test_default_timeout_is_used_when_none_is_passed(registry):
-    friends = roster.resolve(registry, LENSES, {}, which_all)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all)
     assert all(f.timeout == roster.DEFAULT_TIMEOUT for f in friends)
 
 
@@ -64,7 +72,7 @@ def test_auto_discovered_friends_receive_the_passed_timeout(registry):
     """Task 12 review, Finding 2: --timeout was silently ignored for every
     auto-discovered friend because resolve() had no timeout parameter at
     all -- a flag that silently does nothing is worse than no flag."""
-    friends = roster.resolve(registry, LENSES, {}, which_all, timeout=30)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all, timeout=30)
     assert friends, "fixture produced no friends to check"
     assert all(f.timeout == 30 for f in friends)
     assert all(f.timeout != roster.DEFAULT_TIMEOUT for f in friends)
@@ -99,14 +107,14 @@ def test_override_s_own_timeout_key_still_wins_over_the_passed_timeout(registry)
 
 def test_opencode_defaults_to_doc_scope(registry):
     """opencode has no read-only mode, so repo scope needs an explicit opt-in."""
-    friends = roster.resolve(registry, LENSES, {}, which_all)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all)
     opencode = next(f for f in friends if f.cli == "opencode")
     assert opencode.scope == "doc"
 
 
 def test_no_binaries_raises_no_friends(registry):
     with pytest.raises(NoFriendsError):
-        roster.resolve(registry, LENSES, {}, which_none)
+        roster.resolve(registry, LENSES, NO_HTTP, which_none)
 
 
 def test_overrides_replace_discovery(registry):
@@ -172,7 +180,9 @@ def test_override_invalid_friend_name_raises_usage_error(registry, bad_name):
 def test_override_missing_name_raises_usage_error(registry):
     """Attack: an override omits the required name key entirely."""
     with pytest.raises(UsageError, match="missing required key: name"):
-        roster.resolve(registry, LENSES, {}, which_all, overrides=[{"cli": "codex", "lens": "ops"}])
+        roster.resolve(
+            registry, LENSES, NO_HTTP, which_all, overrides=[{"cli": "codex", "lens": "ops"}]
+        )
 
 
 def test_empty_lens_list_raises_usage_error_not_zero_division(registry):
@@ -183,7 +193,7 @@ def test_empty_lens_list_raises_usage_error_not_zero_division(registry):
     Reproduced directly against the pre-fix code (see task-10-report.md).
     Now fails cleanly with UsageError."""
     with pytest.raises(UsageError, match="no lenses configured"):
-        roster.resolve(registry, [], {}, which_all)
+        roster.resolve(registry, [], NO_HTTP, which_all)
 
 
 def test_override_with_empty_lens_list_is_unaffected(registry):
@@ -207,7 +217,7 @@ def test_lens_list_shorter_than_discovered_clis_round_robins(registry):
     Passes cleanly: the modulo round-robin terminates and cycles, and
     because each discovered cli is distinct, the (cli, lens) name pairing
     stays unique even when lenses repeat."""
-    friends = roster.resolve(registry, ["a", "b"], {}, which_all)
+    friends = roster.resolve(registry, ["a", "b"], NO_HTTP, which_all)
     assert len(friends) == 4
     assert [f.lens for f in friends] == ["a", "b", "a", "b"]
     assert len({f.name for f in friends}) == 4  # no name collisions
@@ -288,7 +298,7 @@ def test_duplicate_override_names_raise_usage_error(registry):
         {"name": "dup", "cli": "claude", "lens": "security"},
     ]
     with pytest.raises(UsageError, match="duplicate friend name"):
-        roster.resolve(registry, LENSES, {}, which_all, overrides=overrides)
+        roster.resolve(registry, LENSES, NO_HTTP, which_all, overrides=overrides)
 
 
 def test_three_way_duplicate_override_names_raise_usage_error(registry):
@@ -299,7 +309,7 @@ def test_three_way_duplicate_override_names_raise_usage_error(registry):
         {"name": "dup", "cli": "agy", "lens": "assumptions"},
     ]
     with pytest.raises(UsageError, match="duplicate friend name"):
-        roster.resolve(registry, LENSES, {}, which_all, overrides=overrides)
+        roster.resolve(registry, LENSES, NO_HTTP, which_all, overrides=overrides)
 
 
 def test_unique_override_names_are_unaffected(registry):
@@ -310,7 +320,7 @@ def test_unique_override_names_are_unaffected(registry):
         {"name": "agy-security", "cli": "agy", "lens": "security", "model": "gemini-3.1-pro-high"},
         {"name": "agy-ops", "cli": "agy", "lens": "ops", "model": "claude-sonnet-4-6"},
     ]
-    friends = roster.resolve(registry, LENSES, {}, which_all, overrides=overrides)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all, overrides=overrides)
     assert [f.name for f in friends] == ["agy-security", "agy-ops"]
 
 
@@ -323,7 +333,7 @@ def test_friend_count_not_cli_count_for_degraded_mode(registry):
         {"name": "agy-a", "cli": "agy", "lens": "assumptions", "model": "gemini-3.1-pro-high"},
         {"name": "agy-b", "cli": "agy", "lens": "security", "model": "gpt-oss"},
     ]
-    friends = roster.resolve(registry, LENSES, {}, which_all, overrides=overrides)
+    friends = roster.resolve(registry, LENSES, NO_HTTP, which_all, overrides=overrides)
     assert len(friends) == 2
     assert all(f.cli == "agy" for f in friends)
     assert len(friends) >= 2  # would NOT trigger degraded mode

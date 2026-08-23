@@ -89,8 +89,11 @@ agy        found    schema=True  readonly=True  effort=native      /Users/you/.l
 claude     found    schema=True  readonly=True  effort=native      /Users/you/.local/bin/claude
 codex      found    schema=True  readonly=True  effort=native      /opt/homebrew/bin/codex
 opencode   found    schema=False readonly=False effort=unverified  /Users/you/.opencode/bin/opencode
-ollama     unimplemented http endpoint=http://127.0.0.1:11434/api/generate
+ollama     found    schema=False readonly=False effort=none       http://127.0.0.1:11434/api/generate
 ```
+
+For `ollama`, `found` means a reachable endpoint rather than a binary on
+`PATH`; it shows `unreachable` when no server is listening.
 
 `doctor` reports what each friend can genuinely **enforce** — schema
 validation, a real read-only mode, a verifiable effort level — rather than
@@ -115,6 +118,12 @@ Pick your reviewers and lenses explicitly:
 
 ```bash
 afriend run spec.md --friend codex:security --friend claude:ops
+```
+
+A third slot picks the model — required for `ollama`, which has no default:
+
+```bash
+afriend run spec.md --friend ollama:security:qwen3:0.6b
 ```
 
 > ⚠️ `--friend` **replaces** discovery rather than adding to it. One
@@ -225,7 +234,7 @@ can invoke today. `afriend run --mode crossexam` (or `gate`, or `loop`) exits
 | `codex` | ✅ ships |
 | `agy` | ✅ ships |
 | `opencode` | ✅ ships — no read-only mode, reported honestly |
-| `ollama` | ⚠️ declared, **not implemented** — HTTP transport, no CLI to exec; `--friend ollama:*` exits `2` |
+| `ollama` | ✅ ships — local models over HTTP, no schema/read-only to enforce; needs an explicit model |
 
 There is no `gemini` adapter: the `gemini` CLI returns an ineligible-tier
 error on the individual free tier, and Google's own supported path from there

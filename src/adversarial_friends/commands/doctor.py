@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import tempfile
 
+from .. import http_transport
 from ..adapters import FriendSpec, build_argv, load_adapters
 from ..claimschema import schema_path
 from ..paths import ADAPTER_DIR
@@ -25,14 +26,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         schema_file = schema_path(tmp)
         for name, adapter in sorted(registry.items()):
             if adapter.transport == "http":
-                # HTTP transport (ollama) is declared but not implemented in
-                # this build -- `--friend ollama:*` is rejected outright
-                # (see cliargs._specs_from_flags). Say so plainly here too,
-                # rather than a neutral "reachability not probed" that reads
-                # as "supported but unverified."
+                # "Available" for an HTTP friend means a reachable endpoint,
+                # so this probes rather than checking PATH. The capability
+                # comes from http_transport, the same source real dispatch
+                # uses -- doctor must never compute it a second way.
+                cap = http_transport.capability_for(adapter)
+                reachable = bool(adapter.endpoint) and http_transport.probe(adapter.endpoint)
                 print(
-                    f"{name:10} {'unimplemented':13} http endpoint={adapter.endpoint} "
-                    "(HTTP transport not implemented in this build)"
+                    f"{name:10} {'found' if reachable else 'unreachable':8} "
+                    f"schema={cap.schema} readonly={cap.readonly} effort={cap.effort} "
+                    f"{adapter.endpoint}" + ("" if reachable else "  (no server listening)")
                 )
                 continue
             binary = shutil.which(adapter.binary) if adapter.binary else None
