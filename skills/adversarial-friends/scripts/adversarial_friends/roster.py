@@ -9,7 +9,7 @@ import shutil
 from typing import Callable
 
 from .adapters import Adapter, FriendSpec
-from .errors import NoFriendsError
+from .errors import NoFriendsError, UsageError
 from .trust import validate_roster_entry
 
 HOST_ENV_MARKERS: dict[str, str] = {
@@ -51,15 +51,26 @@ def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
             overrides: list[dict] | None = None) -> list[FriendSpec]:
     if overrides:
         specs = []
+        seen_names: set[str] = set()
         for index, entry in enumerate(overrides):
             validate_roster_entry(entry)
+            name = entry["name"]
+            if name in seen_names:
+                # Friend names become path components under the run directory
+                # (see ids.py); two entries sharing a name would silently
+                # clobber each other's output instead of raising.
+                raise UsageError(
+                    f"duplicate friend name {name!r} in roster overrides: "
+                    "names must be unique because they become output paths"
+                )
+            seen_names.add(name)
             adapter = registry.get(entry["cli"])
             if adapter is None:
                 raise NoFriendsError(f"unknown cli in roster: {entry['cli']!r}")
             default_scope = ("repo" if adapter.readonly_argv
                              else NO_READONLY_DEFAULT_SCOPE)
             specs.append(FriendSpec(
-                name=entry["name"], cli=entry["cli"], lens=entry["lens"],
+                name=name, cli=entry["cli"], lens=entry["lens"],
                 model=entry.get("model"), effort=entry.get("effort"),
                 scope=entry.get("scope", default_scope),
                 timeout=entry.get("timeout", DEFAULT_TIMEOUT),
@@ -74,6 +85,14 @@ def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
         raise NoFriendsError(
             "no usable friends found. Install a second agent CLI "
             "(codex, agy, opencode) or pass --include-self."
+        )
+    if not lenses:
+        # available is non-empty here, so lenses[index % len(lenses)] below
+        # would otherwise raise ZeroDivisionError instead of a clean,
+        # actionable error.
+        raise UsageError(
+            "no lenses configured: at least one lens is required to assign "
+            "to discovered friends."
         )
 
     specs = []
