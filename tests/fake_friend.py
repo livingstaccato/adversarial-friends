@@ -18,6 +18,15 @@ MODES = {
     "offtopic": lambda: print("It looks like you just typed `--mode`."),
     "prose_wrapped": lambda: print(
         "Sure! " + json.dumps({"no_findings": True}) + " Hope that helps!"),
+    # Not a scripted verdict -- reports this process's own cwd as the
+    # "evidence" field, so a caller can directly confirm what directory it
+    # was actually run in (e.g. a private isolation worktree/doc dir, not
+    # the af process's own working directory). Added for Task 12's
+    # end-to-end isolation-wiring tests.
+    "cwd_probe": lambda: print(json.dumps({"findings": [{
+        "severity": "low", "claim": "cwd probe",
+        "location": None, "evidence": str(Path.cwd()),
+        "failure_scenario": "n/a", "suggested_fix": "n/a"}]})),
 }
 
 
