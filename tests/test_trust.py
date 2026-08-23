@@ -43,6 +43,8 @@ def test_bad_scope_is_rejected():
 @pytest.mark.parametrize("argv", [
     ["codex", "-s", "danger-full-access"],
     ["codex", "-s", "workspace-write"],
+    ["codex", "--sandbox", "danger-full-access"],
+    ["codex", "--sandbox", "workspace-write"],
     ["claude", "--dangerously-skip-permissions"],
     ["opencode", "--auto"],
     ["gemini", "-y"],
@@ -70,6 +72,72 @@ def test_combined_equals_sandbox_value_is_denied():
 
 def test_combined_equals_safe_sandbox_value_is_permitted():
     trust.check_denied_values(["codex", "--sandbox=read-only"])
+
+
+DENIED_FLAG_SPELLINGS = [
+    (flag, [flag]) for flag in sorted(trust.DENIED_FLAGS)
+] + [
+    (flag, [f"{flag}=true"]) for flag in sorted(trust.DENIED_FLAGS)
+]
+
+
+@pytest.mark.parametrize("flag,tail", DENIED_FLAG_SPELLINGS,
+                          ids=[f"{f}:{t[0]}" for f, t in DENIED_FLAG_SPELLINGS])
+def test_every_denied_flag_is_caught_bare_and_with_equals(flag, tail):
+    """The DENIED_FLAGS branch must partition on '=' the same way the
+    sandbox branch does — a boolean flag spelled --flag=true is exactly as
+    dangerous as bare --flag, and must not slip past because the check only
+    compared the whole raw token."""
+    with pytest.raises(UsageError):
+        trust.check_denied_values(["some-cli", *tail])
+
+
+@pytest.mark.parametrize("value", ["bypassPermissions", "dontAsk"])
+def test_permission_mode_denied_values_abort(value):
+    with pytest.raises(UsageError):
+        trust.check_denied_values(["claude", "--permission-mode", value])
+    with pytest.raises(UsageError):
+        trust.check_denied_values(["claude", f"--permission-mode={value}"])
+
+
+@pytest.mark.parametrize("value", ["plan", "acceptEdits"])
+def test_permission_mode_safe_values_are_permitted(value):
+    """Direction-aware, same as the sandbox rule: never reject someone for
+    asking to be safer."""
+    trust.check_denied_values(["claude", "--permission-mode", value])
+    trust.check_denied_values(["claude", f"--permission-mode={value}"])
+
+
+@pytest.mark.parametrize("model", [
+    "gpt-5.6-sol",
+    "claude-sonnet-4-6",
+    "cloudflare-ai-gateway/openai/gpt-5-nano",
+    "gemini-3.1-pro-high",
+    "qwen3:0.6b",
+])
+def test_valid_model_ids_are_accepted(model):
+    entry = {"name": "x", "cli": "codex", "lens": "ops", "model": model}
+    assert trust.validate_roster_entry(entry)["model"] == model
+
+
+def test_flag_looking_model_value_is_rejected():
+    """model becomes a literal argv token; a value that starts with '-' must
+    never be accepted, even though it can't inject a second flag on its own
+    (argv is exec'd as a list, never through a shell) — an unconstrained
+    string landing in argv is still a poor boundary."""
+    entry = {"name": "x", "cli": "codex", "lens": "ops",
+             "model": "--dangerously-skip-permissions"}
+    with pytest.raises(UsageError):
+        trust.validate_roster_entry(entry)
+
+
+def test_boolean_timeout_is_rejected():
+    """bool is an int subclass in Python; isinstance(True, int) is True, and
+    True <= 0 is False, so an unguarded check would silently accept a
+    timeout of True as a 1-second timeout."""
+    entry = {"name": "x", "cli": "codex", "lens": "ops", "timeout": True}
+    with pytest.raises(UsageError):
+        trust.validate_roster_entry(entry)
 
 
 def test_contain_path_allows_paths_under_base(tmp_path):
