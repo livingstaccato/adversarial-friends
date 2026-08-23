@@ -1,0 +1,16 @@
+# -p takes the prompt as its VALUE, so it must come last (verified trap).
+name = "agy"
+binary = "agy"
+base_argv = ["--output-format", "json"]
+prompt_mode = "flag-value"
+prompt_flag = "-p"
+readonly_argv = ["--mode", "plan"]
+schema_flag = "--json-schema"
+model_flag = "--model"
+internal_timeout_flag = "--print-timeout"
+effort_kind = "native"
+
+[effort]
+low = ["--effort", "low"]
+medium = ["--effort", "medium"]
+high = ["--effort", "high"]

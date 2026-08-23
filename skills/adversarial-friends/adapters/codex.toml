@@ -1,0 +1,15 @@
+name = "codex"
+binary = "codex"
+base_argv = ["exec", "--json"]
+prompt_mode = "stdin"
+readonly_argv = ["-s", "read-only"]
+schema_flag = "--output-schema"
+model_flag = "-m"
+internal_timeout_flag = ""
+effort_kind = "native"
+
+[effort]
+low = ["-c", "model_reasoning_effort=low"]
+medium = ["-c", "model_reasoning_effort=medium"]
+high = ["-c", "model_reasoning_effort=high"]
+xhigh = ["-c", "model_reasoning_effort=xhigh"]

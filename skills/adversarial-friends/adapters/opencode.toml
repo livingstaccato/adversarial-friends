@@ -1,0 +1,15 @@
+# --variant accepts any string silently, so effort can never be verified.
+name = "opencode"
+binary = "opencode"
+base_argv = ["run", "--format", "json"]
+prompt_mode = "trailing-arg"
+readonly_argv = []
+schema_flag = ""
+model_flag = "-m"
+internal_timeout_flag = ""
+effort_kind = "unverified"
+
+[effort]
+low = ["--variant", "minimal"]
+high = ["--variant", "high"]
+max = ["--variant", "max"]

@@ -1,0 +1,16 @@
+name = "claude"
+binary = "claude"
+base_argv = ["-p", "--output-format", "json"]
+prompt_mode = "trailing-arg"
+readonly_argv = ["--tools", "Read,Grep,Glob"]
+schema_flag = "--json-schema"
+model_flag = "--model"
+internal_timeout_flag = ""
+effort_kind = "native"
+
+[effort]
+low = ["--effort", "low"]
+medium = ["--effort", "medium"]
+high = ["--effort", "high"]
+xhigh = ["--effort", "xhigh"]
+max = ["--effort", "max"]
