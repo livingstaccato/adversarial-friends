@@ -24,6 +24,13 @@ from .errors import AfError
 # otherwise execute repository-controlled code on every run.
 NO_HOOKS = ["-c", "core.hooksPath=/dev/null"]
 
+# Identity stamped on the throwaway snapshot commit (see snapshot_commit).
+# Deliberately not the operator's own identity: the object is internal, never
+# pushed, and depending on ambient git config made repo scope fail wherever
+# none was set.
+SNAPSHOT_IDENTITY_NAME = "adversarial-friends"
+SNAPSHOT_IDENTITY_EMAIL = "af-snapshot@localhost"
+
 
 def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, env=env)
@@ -97,7 +104,22 @@ def snapshot_commit(repo: Path) -> str:
     _require_repo_root(repo)
     with tempfile.TemporaryDirectory(prefix="af-snapshot-index-") as tmpdir:
         index = Path(tmpdir) / "index"
-        env = dict(os.environ, GIT_INDEX_FILE=str(index))
+        # The snapshot is a throwaway commit object that never enters the
+        # operator's history and is never pushed, so it must neither require
+        # nor borrow their git identity. Without an explicit identity here,
+        # `git commit-tree` fails outright with "Author identity unknown"
+        # anywhere none is configured -- a fresh container, a CI runner, or a
+        # machine where the operator sets identity per-repository rather than
+        # globally. That made repo-scope isolation unusable in exactly the
+        # environments most likely to run this unattended.
+        env = dict(
+            os.environ,
+            GIT_INDEX_FILE=str(index),
+            GIT_AUTHOR_NAME=SNAPSHOT_IDENTITY_NAME,
+            GIT_AUTHOR_EMAIL=SNAPSHOT_IDENTITY_EMAIL,
+            GIT_COMMITTER_NAME=SNAPSHOT_IDENTITY_NAME,
+            GIT_COMMITTER_EMAIL=SNAPSHOT_IDENTITY_EMAIL,
+        )
         head = _resolve_head(repo)
         if head is not None:
             _git(repo, "read-tree", head, env=env)

@@ -13,12 +13,29 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
+      # act compat only (no-op on GitHub, where env.ACT is unset): act runs
+      # a JS action's *post* step via a bare `docker exec` that does not
+      # inherit the image's PATH, so `Post setup-uv`'s cache-save fails with
+      # "node: executable file not found" and reports the whole job failed
+      # after every real step has already passed. Symlinking node into a
+      # default docker-exec PATH entry fixes the local signal. See
+      # https://github.com/nektos/act/issues/107
+      - name: act compat — expose node to docker exec
+        if: ${{ env.ACT }}
+        run: sudo ln -sf "$(command -v node)" /usr/local/bin/node
+
       # Checkout source
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Install uv and the matrix Python (uv manages its own interpreters,
       # so we don't need actions/setup-python).
-      - uses: astral-sh/setup-uv@v8
+      #
+      # Pinned to a concrete tag rather than a moving major: astral-sh/setup-uv
+      # publishes moving `vN` tags only through v7, so `@v8`/`@v9`/`@v10` do
+      # not resolve at all ("reference not found") even though v10.0.1 is the
+      # current release. Bump this deliberately; `make act-ci` catches a bad
+      # ref before it reaches CI.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
 

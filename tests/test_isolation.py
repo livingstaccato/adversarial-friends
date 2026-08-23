@@ -333,3 +333,48 @@ def test_unicode_and_newline_filenames_survive_the_snapshot(repo, tmp_path):
     dest = isolation.add_worktree(repo, sha, tmp_path / "wt")
     assert (dest / unicode_name).read_bytes() == b"unicode, committed\n"
     assert (dest / newline_name).read_bytes() == b"newline in filename, never committed\n"
+
+
+def test_snapshot_works_with_no_ambient_git_identity(repo, tmp_path, monkeypatch):
+    """`git commit-tree` refuses to build a commit object without an author,
+    so a snapshot that inherited the operator's identity failed outright
+    ("Author identity unknown") anywhere none was configured -- a fresh
+    container, a CI runner, or a machine where identity is set per-repo
+    rather than globally. Caught by running the suite in a Linux container,
+    where it took out repo-scope isolation entirely.
+
+    Reproduced by pointing every git config source somewhere empty and
+    stripping the identity environment variables, so nothing but
+    snapshot_commit's own explicit identity remains.
+    """
+    empty_config = tmp_path / "empty-gitconfig"
+    empty_config.write_text("")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty_config))
+    for var in (
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # Drop the identity the `repo` fixture set locally, so no source has one.
+    subprocess.run(["git", "config", "--unset", "user.email"], cwd=repo, capture_output=True)
+    subprocess.run(["git", "config", "--unset", "user.name"], cwd=repo, capture_output=True)
+
+    (repo / "untracked.py").write_text("no identity anywhere\n")
+    sha = isolation.snapshot_commit(repo)
+
+    dest = isolation.add_worktree(repo, sha, tmp_path / "wt-no-identity")
+    assert (dest / "untracked.py").read_text() == "no identity anywhere\n"
+
+    author = subprocess.run(
+        ["git", "show", "-s", "--format=%an <%ae>", sha],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert author == f"{isolation.SNAPSHOT_IDENTITY_NAME} <{isolation.SNAPSHOT_IDENTITY_EMAIL}>"

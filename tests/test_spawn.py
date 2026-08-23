@@ -152,6 +152,13 @@ def test_exit0_with_leftover_descendant_is_reaped(tmp_path):
     )
     assert result.timed_out is False
     assert result.exit_code == 0
+    # fake_friend waits for this file before exiting (see _await_pidfile),
+    # so a missing pidfile is a real regression in that handshake, not the
+    # startup race this test used to lose under load ~40% of the time.
+    assert pidfile.exists(), (
+        "descendant never recorded its pid; fake_friend should not have exited "
+        "until it did -- see _await_pidfile in tests/fake_friend.py"
+    )
     descendant_pid = int(pidfile.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(descendant_pid, signal.SIGTERM)

@@ -1,4 +1,4 @@
-.PHONY: help install lint type-check test plugin-sync version-sync max-loc diagrams plugin-sync-copy quality check
+.PHONY: help install lint type-check test plugin-sync version-sync max-loc diagrams plugin-sync-copy quality check act-dry act-ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -44,3 +44,11 @@ diagrams: ## Re-render docs/architecture/*.puml to PNG + SVG
 quality: lint type-check max-loc plugin-sync version-sync test ## Run all quality gates
 
 check: quality ## Alias for quality
+
+# Local CI via act (see .actrc). `env -u DOCKER_HOST` keeps a Colima/Docker
+# Desktop DOCKER_HOST from conflicting with .actrc's daemon-socket setting.
+act-dry: ## List CI jobs without running them (validates the workflow + .actrc)
+	env -u DOCKER_HOST act --list
+
+act-ci: ## Run the CI quality job locally via act (slow; pulls an image first run)
+	env -u DOCKER_HOST act -j quality --matrix python-version:3.13 --rm
