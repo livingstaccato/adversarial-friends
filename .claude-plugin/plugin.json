@@ -1,0 +1,6 @@
+{
+  "name": "adversarial-friends",
+  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers.",
+  "version": "0.1.0",
+  "skills": ["skills/adversarial-friends"]
+}
