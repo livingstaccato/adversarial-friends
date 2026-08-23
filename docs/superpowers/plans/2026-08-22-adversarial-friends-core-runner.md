@@ -1184,8 +1184,12 @@ def test_bad_scope_is_rejected():
 
 
 @pytest.mark.parametrize("argv", [
+    ["codex", "--sandbox", "danger-full-access"],
+    ["codex", "--sandbox", "workspace-write"],
     ["codex", "-s", "danger-full-access"],
-    ["codex", "-s", "workspace-write"],
+    # The `=` form is the same instruction to the CLI and must not slip past.
+    ["codex", "--sandbox=danger-full-access"],
+    ["codex", "-s=workspace-write"],
     ["claude", "--dangerously-skip-permissions"],
     ["opencode", "--auto"],
     ["gemini", "-y"],
@@ -1274,13 +1278,20 @@ def validate_roster_entry(entry: dict) -> dict:
 
 
 def check_denied_values(argv: list[str]) -> None:
+    """Reject argv that weakens the sandbox, in either separated or `=` form.
+
+    Both spellings must be handled: `--sandbox danger-full-access` and
+    `--sandbox=danger-full-access` are the same instruction to the CLI, so
+    checking only the following token leaves the second form wide open.
+    """
     for index, token in enumerate(argv):
-        if token in DENIED_FLAGS:
+        flag, _, inline_value = token.partition("=")
+        if flag in DENIED_FLAGS:
             raise UsageError(
-                f"refusing to run: {token} disables the sandbox this tool relies on"
+                f"refusing to run: {flag} disables the sandbox this tool relies on"
             )
-        if token in ("-s", "--sandbox") and index + 1 < len(argv):
-            value = argv[index + 1]
+        if flag in ("-s", "--sandbox"):
+            value = inline_value or (argv[index + 1] if index + 1 < len(argv) else "")
             if value in DENIED_SANDBOX_VALUES:
                 raise UsageError(
                     f"refusing to run: sandbox mode {value!r} grants write access"
