@@ -48,7 +48,18 @@ def discover_clis(registry: dict[str, Adapter],
 def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
             which: Callable[[str], str | None] = shutil.which,
             include_self: bool = False,
-            overrides: list[dict] | None = None) -> list[FriendSpec]:
+            overrides: list[dict] | None = None,
+            timeout: int = DEFAULT_TIMEOUT) -> list[FriendSpec]:
+    # NOTE for whoever wires a --roster file flag through `overrides`:
+    # `if overrides:` (not `if overrides is not None:`) means an explicit,
+    # caller-supplied *empty* list is indistinguishable from "no overrides
+    # given" and silently falls through to full auto-discovery below. If a
+    # roster file can legitimately name zero friends, check for that case
+    # before calling resolve() and raise NoFriendsError yourself -- do not
+    # rely on this function to do it. (Task 12's cli.py never triggers this
+    # at all: its --friend flag path builds FriendSpecs directly and never
+    # calls resolve(overrides=...) -- see cli._specs_from_flags's own
+    # docstring.)
     if overrides:
         specs = []
         seen_names: set[str] = set()
@@ -66,6 +77,15 @@ def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
             seen_names.add(name)
             adapter = registry.get(entry["cli"])
             if adapter is None:
+                # NOTE for whoever wires a --roster file flag through
+                # `overrides`: this raises NoFriendsError (exit 3) for an
+                # unknown cli, but a config typo is a usage error, not "no
+                # friends available" -- UsageError (exit 2) fits better.
+                # Left unchanged here since fixing it would change this
+                # function's behavior for existing callers/tests; Task 12's
+                # own --friend flag path (cli._specs_from_flags) raises
+                # UsageError directly instead of going through this branch
+                # at all, for exactly this reason.
                 raise NoFriendsError(f"unknown cli in roster: {entry['cli']!r}")
             default_scope = ("repo" if adapter.readonly_argv
                              else NO_READONLY_DEFAULT_SCOPE)
@@ -73,7 +93,7 @@ def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
                 name=name, cli=entry["cli"], lens=entry["lens"],
                 model=entry.get("model"), effort=entry.get("effort"),
                 scope=entry.get("scope", default_scope),
-                timeout=entry.get("timeout", DEFAULT_TIMEOUT),
+                timeout=entry.get("timeout", timeout),
             ))
         return specs
 
@@ -102,6 +122,6 @@ def resolve(registry: dict[str, Adapter], lenses: list[str], env: dict,
         specs.append(FriendSpec(
             name=f"{cli}-{lenses[index % len(lenses)]}", cli=cli,
             lens=lenses[index % len(lenses)], model=None, effort=None,
-            scope=scope, timeout=DEFAULT_TIMEOUT,
+            scope=scope, timeout=timeout,
         ))
     return specs

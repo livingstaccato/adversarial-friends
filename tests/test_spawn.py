@@ -254,3 +254,51 @@ def test_nonzero_exit_with_otherwise_valid_output_is_still_a_failure():
     assert result.exit_code == 1
     assert result.result.succeeded is True  # normalize() alone would call this fine
     assert result.failure_reason == "exit 1"
+
+
+# --- abort_event (Task 12 review, Finding 1) ----------------------------
+#
+# A run cancelled via Ctrl-C or a CI kill must not leave a metered agent CLI
+# running unbounded. Without this parameter, run_process only ever exits
+# early via the timeout deadline -- a caller with no way to signal "stop
+# now" is stuck waiting out the full timeout_s regardless of what the user
+# wants. abort_event gives a caller (cli.py's signal handler, here) that
+# path, reusing the exact same process-group termination code a timeout
+# already goes through.
+
+
+def test_abort_event_terminates_promptly_instead_of_waiting_out_the_timeout():
+    abort_event = threading.Event()
+    threading.Timer(0.3, abort_event.set).start()
+    started = time.monotonic()
+    result = spawn.run_process(
+        [sys.executable, FAKE, "hang"], None, 30, Path.cwd(), abort_event=abort_event,
+    )
+    elapsed = time.monotonic() - started
+    assert result.failure_reason == "aborted"
+    assert result.timed_out is False  # distinct from a real timeout
+    assert elapsed < 5, f"took {elapsed:.1f}s -- should return within ~1s of the event, not near the 30s timeout"
+
+
+def test_abort_event_reaps_the_whole_process_group(tmp_path):
+    pidfile = tmp_path / "child.pid"
+    abort_event = threading.Event()
+    threading.Timer(0.3, abort_event.set).start()
+    result = spawn.run_process(
+        [sys.executable, FAKE, "hang", str(pidfile)], None, 30, Path.cwd(),
+        abort_event=abort_event,
+    )
+    assert result.failure_reason == "aborted"
+    child_pid = int(pidfile.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, signal.SIGTERM)  # already reaped
+
+
+def test_abort_event_none_is_unaffected_by_a_set_event_of_the_caller_s_own():
+    """Sanity check on the default: a caller that never passes abort_event
+    (every pre-existing caller/test) gets the exact prior behavior, timeout
+    only -- the parameter defaulting to None must not somehow still poll
+    some ambient/global event."""
+    result = spawn.run_process([sys.executable, FAKE, "good"], None, 30, Path.cwd())
+    assert result.result.succeeded is True
+    assert result.failure_reason is None

@@ -101,6 +101,39 @@ def main() -> int:
         time.sleep(600)
         return 0
 
+    if mode == "leaky_escape":
+        # Attack (Task 12 review, Finding 4): like "escape", a descendant
+        # calls os.setsid() before hanging -- but THIS process does not
+        # hang itself; it prints a valid payload and exits immediately,
+        # exactly like "exit0_leaves_descendant" above. Needs no pidfile
+        # argument (cli.py's `fake:<mode>` dispatch has no room to pass
+        # one -- see cli._specs_from_flags): the escapee is found instead
+        # by grepping `ps` output for the literal marker comment below,
+        # which -- like every `python -c "..."` invocation in this file --
+        # appears verbatim in its command line.
+        #
+        # Reaping this process's OWN process group cannot reach the
+        # escapee (same irreducible limitation as "escape" -- see
+        # test_setsid_escapee_is_not_reaped in test_spawn.py), but this
+        # process's inherited stdout/stderr pipes stay open as long as the
+        # escapee (which never redirects them) is still running -- that is
+        # spawn.run_process's SECOND, independent orphans_suspected
+        # signal (see its module docstring): the output-pump threads are
+        # still alive, well past the drain window, even though this
+        # process itself already exited cleanly and fast.
+        subprocess.Popen([
+            sys.executable, "-c",
+            "import os, time\n"
+            "os.setsid()\n"
+            "# af-leaky-escape-marker\n"
+            "time.sleep(600)\n",
+        ])
+        print(json.dumps({"findings": [{
+            "severity": "low", "claim": "leaky escape probe",
+            "location": None, "evidence": "spawned a setsid escapee, then exited",
+            "failure_scenario": "n/a", "suggested_fix": "n/a"}]}))
+        return 0
+
     if mode == "ignore_sigterm":
         # Attack: the friend itself ignores SIGTERM. SIGKILL cannot be
         # blocked or ignored, so escalation must still finish it off.

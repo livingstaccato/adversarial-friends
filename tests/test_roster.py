@@ -51,6 +51,40 @@ def test_lenses_are_assigned_round_robin(registry):
     assert len(set(assigned[:3])) == 3
 
 
+def test_default_timeout_is_used_when_none_is_passed(registry):
+    friends = roster.resolve(registry, LENSES, {}, which_all)
+    assert all(f.timeout == roster.DEFAULT_TIMEOUT for f in friends)
+
+
+def test_auto_discovered_friends_receive_the_passed_timeout(registry):
+    """Task 12 review, Finding 2: --timeout was silently ignored for every
+    auto-discovered friend because resolve() had no timeout parameter at
+    all -- a flag that silently does nothing is worse than no flag."""
+    friends = roster.resolve(registry, LENSES, {}, which_all, timeout=30)
+    assert friends, "fixture produced no friends to check"
+    assert all(f.timeout == 30 for f in friends)
+    assert all(f.timeout != roster.DEFAULT_TIMEOUT for f in friends)
+
+
+def test_override_without_its_own_timeout_key_falls_back_to_the_passed_timeout(registry):
+    """The passed `timeout` is also the fallback default for an override
+    entry that doesn't set its own `timeout` key -- an override's own
+    explicit key still wins (see the next test)."""
+    friends = roster.resolve(
+        registry, LENSES, {}, which_all, timeout=42,
+        overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops"}],
+    )
+    assert friends[0].timeout == 42
+
+
+def test_override_s_own_timeout_key_still_wins_over_the_passed_timeout(registry):
+    friends = roster.resolve(
+        registry, LENSES, {}, which_all, timeout=42,
+        overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops", "timeout": 7}],
+    )
+    assert friends[0].timeout == 7
+
+
 def test_opencode_defaults_to_doc_scope(registry):
     """opencode has no read-only mode, so repo scope needs an explicit opt-in."""
     friends = roster.resolve(registry, LENSES, {}, which_all)

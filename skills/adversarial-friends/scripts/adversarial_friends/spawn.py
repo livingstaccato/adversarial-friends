@@ -247,7 +247,20 @@ def _early_failure(argv: list[str], duration: float, reason: str) -> SpawnResult
 
 
 def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
-                 cwd: Path) -> SpawnResult:
+                 cwd: Path, abort_event: threading.Event | None = None) -> SpawnResult:
+    """Run one friend; see the module docstring for the process-group and
+    pump-thread hazards this guards against.
+
+    `abort_event`, if given, is polled on the same cadence as the timeout
+    deadline (every `_POLL_INTERVAL_S`). Setting it from another thread --
+    e.g. a signal handler reacting to Ctrl-C or SIGTERM -- terminates this
+    process's group through the exact same path a timeout already uses and
+    returns promptly with `failure_reason="aborted"`, rather than this call
+    blocking for the rest of `timeout_s` regardless of what the caller
+    wants. Default `None` means this call behaves exactly as before: no new
+    exit condition is checked, so every existing caller and test is
+    unaffected.
+    """
     started = time.monotonic()
     try:
         process = subprocess.Popen(
@@ -279,9 +292,13 @@ def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
 
     deadline = started + timeout_s
     timed_out = False
+    aborted = False
     while process.poll() is None:
         if time.monotonic() >= deadline:
             timed_out = True
+            break
+        if abort_event is not None and abort_event.is_set():
+            aborted = True
             break
         time.sleep(_POLL_INTERVAL_S)
 
@@ -332,6 +349,16 @@ def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
         return SpawnResult(
             argv, process.returncode, stdout, stderr, duration,
             True, NormalizeResult(None, ["killed on timeout"], False), "timeout",
+            orphans_suspected,
+        )
+    # An abort is not a timeout (timed_out stays False -- nothing here
+    # timed out on its own) and, like a timeout, its output is never a
+    # candidate for repair: the process was killed mid-run by request, not
+    # because it finished and produced something unusable.
+    if aborted:
+        return SpawnResult(
+            argv, process.returncode, stdout, stderr, duration,
+            False, NormalizeResult(None, ["aborted"], False), "aborted",
             orphans_suspected,
         )
 

@@ -10,9 +10,11 @@ import concurrent.futures
 import dataclasses
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -166,7 +168,8 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
 
 
 def _dispatch(spec: FriendSpec, cwd: Path, registry: dict[str, Adapter],
-              fake_cmd: list[str] | None, prompt_file: Path, schema_file: Path):
+              fake_cmd: list[str] | None, prompt_file: Path, schema_file: Path,
+              abort_event: threading.Event | None = None):
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
     Capability is always the value build_argv computed and returned for
@@ -178,6 +181,13 @@ def _dispatch(spec: FriendSpec, cwd: Path, registry: dict[str, Adapter],
     False. See adapters.build_argv's docstring for why the prompt itself
     (untrusted document text) must never be allowed to influence this
     value either -- another reason to trust only what build_argv reports.
+
+    `abort_event`, if given, is passed straight through to
+    spawn.run_process so a signal handler in cmd_run can stop this friend
+    (and reap its whole process group) without waiting out its full
+    --timeout -- see cmd_run's signal handling for why this matters: a
+    cancelled run must not leave a metered agent CLI process running
+    unbounded.
     """
     if spec.cli == "fake":
         argv = [*fake_cmd, spec.lens]
@@ -187,7 +197,7 @@ def _dispatch(spec: FriendSpec, cwd: Path, registry: dict[str, Adapter],
         adapter = registry[spec.cli]
         argv, stdin_text, capability = build_argv(adapter, spec, prompt_file, schema_file)
         check_denied_values(argv)
-    outcome = run_process(argv, stdin_text, spec.timeout, cwd)
+    outcome = run_process(argv, stdin_text, spec.timeout, cwd, abort_event=abort_event)
     return spec, capability, outcome
 
 
@@ -219,137 +229,206 @@ def cmd_run(args: argparse.Namespace) -> int:
     specs = (_specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
              if args.friend else
              resolve(registry, available_lenses(), os.environ, shutil.which,
-                     include_self=args.include_self))
+                     include_self=args.include_self, timeout=args.timeout))
     if not specs:
         raise NoFriendsError("no usable friends for mode 'report'")
     for spec in specs:
         validate_friend_name(spec.name)
 
-    downgrades: list[str] = []
-    repo_root = _resolve_repo_root(artifact)
-    if repo_root is None:
-        downgrades.append(
-            f"{artifact.name} is not inside a git repository; every friend was "
-            "downgraded to doc scope (no repository to snapshot or read)."
-        )
-        specs = [dataclasses.replace(s, scope="doc") for s in specs]
+    # Signal handling: a cancelled or CI-killed run must not leave a
+    # metered agent CLI process running unbounded, nor a stale
+    # `git worktree` registration behind in the repo under review. Neither
+    # SIGTERM nor (reliably, once the main thread is blocked deep inside a
+    # C-level wait) SIGINT would otherwise give this function's own
+    # `finally` blocks a chance to run at all: SIGTERM's default
+    # disposition kills the process immediately, with no Python-level
+    # unwinding whatsoever; SIGINT's default handler does raise
+    # KeyboardInterrupt, but that exception, once it propagates out of the
+    # blocked `pool.map()` call below, immediately re-blocks inside
+    # `ThreadPoolExecutor.__exit__`'s own `shutdown(wait=True)`, which
+    # waits for the same still-hung worker -- so cleanup never actually
+    # runs within any reasonable time either way. Installing explicit
+    # handlers for both signals, which only ever set `abort_event` and
+    # shut the active pool down without waiting, is what makes the
+    # `finally` blocks below reachable promptly. Handlers are restored
+    # unconditionally in the outer `finally` -- a library-ish function
+    # should not permanently hijack process-wide signal disposition.
+    abort_event = threading.Event()
+    abort_signum: dict[str, int | None] = {"value": None}
+    active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
 
-    run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    store = RunStore(Path(args.out) if args.out else default_root(), run_id)
-    frozen, digest = store.artifact_copy(artifact)
-    schema_file = schema_path(store.run_dir)
-    prompt_file = store.run_dir / "prompt.txt"
-    prompt_file.write_text(
-        PROMPT_HEADER + "\n--- ARTIFACT ---\n" + frozen.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    def _handle_abort(signum: int, frame) -> None:
+        abort_signum["value"] = signum
+        abort_event.set()
+        # spawn.run_process (via _dispatch's abort_event) already notices
+        # this on its own next poll and terminates its process group
+        # promptly -- but the main thread here may be blocked inside
+        # pool.map()'s wait for that same worker future. Shutting the pool
+        # down without waiting means this handler itself never blocks, and
+        # the main thread's wait resolves as soon as the worker's own
+        # abort-triggered return lands, not whenever `with pool:`'s
+        # implicit wait=True would otherwise have unblocked it.
+        pool = active_pool[0]
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
-    # Isolation: every friend gets its own private working directory, torn
-    # down at the end regardless of how dispatch finishes (including on a
-    # raised exception). Repo-scope friends -- those whose adapter declared
-    # readonly_argv and were not downgraded above -- run inside their own
-    # git worktree checked out from one shared snapshot commit; every other
-    # friend runs inside its own bare doc_scope_dir holding only a copy of
-    # the artifact. Giving every friend (not just non-readonly ones) a
-    # private worktree is a deliberately stricter simplification of "every
-    # friend that lacks a readonly capability gets its own private
-    # worktree": it trivially satisfies that bar and removes any question
-    # of whether two friends sharing one worktree could race each other,
-    # at the cost of one `git worktree add` per repo-scope friend instead
-    # of one shared checkout. The run directory itself (`store.run_dir`)
-    # is never nested inside any of these -- it always lives under `--out`
-    # or default_root(), never under the isolation tempdir below.
-    snapshot_sha = None
-    if repo_root is not None and any(s.scope == "repo" for s in specs):
-        snapshot_sha = isolation.snapshot_commit(repo_root)
+    previous_sigint = signal.signal(signal.SIGINT, _handle_abort)
+    previous_sigterm = signal.signal(signal.SIGTERM, _handle_abort)
+    try:
+        downgrades: list[str] = []
+        repo_root = _resolve_repo_root(artifact)
+        if repo_root is None:
+            downgrades.append(
+                f"{artifact.name} is not inside a git repository; every friend was "
+                "downgraded to doc scope (no repository to snapshot or read)."
+            )
+            specs = [dataclasses.replace(s, scope="doc") for s in specs]
 
-    results = []
-    with tempfile.TemporaryDirectory(prefix="af-isolation-") as iso_root_str:
-        iso_root = Path(iso_root_str)
-        cwd_for: dict[str, Path] = {}
-        try:
-            for spec in specs:
-                dest = iso_root / spec.name
-                if spec.scope == "repo":
-                    isolation.add_worktree(repo_root, snapshot_sha, dest)
-                else:
-                    isolation.doc_scope_dir(dest, artifact)
-                cwd_for[spec.name] = dest
-
-            def _run_one(spec: FriendSpec):
-                return _dispatch(spec, cwd_for[spec.name], registry, fake_cmd,
-                                 prompt_file, schema_file)
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(specs)) as pool:
-                results = list(pool.map(_run_one, specs))
-        finally:
-            for spec in specs:
-                if spec.scope == "repo" and spec.name in cwd_for:
-                    isolation.remove_worktree(repo_root, cwd_for[spec.name])
-            # doc_scope_dir entries are cleaned up automatically: they all
-            # live under iso_root, and the TemporaryDirectory context
-            # manager removes it (and everything under it) on exit below,
-            # independent of whether dispatch raised.
-
-    counter = 0
-    all_claims: list[Claim] = []
-    all_aliases = []
-    friends_meta = []
-    any_success = False
-    for spec, capability, outcome in results:
-        raw_path, json_path, meta_path = store.friend_paths(1, spec.name)
-        raw_path.write_text(outcome.stdout, encoding="utf-8")
-        meta_path.write_text(
-            f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
-            f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
-            f"orphans_suspected={outcome.orphans_suspected}\n",
+        run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        store = RunStore(Path(args.out) if args.out else default_root(), run_id)
+        frozen, digest = store.artifact_copy(artifact)
+        schema_file = schema_path(store.run_dir)
+        prompt_file = store.run_dir / "prompt.txt"
+        prompt_file.write_text(
+            PROMPT_HEADER + "\n--- ARTIFACT ---\n" + frozen.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
-        status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
-        if outcome.orphans_suspected:
-            # A leaked descendant must not look identical to a clean run --
-            # surfaced in the same status column readers already check for
-            # "failed", rather than a silent field only run.json carries.
-            status += " [orphans suspected]"
-        friends_meta.append({
-            "name": spec.name, "model": spec.model, "effort": spec.effort,
-            "readonly": capability.readonly, "scope": spec.scope, "status": status,
-        })
-        if outcome.failure_reason is not None:
-            continue
-        any_success = True
-        incoming = []
-        for finding in (outcome.result.payload or {}).get("findings", []):
-            counter += 1
-            incoming.append(Claim(
-                id=format_claim_id(counter), supersedes=None,
-                origin=[f"{spec.cli}/{spec.lens}"], lens=spec.lens, round=1,
-                advisory=False, severity=finding["severity"],
-                claim=finding["claim"], location=finding.get("location"),
-                evidence=finding["evidence"],
-                failure_scenario=finding["failure_scenario"],
-                suggested_fix=finding["suggested_fix"],
-            ))
-        kept, aliases = exact_merge(all_claims, incoming, round_no=1)
-        for record in kept:
-            store.ledger.append(record)
-        for alias in aliases:
-            store.ledger.append(alias)
-        all_claims.extend(kept)
-        all_aliases.extend(aliases)
 
-    meta = {"mode": args.mode, "preset": args.preset, "artifact": artifact.name,
-            "artifact_hash": digest, "friends": friends_meta, "downgrades": downgrades}
-    store.write_run_json(meta)
-    store.write_report(render(all_claims, all_aliases, meta))
-    print(store.run_dir)
-    # "report" mode never gates on individual claims, but a run where not
-    # one friend produced a usable result (every round failed/timed out) is
-    # not a success either -- exit 1 ("gate blocked or incomplete") rather
-    # than 0, so a caller cannot mistake "we ran the mechanism" for "we got
-    # a trustworthy critique". Distinct from NoFriendsError's exit 3, which
-    # fires before any friend is even dispatched.
-    return 0 if any_success else 1
+        # Isolation: every friend gets its own private working directory, torn
+        # down at the end regardless of how dispatch finishes (including on a
+        # raised exception, or an abort mid-setup -- see the `if
+        # abort_event.is_set(): break` below). Repo-scope friends -- those
+        # whose adapter declared readonly_argv and were not downgraded above
+        # -- run inside their own git worktree checked out from one shared
+        # snapshot commit; every other friend runs inside its own bare
+        # doc_scope_dir holding only a copy of the artifact. Giving every
+        # friend (not just non-readonly ones) a private worktree is a
+        # deliberately stricter simplification of "every friend that lacks a
+        # readonly capability gets its own private worktree": it trivially
+        # satisfies that bar and removes any question of whether two friends
+        # sharing one worktree could race each other, at the cost of one
+        # `git worktree add` per repo-scope friend instead of one shared
+        # checkout. The run directory itself (`store.run_dir`) is never
+        # nested inside any of these -- it always lives under `--out` or
+        # default_root(), never under the isolation tempdir below.
+        snapshot_sha = None
+        if repo_root is not None and any(s.scope == "repo" for s in specs):
+            snapshot_sha = isolation.snapshot_commit(repo_root)
+
+        results = []
+        with tempfile.TemporaryDirectory(prefix="af-isolation-") as iso_root_str:
+            iso_root = Path(iso_root_str)
+            cwd_for: dict[str, Path] = {}
+            try:
+                for spec in specs:
+                    if abort_event.is_set():
+                        break
+                    dest = iso_root / spec.name
+                    if spec.scope == "repo":
+                        isolation.add_worktree(repo_root, snapshot_sha, dest)
+                    else:
+                        isolation.doc_scope_dir(dest, artifact)
+                    cwd_for[spec.name] = dest
+
+                def _run_one(spec: FriendSpec):
+                    return _dispatch(spec, cwd_for[spec.name], registry, fake_cmd,
+                                     prompt_file, schema_file, abort_event)
+
+                # Only specs that actually got an isolation directory (i.e.
+                # every one of them, unless the loop above broke early on
+                # abort) are dispatched -- _run_one would otherwise KeyError
+                # looking up cwd_for for a spec whose setup never happened.
+                dispatch_specs = [s for s in specs if s.name in cwd_for]
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=max(1, len(dispatch_specs))
+                ) as pool:
+                    active_pool[0] = pool
+                    try:
+                        results = list(pool.map(_run_one, dispatch_specs))
+                    finally:
+                        active_pool[0] = None
+            finally:
+                for spec in specs:
+                    if spec.scope == "repo" and spec.name in cwd_for:
+                        isolation.remove_worktree(repo_root, cwd_for[spec.name])
+                # doc_scope_dir entries are cleaned up automatically: they all
+                # live under iso_root, and the TemporaryDirectory context
+                # manager removes it (and everything under it) on exit below,
+                # independent of whether dispatch raised.
+
+        counter = 0
+        all_claims: list[Claim] = []
+        all_aliases = []
+        friends_meta = []
+        any_success = False
+        for spec, capability, outcome in results:
+            raw_path, json_path, meta_path = store.friend_paths(1, spec.name)
+            raw_path.write_text(outcome.stdout, encoding="utf-8")
+            meta_path.write_text(
+                f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
+                f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
+                f"orphans_suspected={outcome.orphans_suspected}\n",
+                encoding="utf-8",
+            )
+            status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
+            if outcome.orphans_suspected:
+                # A leaked descendant must not look identical to a clean run --
+                # surfaced in the same status column readers already check for
+                # "failed", rather than a silent field only run.json carries.
+                status += " [orphans suspected]"
+            friends_meta.append({
+                "name": spec.name, "model": spec.model, "effort": spec.effort,
+                "readonly": capability.readonly, "scope": spec.scope, "status": status,
+            })
+            if outcome.failure_reason is not None:
+                continue
+            any_success = True
+            incoming = []
+            for finding in (outcome.result.payload or {}).get("findings", []):
+                counter += 1
+                incoming.append(Claim(
+                    id=format_claim_id(counter), supersedes=None,
+                    origin=[f"{spec.cli}/{spec.lens}"], lens=spec.lens, round=1,
+                    advisory=False, severity=finding["severity"],
+                    claim=finding["claim"], location=finding.get("location"),
+                    evidence=finding["evidence"],
+                    failure_scenario=finding["failure_scenario"],
+                    suggested_fix=finding["suggested_fix"],
+                ))
+            kept, aliases = exact_merge(all_claims, incoming, round_no=1)
+            for record in kept:
+                store.ledger.append(record)
+            for alias in aliases:
+                store.ledger.append(alias)
+            all_claims.extend(kept)
+            all_aliases.extend(aliases)
+
+        meta = {"mode": args.mode, "preset": args.preset, "artifact": artifact.name,
+                "artifact_hash": digest, "friends": friends_meta, "downgrades": downgrades}
+        store.write_run_json(meta)
+        store.write_report(render(all_claims, all_aliases, meta))
+        print(store.run_dir)
+
+        if abort_signum["value"] is not None:
+            # Distinct from both branches below: a run cancelled by signal
+            # is neither "succeeded" (0) nor merely "incomplete because
+            # every friend failed on its own" (1) -- it never got the
+            # chance to finish at all. 128+signum is the conventional
+            # shell convention for "killed by signal N" and does not
+            # collide with any of this tool's other exit codes (2, 3, 10,
+            # 11, 1, 0).
+            print(f"af: aborted by signal {abort_signum['value']}", file=sys.stderr)
+            return 128 + abort_signum["value"]
+        # "report" mode never gates on individual claims, but a run where not
+        # one friend produced a usable result (every round failed/timed out) is
+        # not a success either -- exit 1 ("gate blocked or incomplete") rather
+        # than 0, so a caller cannot mistake "we ran the mechanism" for "we got
+        # a trustworthy critique". Distinct from NoFriendsError's exit 3, which
+        # fires before any friend is even dispatched.
+        return 0 if any_success else 1
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
