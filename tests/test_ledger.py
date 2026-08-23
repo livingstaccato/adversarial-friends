@@ -1,5 +1,6 @@
 import pytest
 
+from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import (
     Alias, Claim, Ledger, Resolution, Verdict, record_from_dict, record_to_dict,
 )
@@ -71,5 +72,25 @@ def test_resolution_roundtrips(tmp_path):
 
 
 def test_unknown_record_type_is_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(UsageError):
         record_from_dict({"type": "nonsense"})
+
+
+def test_amended_claim_roundtrips_with_multiple_origins():
+    """origin is a list precisely so an amendment can carry author + amender."""
+    claim = make_claim(id="c-0007@2", supersedes="c-0007@1",
+                       origin=["codex/ops", "claude/security"])
+    restored = record_from_dict(record_to_dict(claim))
+    assert restored == claim
+    assert restored.origin == ["codex/ops", "claude/security"]
+    assert restored.supersedes == "c-0007@1"
+
+
+def test_malformed_line_is_surfaced_not_skipped(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    ledger = Ledger(path)
+    ledger.append(make_claim())
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("{not valid json\n")
+    with pytest.raises(Exception):
+        list(ledger.records())

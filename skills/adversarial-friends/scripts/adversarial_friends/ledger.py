@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Iterator, Union
 
+from .errors import UsageError
+
 
 @dataclass(frozen=True)
 class Claim:
@@ -73,12 +75,22 @@ def record_to_dict(record: Record) -> dict:
 
 
 def record_from_dict(payload: dict) -> Record:
+    if not isinstance(payload, dict):
+        raise UsageError(f"ledger record must be a dict, got {type(payload).__name__}")
+
     kind = payload.get("type")
     cls = _BY_NAME.get(kind)
     if cls is None:
-        raise ValueError(f"unknown ledger record type: {kind!r}")
+        raise UsageError(f"unknown ledger record type: {kind!r}")
+
     known = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in payload.items() if k in known})
+    # Ignore extra keys not in the dataclass — forward compatibility.
+    filtered = {k: v for k, v in payload.items() if k in known}
+
+    try:
+        return cls(**filtered)
+    except TypeError as e:
+        raise UsageError(f"malformed {kind!r} record: {e}")
 
 
 class Ledger:
