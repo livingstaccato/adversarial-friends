@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .contracts import PayloadContract
+
 SEVERITIES = ("high", "medium", "low")
 REQUIRED_FIELDS = (
     "severity",
@@ -91,3 +93,41 @@ def is_successful_payload(payload: dict[str, Any]) -> bool:
     if payload.get("no_findings") is True:
         return True
     return bool(payload.get("findings"))
+
+
+def claim_tier(parsed: dict[str, Any], errors: list[str]) -> int:
+    """Rank a parsed candidate. Lower is preferred; ties keep first-seen.
+
+    A false failure costs a re-run; a false "clean" hides whatever the friend
+    actually found. Those costs are not symmetric, so a substantive-but-broken
+    critique must always outrank a trivially clean one -- otherwise a real
+    finding sitting next to an unrelated, well-formed '{"no_findings": true}'
+    fragment (or any other trivially-valid scrap) would be silently discarded
+    in favor of the scrap. Tiers, most preferred first:
+
+      0. Validates cleanly AND has at least one real finding -- a
+         substantive, well-formed critique. Nothing beats this.
+      1. Has a "findings" key at all, even if it's empty or fails
+         validation -- a substantive *attempt* whose validation errors are
+         still worth surfacing to the caller as an honest, specific failure.
+      2. Validates cleanly as an explicit "nothing to report" marker.
+      3. Anything else that merely parsed as a JSON object.
+    """
+    findings = parsed.get("findings")
+    if not errors and isinstance(findings, list) and findings:
+        return 0
+    if "findings" in parsed:
+        return 1
+    if not errors and parsed.get("no_findings") is True:
+        return 2
+    return 3
+
+
+CLAIM_CONTRACT = PayloadContract(
+    name="claims",
+    validate=validate_payload,
+    is_successful=is_successful_payload,
+    tier=claim_tier,
+    container_key="findings",
+    empty_message="no findings and no explicit no_findings marker",
+)

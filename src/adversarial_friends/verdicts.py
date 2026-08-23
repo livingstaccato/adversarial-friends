@@ -22,6 +22,7 @@ ceiling.
 
 from collections import Counter
 from collections.abc import Iterable
+import dataclasses
 
 from .ledger import Claim, Verdict
 
@@ -159,17 +160,48 @@ def downgrade_late_amendment(verdict: Verdict, round_no: int, max_rounds: int) -
         return verdict
     note = f"[late amendment, downgraded to upheld] proposed: {verdict.amended_claim}"
     reasoning = f"{verdict.reasoning}\n{note}" if verdict.reasoning else note
-    return Verdict(
-        claim_id=verdict.claim_id,
-        judge=verdict.judge,
-        round=verdict.round,
-        verdict="upheld",
-        confidence=verdict.confidence,
-        evidence_assessment=verdict.evidence_assessment,
-        reasoning=reasoning,
-        counter_evidence=verdict.counter_evidence,
-        amended_claim=verdict.amended_claim,
+    return dataclasses.replace(verdict, verdict="upheld", reasoning=reasoning)
+
+
+def downgrade_unverifiable(verdict: Verdict) -> Verdict:
+    """§6.5's evidence symmetry: a dispositive verdict whose judge could not
+    locate or evaluate the cited evidence is downgraded to `unproven`.
+
+    A judge that says "refuted, but I could not find the evidence" has not
+    refuted anything -- it has reported that it could not check. Left
+    dispositive, two such judges would unanimously settle a claim on the
+    strength of not having looked, which is the exact failure this tool
+    exists to prevent. The original verdict is preserved in `reasoning` so
+    the report can still show what the judge's opinion would have been.
+    """
+    if verdict.verdict not in DISPOSITIVE or verdict.evidence_assessment != "unverifiable":
+        return verdict
+    note = (
+        f"[evidence unverifiable, downgraded from {verdict.verdict!r} to 'unproven' "
+        "per the evidence-symmetry rule]"
     )
+    reasoning = f"{verdict.reasoning}\n{note}" if verdict.reasoning else note
+    return dataclasses.replace(verdict, verdict=UNPROVEN, reasoning=reasoning)
+
+
+def apply_downgrades(verdict: Verdict, round_no: int, max_rounds: int) -> Verdict:
+    """Every per-verdict rewrite the spec requires, applied in one place.
+
+    `downgrade_unverifiable` runs first. Both orders currently produce the
+    same *verdict* for the one input where both rules fire (a final-round
+    `amended` whose evidence was unverifiable): the late-amendment rewrite
+    preserves `evidence_assessment`, so its dispositive `upheld` is still
+    caught by the evidence rule afterwards. The order is fixed here for two
+    reasons that are real even though the outcome currently matches:
+
+    * The recorded `reasoning` differs. Evidence-first names `amended` --
+      the verdict the judge actually cast -- rather than the `upheld` an
+      internal rewrite had already substituted for it.
+    * It does not depend on the amendment rewrite preserving the
+      assessment. Evidence-first stays correct if that ever changes;
+      amendment-first would silently stop applying the evidence rule.
+    """
+    return downgrade_late_amendment(downgrade_unverifiable(verdict), round_no, max_rounds)
 
 
 def round_is_dry(all_claims_were_aliases: bool, every_required_friend_ok: bool) -> bool:

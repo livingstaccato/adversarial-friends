@@ -34,14 +34,14 @@ def claim(origin=("codex-ops",), cid="c-0001@1", advisory=False):
     )
 
 
-def verdict(judge, kind, cid="c-0001@1", amended=None, reasoning="because"):
+def verdict(judge, kind, cid="c-0001@1", amended=None, reasoning="because", assessment="confirmed"):
     return Verdict(
         claim_id=cid,
         judge=judge,
         round=2,
         verdict=kind,
         confidence="high",
-        evidence_assessment="confirmed",
+        evidence_assessment=assessment,
         reasoning=reasoning,
         counter_evidence=None,
         amended_claim=amended,
@@ -263,6 +263,74 @@ def test_amendment_before_the_final_round_is_untouched():
 def test_a_non_amendment_is_never_rewritten():
     v = verdict("claude-security", "refuted")
     assert verdicts.downgrade_late_amendment(v, round_no=3, max_rounds=3) == v
+
+
+# --- §6.5 evidence symmetry ------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["upheld", "refuted", "amended"])
+def test_an_unverifiable_dispositive_verdict_becomes_unproven(kind):
+    """A judge that says "refuted, but I could not find the evidence" has not
+    refuted anything -- it has reported that it could not check."""
+    v = verdict("claude-security", kind, assessment="unverifiable", amended="reworded")
+    assert verdicts.downgrade_unverifiable(v).verdict == verdicts.UNPROVEN
+
+
+def test_the_downgraded_verdict_records_what_it_would_have_been():
+    v = verdict("claude-security", "refuted", assessment="unverifiable")
+    out = verdicts.downgrade_unverifiable(v)
+    assert "refuted" in out.reasoning
+    assert "unverifiable" in out.reasoning
+
+
+def test_a_confirmed_verdict_is_untouched():
+    v = verdict("claude-security", "refuted", assessment="confirmed")
+    assert verdicts.downgrade_unverifiable(v) == v
+
+
+def test_an_already_non_dispositive_verdict_is_untouched():
+    v = verdict("claude-security", "out-of-scope", assessment="unverifiable")
+    assert verdicts.downgrade_unverifiable(v) == v
+
+
+def test_two_unverifiable_judges_cannot_settle_a_claim():
+    """The reason the rule exists: left dispositive, two judges would
+    unanimously settle a claim on the strength of not having looked."""
+    cast = [
+        verdicts.downgrade_unverifiable(verdict(j, "refuted", assessment="unverifiable"))
+        for j in ("claude-security", "agy-assumptions")
+    ]
+    assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.UNPROVEN
+
+
+def test_both_rules_firing_at_once_still_ends_unproven():
+    """A final-round `amended` whose evidence was unverifiable triggers both
+    rewrites. Whichever runs first, a judge that could not verify the
+    evidence must not end up casting a dispositive vote."""
+    v = verdict("claude-security", "amended", amended="reworded", assessment="unverifiable")
+    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == verdicts.UNPROVEN
+
+
+def test_the_note_names_the_verdict_the_judge_actually_cast():
+    """This is what the rule order buys, and the only observable difference
+    between the two orders: running the evidence rule first means the
+    recorded reasoning says the judge cast `amended`, not the `upheld` that
+    an internal rewrite would otherwise have substituted for it first."""
+    v = verdict(
+        "claude-security", "amended", amended="reworded", assessment="unverifiable", reasoning=""
+    )
+    note = verdicts.apply_downgrades(v, round_no=3, max_rounds=3).reasoning
+    assert "'amended' to 'unproven'" in note
+
+
+def test_apply_downgrades_still_performs_the_late_amendment_rewrite():
+    v = verdict("claude-security", "amended", amended="reworded", assessment="confirmed")
+    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == "upheld"
+
+
+def test_apply_downgrades_leaves_an_ordinary_verdict_alone():
+    v = verdict("claude-security", "refuted", assessment="confirmed")
+    assert verdicts.apply_downgrades(v, round_no=2, max_rounds=3) == v
 
 
 # --- §7.3 termination ------------------------------------------------------

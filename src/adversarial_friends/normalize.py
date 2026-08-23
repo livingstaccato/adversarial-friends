@@ -29,7 +29,8 @@ import json
 import re
 from typing import Any
 
-from .claimschema import is_successful_payload, validate_payload
+from .claimschema import CLAIM_CONTRACT
+from .contracts import PayloadContract
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 FENCE_RE = re.compile(r"```[ \t]*[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)```", re.DOTALL)
@@ -252,44 +253,16 @@ def _candidate_sources(cleaned: str) -> Iterator[str]:
     yield cleaned
 
 
-def _candidate_tier(parsed: dict[str, Any], errors: list[str]) -> int:
-    """Rank a parsed candidate. Lower is preferred; ties keep first-seen.
-
-    A false failure costs a re-run; a false "clean" hides whatever the friend
-    actually found. Those costs are not symmetric, so a substantive-but-broken
-    critique must always outrank a trivially clean one -- otherwise a real
-    finding sitting next to an unrelated, well-formed '{"no_findings": true}'
-    fragment (or any other trivially-valid scrap) would be silently discarded
-    in favor of the scrap. Tiers, most preferred first:
-
-      0. Validates cleanly AND has at least one real finding -- a
-         substantive, well-formed critique. Nothing beats this.
-      1. Has a "findings" key at all, even if it's empty or fails
-         validation -- a substantive *attempt* whose validation errors are
-         still worth surfacing to the caller as an honest, specific failure.
-      2. Validates cleanly as an explicit "nothing to report" marker.
-      3. Anything else that merely parsed as a JSON object.
-    """
-    findings = parsed.get("findings")
-    if not errors and isinstance(findings, list) and findings:
-        return 0
-    if "findings" in parsed:
-        return 1
-    if not errors and parsed.get("no_findings") is True:
-        return 2
-    return 3
-
-
-def extract_json(text: str) -> dict[str, Any] | None:
+def extract_json(text: str, contract: PayloadContract = CLAIM_CONTRACT) -> dict[str, Any] | None:
     """Best-effort recovery of a single JSON object from untrusted text.
 
-    Every candidate that parses as a JSON object is ranked by
-    `_candidate_tier` (see its docstring for the ordering and why); the
+    Every candidate that parses as a JSON object is ranked by the contract's
+    `tier` (see claimschema.claim_tier for the claim ordering and why); the
     best-ranked candidate found across every source wins, not just the first
-    one encountered. `validate_payload` is computed once per candidate and
-    reused for tiering -- `normalize` runs it again on the single winning
-    payload, but each candidate considered during the search is validated
-    exactly once, not twice.
+    one encountered. Validation is computed once per candidate and reused for
+    tiering -- `normalize` runs it again on the single winning payload, but
+    each candidate considered during the search is validated exactly once,
+    not twice.
     """
     cleaned = strip_ansi(text).strip()
     best_tier = None
@@ -305,8 +278,8 @@ def extract_json(text: str) -> dict[str, Any] | None:
                     continue
                 if not isinstance(parsed, dict):
                     continue
-                errors = validate_payload(parsed)
-                tier = _candidate_tier(parsed, errors)
+                errors = contract.validate(parsed)
+                tier = contract.tier(parsed, errors)
                 if best_tier is None or tier < best_tier:
                     best_tier, best_payload = tier, parsed
                     if tier == 0:
@@ -314,18 +287,22 @@ def extract_json(text: str) -> dict[str, Any] | None:
     return best_payload
 
 
-_ENVELOPE_HINT = (
-    "output was structured JSON but contained no findings; the adapter may need an envelope path"
-)
+def _envelope_hint(contract: PayloadContract) -> str:
+    return (
+        f"output was structured JSON but contained no {contract.container_key}; "
+        "the adapter may need an envelope path"
+    )
 
 
-def _normalize_text(raw: str, structured_output: bool) -> NormalizeResult:
-    payload = extract_json(raw)
+def _normalize_text(
+    raw: str, structured_output: bool, contract: PayloadContract
+) -> NormalizeResult:
+    payload = extract_json(raw, contract)
     if payload is None:
         return NormalizeResult(None, ["output contained no parseable JSON object"], False)
-    errors = validate_payload(payload)
+    errors = contract.validate(payload)
     if errors:
-        if structured_output and "findings" not in payload:
+        if structured_output and contract.container_key not in payload:
             # The friend's CLI was explicitly asked for structured output
             # (e.g. --output-format json) but the JSON we found has no
             # findings/no_findings marker at all -- the likely cause is that
@@ -334,21 +311,31 @@ def _normalize_text(raw: str, structured_output: bool) -> NormalizeResult:
             # unreachable by a plain brace-scan), not a malformed critique.
             # Surfacing that distinction turns a mystery into something
             # actionable: declare an [envelope] for this adapter.
-            errors = [*errors, _ENVELOPE_HINT]
+            errors = [*errors, _envelope_hint(contract)]
         return NormalizeResult(payload, errors, False)
-    if not is_successful_payload(payload):
+    if not contract.is_successful(payload):
         return NormalizeResult(
             payload,
-            ["no findings and no explicit no_findings marker"],
+            [contract.empty_message],
             False,
         )
     return NormalizeResult(payload, [], True)
 
 
 def normalize(
-    raw: str, envelope: "Envelope | None" = None, structured_output: bool = False
+    raw: str,
+    envelope: "Envelope | None" = None,
+    structured_output: bool = False,
+    contract: PayloadContract = CLAIM_CONTRACT,
 ) -> NormalizeResult:
     """Turn `raw` stdout into a NormalizeResult.
+
+    `contract` selects which payload kind is being read -- claims from a
+    critique round, or verdicts from a cross-examination round. Everything
+    else here (envelope unwrapping, the candidate scan, repair, the
+    fallback order below) is identical for both and deliberately shared:
+    that machinery is where the hard-won handling of real agent output
+    lives, and a second copy of it would rot.
 
     `envelope`, if given, is tried FIRST: `unwrap_envelope` extracts the
     friend's real answer text from `raw` per the envelope's declared shape,
@@ -392,7 +379,7 @@ def normalize(
     if envelope is not None:
         unwrapped = unwrap_envelope(raw, envelope)
         if unwrapped is not None:
-            unwrapped_result = _normalize_text(unwrapped, structured_output=False)
+            unwrapped_result = _normalize_text(unwrapped, False, contract)
             if unwrapped_result.succeeded:
                 return unwrapped_result
             # Case 2: the envelope matched something, but it wasn't the
@@ -403,5 +390,5 @@ def normalize(
             # failure it is still the more informative diagnosis (it can
             # carry the structured_output hint; the unwrapped-only failure
             # never can, by design -- see above).
-            return _normalize_text(raw, structured_output=structured_output)
-    return _normalize_text(raw, structured_output=structured_output)
+            return _normalize_text(raw, structured_output, contract)
+    return _normalize_text(raw, structured_output, contract)
