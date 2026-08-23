@@ -1,4 +1,7 @@
+import json
+
 from adversarial_friends import normalize
+from adversarial_friends.normalize import Envelope, EnvelopeRule, parse_envelope
 
 GOOD = '{"findings": [{"severity": "low", "claim": "c", "location": null, ' \
        '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}'
@@ -163,3 +166,199 @@ def test_stray_unmatched_brace_outside_fence_does_not_hide_real_answer():
     result = normalize.normalize(raw)
     assert result.succeeded is True
     assert result.payload["findings"][0]["claim"] == "c"
+
+
+# --- C1: envelope unwrapping (whole-branch review) -------------------------
+#
+# Every shipped adapter asks its CLI for structured output (--output-format
+# json / --json / --format json), which wraps the model's actual answer in
+# an envelope of the CLI's own. The findings JSON then sits inside a quoted
+# STRING value in that envelope -- structurally unreachable by
+# _iter_balanced_objects, which correctly never descends into string
+# content. Envelope/unwrap_envelope/parse_envelope below let normalize()
+# unwrap first, declaratively, before falling back to exactly the scan that
+# existed before any of this. Real per-adapter fixtures (captured agy/
+# opencode shapes, an unverified bare-object case for claude/codex) live in
+# tests/fixtures/ and are exercised end to end through adapters.load_adapters
+# in test_envelope_fixtures.py; the tests below are unit-level, against
+# synthetic data, for the mechanism itself.
+
+
+def test_parse_envelope_json_path():
+    env = parse_envelope({"kind": "json_path", "path": "response"})
+    assert env == Envelope(kind="json_path", path="response")
+
+
+def test_parse_envelope_ndjson_with_rules():
+    env = parse_envelope({
+        "kind": "ndjson", "match_field": "type",
+        "rules": [{"type": "error", "field": "error.data.message"}],
+    })
+    assert env.kind == "ndjson"
+    assert env.match_field == "type"
+    assert env.rules == (EnvelopeRule(match_value="error", field="error.data.message"),)
+
+
+def test_parse_envelope_none_or_empty_is_none():
+    assert parse_envelope(None) is None
+    assert parse_envelope({}) is None
+
+
+def test_parse_envelope_unknown_kind_is_none():
+    """A typo'd or future `kind` degrades to 'no envelope' rather than
+    raising -- adapter config is trusted, but there's no reason a config
+    mistake here should be fatal when 'don't unwrap' is always safe."""
+    assert parse_envelope({"kind": "xml_path", "path": "response"}) is None
+
+
+def test_parse_envelope_json_path_without_a_path_is_none():
+    assert parse_envelope({"kind": "json_path"}) is None
+
+
+def test_unwrap_json_path_extracts_the_field():
+    envelope = Envelope(kind="json_path", path="response")
+    raw = json.dumps({"status": "SUCCESS", "response": GOOD})
+    assert normalize.unwrap_envelope(raw, envelope) == GOOD
+
+
+def test_unwrap_json_path_supports_dotted_paths():
+    envelope = Envelope(kind="json_path", path="result.text")
+    raw = json.dumps({"result": {"text": GOOD}})
+    assert normalize.unwrap_envelope(raw, envelope) == GOOD
+
+
+def test_unwrap_json_path_missing_key_returns_none():
+    envelope = Envelope(kind="json_path", path="response")
+    raw = json.dumps({"status": "ERROR", "response": ""})
+    assert normalize.unwrap_envelope(raw, envelope) is None
+
+
+def test_unwrap_json_path_non_json_raw_returns_none():
+    envelope = Envelope(kind="json_path", path="response")
+    assert normalize.unwrap_envelope("not json at all", envelope) is None
+
+
+def test_unwrap_ndjson_extracts_matching_lines():
+    envelope = Envelope(kind="ndjson", match_field="type",
+                        rules=(EnvelopeRule(match_value="error", field="error.message"),))
+    raw = "\n".join([
+        json.dumps({"type": "step_finish", "tokens": {"total": 10}}),
+        json.dumps({"type": "error", "error": {"message": "auth failed"}}),
+    ])
+    assert normalize.unwrap_envelope(raw, envelope) == "auth failed"
+
+
+def test_unwrap_ndjson_skips_malformed_lines():
+    envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
+    raw = "not json\n" + json.dumps({"type": "error", "message": "boom"}) + "\nalso not json"
+    assert normalize.unwrap_envelope(raw, envelope) == "boom"
+
+
+def test_unwrap_ndjson_no_matching_line_returns_none():
+    envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
+    raw = json.dumps({"type": "step_finish"})
+    assert normalize.unwrap_envelope(raw, envelope) is None
+
+
+def test_normalize_unwraps_envelope_before_scanning():
+    envelope = Envelope(kind="json_path", path="response")
+    raw = json.dumps({"status": "SUCCESS", "response": GOOD})
+    result = normalize.normalize(raw, envelope=envelope)
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "c"
+
+
+def test_normalize_unwraps_a_findings_json_string_nested_inside_the_envelope():
+    """The exact structural bug C1 describes: the findings object is inside
+    a quoted STRING value, unreachable by a plain brace-scan of the whole
+    envelope. Asserts both directions: this succeeds WITH envelope
+    unwrapping, and (negative control, same raw text) fails without it --
+    proving the envelope is what makes the difference, not some incidental
+    property of this particular fixture."""
+    envelope = Envelope(kind="json_path", path="response")
+    raw = json.dumps({"status": "SUCCESS", "response": GOOD})
+    assert normalize.normalize(raw, envelope=envelope).succeeded is True
+    assert normalize.normalize(raw).succeeded is False  # negative control, no envelope
+
+
+def test_envelope_fallback_a_bare_findings_object_still_succeeds():
+    """Required regression: an adapter with an envelope DECLARED, given
+    output that is already a bare findings object (not wrapped at all --
+    e.g. because this run's CLI version changed, or the envelope config is
+    simply wrong for this particular output), must still succeed. Envelope
+    unwrapping finding nothing (the declared "response" key doesn't exist on
+    this bare object) is exactly the signal to fall back to the scan that
+    worked before envelopes existed at all -- unwrapping must never make a
+    currently-working case fail."""
+    envelope = Envelope(kind="json_path", path="response")
+    result = normalize.normalize(GOOD, envelope=envelope)
+    assert result.succeeded is True
+    assert result.payload["findings"][0]["claim"] == "c"
+
+
+def test_envelope_fallback_also_works_for_ndjson_envelopes():
+    envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
+    result = normalize.normalize(GOOD, envelope=envelope)
+    assert result.succeeded is True
+
+
+def test_every_existing_bare_object_case_is_unaffected_by_envelope_none():
+    """Sanity check on the default: normalize(raw) with no envelope argument
+    at all must be byte-for-byte the prior behavior. Covered implicitly by
+    every test above this section (none of them pass `envelope=`), asserted
+    explicitly here as a named regression guard."""
+    assert normalize.normalize(GOOD).succeeded is True
+    assert normalize.normalize('{"no_findings": true}').succeeded is True
+    assert normalize.normalize("not json").succeeded is False
+
+
+# --- C1 item 3: legible failure for a genuinely unknown envelope shape ----
+
+
+def test_structured_output_hint_appears_when_a_structured_wrapper_has_no_findings():
+    """claude/codex's real envelope shape is unknown (no envelope declared
+    -- capturing it costs a metered call), so this uses a synthetic,
+    illustrative wrapper shape, NOT any real captured CLI output. The point
+    is the mechanism: a CLI that was explicitly asked for structured output
+    (structured_output=True) but whose parsed JSON has no findings/
+    no_findings key at all gets an actionable hint, not a bare 'no
+    findings' that reads as a friend's own broken output."""
+    synthetic_wrapper = json.dumps({"type": "result", "session_id": "abc123"})
+    result = normalize.normalize(synthetic_wrapper, structured_output=True)
+    assert result.succeeded is False
+    assert any("envelope path" in e for e in result.errors)
+
+
+def test_structured_output_hint_is_suppressed_when_the_adapter_did_not_ask_for_it():
+    synthetic_wrapper = json.dumps({"type": "result", "session_id": "abc123"})
+    result = normalize.normalize(synthetic_wrapper, structured_output=False)
+    assert result.succeeded is False
+    assert not any("envelope path" in e for e in result.errors)
+
+
+def test_structured_output_hint_does_not_appear_once_envelope_unwrapping_succeeded():
+    """Once an envelope has already been successfully unwrapped, the
+    unwrapped text IS the friend's own answer, not the CLI's wrapper -- "the
+    adapter may need an envelope path" would be a non sequitur at that
+    point, so structured_output is not applied to the post-unwrap scan."""
+    envelope = Envelope(kind="json_path", path="response")
+    wrapper_with_no_findings_answer = json.dumps({
+        "status": "SUCCESS", "response": json.dumps({"type": "result"}),
+    })
+    result = normalize.normalize(wrapper_with_no_findings_answer, envelope=envelope,
+                                 structured_output=True)
+    assert result.succeeded is False
+    assert not any("envelope path" in e for e in result.errors)
+
+
+def test_structured_output_hint_does_not_fire_for_ordinary_schema_errors():
+    """The hint is specifically for "no findings key at all" -- a payload
+    that DOES have a findings key but fails schema validation (e.g. a bad
+    severity enum) is the friend's own fault, not an envelope problem, and
+    must keep its specific, existing error message unpolluted."""
+    raw = ('{"findings": [{"severity": "critical", "claim": "c", "location": null, '
+          '"evidence": "e", "failure_scenario": "f", "suggested_fix": "s"}]}')
+    result = normalize.normalize(raw, structured_output=True)
+    assert result.succeeded is False
+    assert any("severity" in e for e in result.errors)
+    assert not any("envelope path" in e for e in result.errors)

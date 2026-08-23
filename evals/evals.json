@@ -16,7 +16,7 @@
     {
       "id": 3,
       "prompt": "before I ship this I want a second opinion, run the adversarial thing on my migration plan. heads up though, this box only has claude installed as far as I know, no codex or anything else",
-      "expected_output": "Runs af doctor first to confirm what is actually on PATH, finds no second friend, and says plainly that cross-examination needs at least two independent agent CLIs — it does not silently produce a report that looks like a clean multi-reviewer result. Either offers a clearly-labeled single-friend report (naming it as a downgrade, not a real cross-examination) or tells the user which CLI to install (codex, agy, opencode, or a local ollama model) to get a real second opinion.",
+      "expected_output": "Runs af doctor first to confirm what is actually on PATH, finds no second friend, and says plainly that cross-examination needs at least two independent agent CLIs — it does not silently produce a report that looks like a clean multi-reviewer result. Either offers a clearly-labeled single-friend report (naming it as a downgrade, not a real cross-examination) or tells the user which CLI to install (codex, agy, or opencode) to get a real second opinion.",
       "files": []
     }
   ]

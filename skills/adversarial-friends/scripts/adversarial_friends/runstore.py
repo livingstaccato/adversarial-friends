@@ -64,6 +64,15 @@ class RunStore:
                       for suffix in (".raw", ".json", ".meta"))
         return paths  # type: ignore[return-value]
 
+    def friend_err_path(self, round_no: int, friend_name: str) -> Path:
+        """Path for a friend's captured stderr, written next to its
+        .raw/.json/.meta. A separate method (not a 4th element of
+        friend_paths' tuple) so every existing `raw, parsed, meta =
+        store.friend_paths(...)` call site keeps unpacking exactly 3 values."""
+        validate_friend_name(friend_name)
+        base = self.round_dir(round_no)
+        return contain_path(self.run_dir, base / f"{friend_name}.err")
+
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"
         target_dir.mkdir(parents=True, exist_ok=True)

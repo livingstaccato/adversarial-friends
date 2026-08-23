@@ -3,9 +3,9 @@
 # Adversarial Friends
 
 A skill that challenges your specs, plans, and reviews by handing them to
-**other** agent CLIs — codex, claude, agy, opencode, local ollama models — as
-independent adversarial reviewers, then merging their critiques into one
-ranked findings report.
+**other** agent CLIs — codex, claude, agy, opencode — as independent
+adversarial reviewers, then merging their critiques into one ranked findings
+report.
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -57,10 +57,13 @@ something you can invoke today. `af run --mode crossexam` (or `gate`, or
 `loop`) exits `2` with a message saying so rather than pretending to run
 them. See [docs/](docs/README.md) for what each mode is meant to become.
 
-Five friends ship: `claude`, `codex`, `agy`, `opencode`, and local `ollama`
-models. There is no `gemini` adapter — the `gemini` CLI returns an
-ineligible-tier error on the individual free tier, and Google's own
-supported path from there is Antigravity, which is `agy`.
+Four friends ship: `claude`, `codex`, `agy`, and `opencode`. An `ollama`
+adapter is declared but not implemented in this build — it uses an HTTP
+transport (no CLI to exec), which this runner does not support yet; `--friend
+ollama:*` exits `2` rather than pretending to work. There is no `gemini`
+adapter — the `gemini` CLI returns an ineligible-tier error on the
+individual free tier, and Google's own supported path from there is
+Antigravity, which is `agy`.
 
 ## Documentation
 
@@ -68,5 +71,4 @@ See [docs/](docs/README.md).
 
 ## License
 
-Not yet chosen. A `LICENSE` file will be added before this is distributed;
-until then, no license is granted.
+MIT — see [LICENSE](LICENSE).

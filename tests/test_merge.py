@@ -2,8 +2,8 @@ from adversarial_friends.ledger import Claim
 from adversarial_friends.merge import exact_merge
 
 
-def claim(cid, text, location="src/a.py:1"):
-    return Claim(id=cid, supersedes=None, origin=["codex/ops"], lens="ops",
+def claim(cid, text, location="src/a.py:1", origin=None):
+    return Claim(id=cid, supersedes=None, origin=origin or ["codex/ops"], lens="ops",
                  round=1, advisory=False, severity="high", claim=text,
                  location=location, evidence="e", failure_scenario="f",
                  suggested_fix="s")
@@ -12,7 +12,7 @@ def claim(cid, text, location="src/a.py:1"):
 def test_identical_text_and_location_is_aliased():
     existing = [claim("c-0001@1", "the guard is missing")]
     incoming = [claim("c-0002@1", "the guard is missing")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert kept == []
     assert aliases[0].canonical == "c-0001@1"
     assert aliases[0].duplicate == "c-0002@1"
@@ -22,14 +22,14 @@ def test_identical_text_and_location_is_aliased():
 def test_whitespace_and_case_differences_still_alias():
     existing = [claim("c-0001@1", "The Guard Is Missing")]
     incoming = [claim("c-0002@1", "  the guard is missing  ")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert kept == [] and len(aliases) == 1
 
 
 def test_different_location_is_not_aliased():
     existing = [claim("c-0001@1", "the guard is missing", "src/a.py:1")]
     incoming = [claim("c-0002@1", "the guard is missing", "src/b.py:9")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert len(kept) == 1 and aliases == []
 
 
@@ -37,7 +37,7 @@ def test_paraphrase_is_not_merged():
     """Exact merge under-merges on purpose: safer than corrupting termination."""
     existing = [claim("c-0001@1", "timeout leaves MCP children running")]
     incoming = [claim("c-0002@1", "child processes survive timeout")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert len(kept) == 1 and aliases == []
 
 
@@ -49,7 +49,7 @@ def test_nbsp_vs_regular_space_still_aliases():
     nbsp = " "
     existing = [claim("c-0001@1", "the guard is missing")]
     incoming = [claim("c-0002@1", f"the{nbsp}guard{nbsp}is{nbsp}missing")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert kept == [] and len(aliases) == 1
 
 
@@ -69,7 +69,7 @@ def test_unicode_normalization_forms_are_not_merged():
     assert nfc != nfd  # sanity: these really are different code point sequences
     existing = [claim("c-0001@1", nfc)]
     incoming = [claim("c-0002@1", nfd)]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert len(kept) == 1 and aliases == []
 
 
@@ -77,7 +77,7 @@ def test_location_none_and_empty_string_are_equivalent():
     """None and "" both mean "no location given," so they key the same."""
     existing = [claim("c-0001@1", "the guard is missing", location=None)]
     incoming = [claim("c-0002@1", "the guard is missing", location="")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert kept == [] and len(aliases) == 1
 
 
@@ -87,7 +87,7 @@ def test_two_identical_incoming_claims_second_aliases_the_first():
     existing: list = []
     incoming = [claim("c-0002@1", "the guard is missing"),
                 claim("c-0003@1", "the guard is missing")]
-    kept, aliases = exact_merge(existing, incoming, round_no=1)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert [c.id for c in kept] == ["c-0002@1"]
     assert len(aliases) == 1
     assert aliases[0].canonical == "c-0002@1"
@@ -95,7 +95,7 @@ def test_two_identical_incoming_claims_second_aliases_the_first():
 
 
 def test_empty_existing_list_keeps_all_incoming():
-    kept, aliases = exact_merge([], [claim("c-0001@1", "a"), claim("c-0002@1", "b")],
+    kept, aliases, _updated = exact_merge([], [claim("c-0001@1", "a"), claim("c-0002@1", "b")],
                                  round_no=1)
     assert [c.id for c in kept] == ["c-0001@1", "c-0002@1"]
     assert aliases == []
@@ -108,8 +108,8 @@ def test_canonical_choice_among_incoming_duplicates_depends_on_order():
     a = claim("c-0002@1", "the guard is missing")
     b = claim("c-0003@1", "the guard is missing")
 
-    kept1, aliases1 = exact_merge([], [a, b], round_no=1)
-    kept2, aliases2 = exact_merge([], [b, a], round_no=1)
+    kept1, aliases1, _u1 = exact_merge([], [a, b], round_no=1)
+    kept2, aliases2, _u2 = exact_merge([], [b, a], round_no=1)
 
     assert [c.id for c in kept1] == ["c-0002@1"]
     assert [c.id for c in kept2] == ["c-0003@1"]
@@ -126,3 +126,59 @@ def test_does_not_mutate_inputs():
     exact_merge(existing, incoming, round_no=1)
     assert existing == existing_snapshot
     assert incoming == incoming_snapshot
+
+
+# --- I2: origin merging on alias (corroboration must not be lost) ---------
+
+
+def test_alias_into_an_existing_claim_merges_origin_into_updated_existing():
+    """When an incoming claim aliases a claim from `existing` (a different
+    friend's own claim from an earlier dispatch), the corroborating origin
+    must be recoverable -- `existing` itself is never mutated (it's a plain
+    list the caller owns), so it comes back as a fresh Claim in
+    `updated_existing`, not as a change visible on the original object."""
+    original = claim("c-0001@1", "the guard is missing", origin=["codex/ops"])
+    existing = [original]
+    incoming = [claim("c-0002@1", "the guard is missing", origin=["agy/security"])]
+    kept, aliases, updated_existing = exact_merge(existing, incoming, round_no=1)
+    assert kept == []
+    assert len(updated_existing) == 1
+    assert updated_existing[0].id == "c-0001@1"
+    assert updated_existing[0].origin == ["codex/ops", "agy/security"]
+    # existing itself is untouched -- the caller decides how/whether to fold
+    # updated_existing back into its own bookkeeping.
+    assert existing[0] is original
+    assert existing[0].origin == ["codex/ops"]
+
+
+def test_alias_into_a_kept_incoming_claim_merges_origin_directly():
+    """Two claims in the SAME incoming batch that are exact duplicates of
+    each other (no existing claim involved at all): the first-kept one's
+    own returned origin must include the second's, with no separate
+    'updated_existing' entry needed since it never came from `existing`."""
+    incoming = [
+        claim("c-0002@1", "the guard is missing", origin=["codex/ops"]),
+        claim("c-0003@1", "the guard is missing", origin=["agy/security"]),
+    ]
+    kept, aliases, updated_existing = exact_merge([], incoming, round_no=1)
+    assert [c.id for c in kept] == ["c-0002@1"]
+    assert kept[0].origin == ["codex/ops", "agy/security"]
+    assert updated_existing == []
+
+
+def test_origin_merge_deduplicates_repeated_origins():
+    """The same friend re-raising its own claim (e.g. two lenses landing on
+    identical text/location by coincidence) must not pad origin with
+    repeats of the same (cli, lens) pair."""
+    existing = [claim("c-0001@1", "the guard is missing", origin=["codex/ops"])]
+    incoming = [claim("c-0002@1", "the guard is missing", origin=["codex/ops"])]
+    kept, aliases, updated_existing = exact_merge(existing, incoming, round_no=1)
+    assert updated_existing == []  # origin didn't actually change
+
+
+def test_non_aliased_existing_claims_are_never_in_updated_existing():
+    existing = [claim("c-0001@1", "the guard is missing", origin=["codex/ops"])]
+    incoming = [claim("c-0002@1", "an unrelated defect", origin=["agy/security"])]
+    kept, aliases, updated_existing = exact_merge(existing, incoming, round_no=1)
+    assert updated_existing == []
+    assert [c.id for c in kept] == ["c-0002@1"]

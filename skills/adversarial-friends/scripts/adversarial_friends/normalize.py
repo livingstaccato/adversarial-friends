@@ -9,6 +9,18 @@ Repair is limited to: stripping terminal control codes, pulling JSON out of a
 fenced block or surrounding prose, balancing braces, and dropping trailing
 commas. Nothing else. Friend output is untrusted text, so every function here
 must return a result describing failure rather than raise.
+
+Envelopes: several CLIs wrap the model's actual answer in structured output of
+their own (`claude --print --output-format json`, `codex exec --json`,
+`opencode run --format json`, `agy --output-format json`). The wrapping is
+itself well-formed JSON, so the *inner* answer -- which is what actually
+carries the findings -- sits inside a quoted string value. `_iter_balanced_objects`
+correctly treats string content as opaque and never descends into it, which
+means a friend's real findings object is structurally unreachable by the plain
+brace-scan below unless it is unwrapped first. `Envelope`/`unwrap_envelope`
+below are a small, declarative description of "where the answer lives" that
+`normalize()` applies before falling back to the scan that already existed --
+see `normalize()`'s docstring for the exact fallback order.
 """
 import json
 import re
@@ -43,8 +55,138 @@ class NormalizeResult:
     succeeded: bool
 
 
+@dataclass(frozen=True)
+class EnvelopeRule:
+    """One NDJSON matching rule: when `match_field` on a parsed line equals
+    `match_value`, extract `field` (a dotted path) as one segment of the
+    unwrapped answer text."""
+    match_value: str
+    field: str
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """Declarative description of where a friend's real answer lives inside
+    a CLI's structured-output wrapper. Two kinds, matching the two shapes
+    verified against real CLI output (see the module docstring):
+
+    - "json_path": the whole stdout is a single JSON object; `path` is a
+      dotted key path to the string field holding the answer (agy: the
+      top-level `response` field).
+    - "ndjson": stdout is one JSON object per line (an event stream); each
+      line's `match_field` (default "type") is compared against every rule
+      in `rules`, and every match's `field` is extracted (opencode: an
+      `"error"` event's `error.data.message`).
+
+    There is deliberately no third kind for "I'm not sure" -- an adapter
+    whose real envelope shape has not been captured (claude, codex) simply
+    has no `envelope` at all; see normalize()'s `structured_output`
+    parameter for how that case is still made legible without guessing a
+    shape.
+    """
+    kind: str
+    path: str = ""
+    match_field: str = "type"
+    rules: tuple[EnvelopeRule, ...] = ()
+
+
+def parse_envelope(data: dict | None) -> "Envelope | None":
+    """Build an Envelope from the `[envelope]` table of an adapter TOML, or
+    return None if no (valid) envelope was declared. Never raises: a
+    malformed or absent envelope section simply means "no envelope," which
+    normalize() already treats as a safe, working fallback -- adapter config
+    is trusted input, but there is no reason to make a typo here fatal when
+    "don't unwrap" is always a safe degradation."""
+    if not data:
+        return None
+    kind = data.get("kind")
+    if kind == "json_path":
+        path = data.get("path", "")
+        if not path:
+            return None
+        return Envelope(kind="json_path", path=path)
+    if kind == "ndjson":
+        rules = tuple(
+            EnvelopeRule(match_value=rule["type"], field=rule["field"])
+            for rule in data.get("rules", [])
+            if isinstance(rule, dict) and rule.get("type") and rule.get("field")
+        )
+        return Envelope(kind="ndjson", match_field=data.get("match_field", "type"),
+                        rules=rules)
+    return None
+
+
 def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
+
+
+def _dotted_get(obj: object, path: str) -> object:
+    current = obj
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _unwrap_json_path(raw: str, envelope: Envelope) -> str | None:
+    """The whole text must itself be exactly one JSON object (agy's stdout
+    is not wrapped in prose or fencing -- it IS the envelope). Anything that
+    fails to parse as a single top-level object, or whose target field is
+    missing/empty, unwraps to nothing -- the caller falls back to scanning
+    the raw text."""
+    cleaned = strip_ansi(raw).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except _JSON_ERRORS:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = _dotted_get(parsed, envelope.path)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
+def _unwrap_ndjson(raw: str, envelope: Envelope) -> str | None:
+    """Scan every line as its own JSON object (an NDJSON event stream);
+    every line whose `match_field` matches a rule contributes that rule's
+    extracted field to the unwrapped text, in stream order. A line that
+    fails to parse (blank, partial, non-JSON) is simply skipped -- one
+    malformed event must not poison the rest of a real stream."""
+    cleaned = strip_ansi(raw)
+    extracted: list[str] = []
+    for line in cleaned.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except _JSON_ERRORS:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        type_value = parsed.get(envelope.match_field)
+        for rule in envelope.rules:
+            if rule.match_value == type_value:
+                value = _dotted_get(parsed, rule.field)
+                if isinstance(value, str) and value.strip():
+                    extracted.append(value)
+    if not extracted:
+        return None
+    return "\n".join(extracted)
+
+
+def unwrap_envelope(raw: str, envelope: Envelope) -> str | None:
+    """Return the friend's answer text as described by `envelope`, or None
+    if the envelope's own path/rules found nothing to extract -- "found
+    nothing" is the caller's signal to fall back to scanning `raw` directly
+    (see normalize())."""
+    if envelope.kind == "json_path":
+        return _unwrap_json_path(raw, envelope)
+    if envelope.kind == "ndjson":
+        return _unwrap_ndjson(raw, envelope)
+    return None
 
 
 def _iter_balanced_objects(text: str) -> Iterator[str]:
@@ -168,12 +310,28 @@ def extract_json(text: str) -> dict | None:
     return best_payload
 
 
-def normalize(raw: str) -> NormalizeResult:
+_ENVELOPE_HINT = (
+    "output was structured JSON but contained no findings; the adapter may "
+    "need an envelope path"
+)
+
+
+def _normalize_text(raw: str, structured_output: bool) -> NormalizeResult:
     payload = extract_json(raw)
     if payload is None:
         return NormalizeResult(None, ["output contained no parseable JSON object"], False)
     errors = validate_payload(payload)
     if errors:
+        if structured_output and "findings" not in payload:
+            # The friend's CLI was explicitly asked for structured output
+            # (e.g. --output-format json) but the JSON we found has no
+            # findings/no_findings marker at all -- the likely cause is that
+            # this whole payload IS the CLI's own wrapper object (the real
+            # answer is nested inside one of its string fields, structurally
+            # unreachable by a plain brace-scan), not a malformed critique.
+            # Surfacing that distinction turns a mystery into something
+            # actionable: declare an [envelope] for this adapter.
+            errors = [*errors, _ENVELOPE_HINT]
         return NormalizeResult(payload, errors, False)
     if not is_successful_payload(payload):
         return NormalizeResult(
@@ -182,3 +340,32 @@ def normalize(raw: str) -> NormalizeResult:
             False,
         )
     return NormalizeResult(payload, [], True)
+
+
+def normalize(raw: str, envelope: "Envelope | None" = None,
+              structured_output: bool = False) -> NormalizeResult:
+    """Turn `raw` stdout into a NormalizeResult.
+
+    `envelope`, if given, is tried FIRST: `unwrap_envelope` extracts the
+    friend's real answer text from `raw` per the envelope's declared shape,
+    and the existing extraction/validation logic runs on THAT text instead.
+    If the envelope finds nothing to extract (a missing key, no matching
+    NDJSON line -- see unwrap_envelope's docstring), this falls through to
+    running the exact same logic on `raw` directly, unchanged from before
+    envelopes existed at all: a currently-working bare-object case must
+    never be made to fail by an envelope declaration that happens not to
+    apply to it (e.g. because the CLI already emits a bare object, or the
+    declared path/rule doesn't match this particular run's output).
+
+    `structured_output` only affects the fallback-on-`raw` path (envelope
+    None, or an envelope that found nothing): see `_normalize_text` for what
+    it adds. It is intentionally NOT applied once an envelope has already
+    been successfully unwrapped -- at that point the friend's own answer
+    text is what's being scanned, not the CLI's wrapper, so "the adapter may
+    need an envelope path" would be a non sequitur.
+    """
+    if envelope is not None:
+        unwrapped = unwrap_envelope(raw, envelope)
+        if unwrapped is not None:
+            return _normalize_text(unwrapped, structured_output=False)
+    return _normalize_text(raw, structured_output=structured_output)

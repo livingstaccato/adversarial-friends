@@ -13,6 +13,23 @@ def test_layout_is_created(tmp_path):
     assert meta.name.endswith(".meta")
 
 
+def test_friend_err_path_sits_next_to_the_other_friend_files(tmp_path):
+    """I1 (whole-branch review): SpawnResult.stderr was captured but written
+    nowhere. A separate method (not a 4th element of friend_paths' tuple)
+    so `raw, parsed, meta = store.friend_paths(...)` keeps unpacking
+    exactly 3 values everywhere it already does."""
+    store = RunStore(tmp_path, "run-001")
+    err = store.friend_err_path(1, "codex-ops")
+    assert err.parent == store.round_dir(1)
+    assert err.name == "codex-ops.err"
+
+
+def test_friend_err_path_rejects_a_name_that_would_escape_the_run_dir(tmp_path):
+    store = RunStore(tmp_path, "run-001")
+    with pytest.raises(UsageError):
+        store.friend_err_path(1, "../../../../tmp/owned")
+
+
 def test_artifact_is_frozen_and_hashed(tmp_path):
     src = tmp_path / "spec.md"
     src.write_text("# spec\n")

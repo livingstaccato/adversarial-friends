@@ -7,6 +7,11 @@ schema_flag = "--output-schema"
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
+# --json wraps the answer in an envelope of codex's own; its real shape has
+# not been captured (capturing it costs a metered call -- see normalize.py's
+# module docstring), so no [envelope] is declared -- see claude.toml's
+# comment for why that is deliberate, not an oversight.
+structured_output = true
 
 [effort]
 low = ["--config", "model_reasoning_effort=low"]

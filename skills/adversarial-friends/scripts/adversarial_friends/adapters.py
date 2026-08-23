@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import UsageError
+from .normalize import Envelope, parse_envelope
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,18 @@ class Adapter:
     effort: dict[str, list[str]] = field(default_factory=dict)
     transport: str = "exec"     # exec | http
     endpoint: str = ""
+    # Whether this CLI is asked (via a flag in base_argv, e.g.
+    # --output-format json) to wrap its answer in structured output of its
+    # own. Declared explicitly rather than inferred from base_argv/schema_flag
+    # so that "did this adapter ask for structured output" never has to be
+    # guessed by pattern-matching flag spellings -- see normalize.py's
+    # `structured_output` parameter for what this drives.
+    structured_output: bool = False
+    # Declarative "where the answer lives inside the wrapper" (see
+    # normalize.Envelope). None means the shape is unknown/unverified;
+    # normalize() falls back to scanning stdout directly rather than
+    # guessing one.
+    envelope: Envelope | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +91,8 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             effort={k: list(v) for k, v in data.get("effort", {}).items()},
             transport=data.get("transport", "exec"),
             endpoint=data.get("endpoint", ""),
+            structured_output=bool(data.get("structured_output", False)),
+            envelope=parse_envelope(data.get("envelope")),
         )
     return registry
 

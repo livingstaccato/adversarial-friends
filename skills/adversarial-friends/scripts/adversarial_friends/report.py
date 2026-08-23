@@ -34,23 +34,43 @@ SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # A line-initial (up to 3 spaces of indentation) Markdown block construct:
 # ATX heading, blockquote, bullet/thematic-break marker, table pipe, a
-# backtick run (fence or inline span), a tilde fence, or an ordered-list
-# marker. Bullet/ordered-list markers require a trailing space/EOL per
-# CommonMark (so inline uses like "*emphasis*", "-5 is negative", or "1.5"
-# are left alone), but a run of 2+ of the same -/+/* character followed by
-# space/EOL is matched too, since a bare line of "---" or "***" is a
-# thematic break (or, under the previous line, a Setext heading underline)
-# even with no space after it -- the single-marker-plus-space check alone
-# would miss that.
+# backtick run (fence or inline span), a tilde fence, an ordered-list
+# marker, a Setext H1 underline, or an HTML block start. Bullet/ordered-list
+# markers require a trailing space/EOL per CommonMark (so inline uses like
+# "*emphasis*", "-5 is negative", or "1.5" are left alone), but a run of 2+
+# of the same -/+/* character followed by space/EOL is matched too, since a
+# bare line of "---" or "***" is a thematic break (or, under the previous
+# line, a Setext heading underline) even with no space after it -- the
+# single-marker-plus-space check alone would miss that.
+#
+# "=" runs: a line consisting of nothing but "=" characters (plus optional
+# trailing whitespace) is a Setext H1 underline -- it turns the PRECEDING
+# line into a heading, with no leading marker of its own on the underline
+# line itself. Per CommonMark this only counts when the entire rest of the
+# line is blank, hence the lookahead (unlike "---", "===" has no other
+# meaning to preserve, e.g. as a horizontal rule, so this is Setext-only).
+#
+# "<": CommonMark opens an HTML block on a line-initial "<" (a tag, a
+# processing instruction, a declaration, or a comment opener) with no
+# "space after the marker" requirement at all -- unescaped, a raw HTML
+# block reads straight through to `cmark` (or GitHub's renderer) untouched.
+# This single alternative also covers "<!--": an HTML comment block that
+# terminates at "-->", not at the next blank line or heading, so left
+# unescaped it can swallow every following claim into one inert (and,
+# worse, literally invisible -- comments don't render at all) span.
+# Reproduced directly: an `evidence` field starting with "<!--" and never
+# closing ate 3 of 3 findings under `cmark`.
 _BLOCK_LEADER_RE = re.compile(
     r"^(?P<indent>[ \t]{0,3})(?P<marker>"
     r"#{1,6}(?=[ \t]|$)"
     r"|>"
     r"|[-+*]+(?=[ \t]|$)"
+    r"|=+(?=[ \t]*$)"
     r"|\|"
     r"|`+"
     r"|~{3,}"
     r"|\d+[.)](?=[ \t]|$)"
+    r"|<"
     r")"
 )
 
@@ -181,6 +201,12 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict) -> str:
         lines.append(f"**Evidence:** {_escape_block(claim.evidence)}")
         lines.append(f"**Failure scenario:** {_escape_block(claim.failure_scenario)}")
         lines.append(f"**Suggested fix:** {_escape_block(claim.suggested_fix)}")
+        if claim.origin:
+            corroborated = (f" *(corroborated by {len(claim.origin)} friends)*"
+                           if len(claim.origin) > 1 else "")
+            lines.append(
+                f"**Raised by:** {_escape_block(', '.join(claim.origin))}{corroborated}"
+            )
         lines.append("")
 
     if aliases:

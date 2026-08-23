@@ -1,7 +1,19 @@
 import re
+import shutil
+import subprocess
+
+import pytest
 
 from adversarial_friends.ledger import Claim
 from adversarial_friends.report import _code_span, _escape_block, render
+
+CMARK = shutil.which("cmark")
+
+
+def _render_with_cmark(markdown_text: str) -> str:
+    result = subprocess.run(["cmark"], input=markdown_text, capture_output=True,
+                            text=True, check=True)
+    return result.stdout
 
 
 def _unescaped_pipe_count(line: str) -> int:
@@ -271,3 +283,152 @@ def test_code_span_empty_text_has_no_stray_padding():
     fences -- that would render as a one-space code span, not an empty
     one."""
     assert _code_span("") == "``"
+
+
+# --- C2: HTML blocks and Setext underlines (whole-branch review) ----------
+#
+# _BLOCK_LEADER_RE previously enumerated ATX headings, blockquotes, list
+# markers, table pipes, fences, and ordered-list markers, but omitted HTML
+# block starts ("<", including "<!--") and the "=" Setext underline.
+# Reproduced directly against real `cmark` (0.31.2, on the machine this fix
+# was written on): a two-field claim shaped exactly like render()'s own
+# output --
+#
+#   **Evidence:** some evidence
+#   <!-- never closes
+#
+# -- with no blank line between them (render() never puts one between a
+# claim's own fields) renders as `<!-- raw HTML omitted -->` under cmark:
+# an unterminated HTML comment block that swallows every following line,
+# including a second, unrelated claim's own heading and every field, until
+# EOF -- 0 of the intended findings rendered, exit 0, every friend "ok".
+# The same shape with "===" instead forges an <h1> out of the preceding
+# "**Evidence:** ..." line (a Setext heading, which -- unlike a thematic
+# break "---"/"***" -- needs no leading marker of its own on the line it
+# converts).
+
+
+def _two_line_evidence_claim(cid, second_line):
+    """A claim whose evidence is two lines: an innocuous first line, then
+    `second_line` as its own bare line -- the exact shape render() produces
+    for any multi-line field (see report.py's `_escape_block` docstring),
+    and the shape needed to reproduce the bug: a hostile marker only
+    matters at the START of a raw markdown line, and the first line of a
+    field is never bare (it always follows "**Field:** " on the same
+    source line)."""
+    return Claim(**{**claim(cid).__dict__, "evidence": f"some evidence\n{second_line}"})
+
+
+def test_escape_block_escapes_html_block_start():
+    assert _escape_block("<div>never closes") == "\\<div>never closes"
+    assert _escape_block("<!-- never closes") == "\\<!-- never closes"
+    assert _escape_block("<script>alert(1)</script>") == "\\<script>alert(1)</script>"
+
+
+def test_escape_block_escapes_setext_underline():
+    assert _escape_block("===") == "\\==="
+    assert _escape_block("====") == "\\===="
+    assert _escape_block("=== ") == "\\=== "  # trailing whitespace is still valid Setext
+
+
+def test_escape_block_leaves_non_setext_equals_uses_alone():
+    """"=" only means Setext when the ENTIRE rest of the line is blank --
+    "=foo" (content after the run) has no other meaning to preserve and
+    must render unchanged, same as the existing "-5 is negative" case."""
+    assert _escape_block("=foo") == "=foo"
+    assert _escape_block("x = 1") == "x = 1"
+
+
+def test_hostile_html_comment_evidence_does_not_swallow_the_next_claim():
+    """The exact defect: an unterminated HTML comment must not make a
+    second, unrelated claim vanish from the rendered source."""
+    hostile = _two_line_evidence_claim("c-0001@1", "<!-- never closes")
+    victim = claim("c-0002@1")
+    out = render([hostile, victim], [], meta())
+    assert "\\<!-- never closes" in out
+    assert "### c-0002@1" in out
+    victim_block = out[out.index("### c-0002@1"):]
+    assert "**Claim:**" in victim_block and "**Evidence:**" in victim_block
+
+
+def test_hostile_setext_underline_does_not_forge_a_heading():
+    hostile = _two_line_evidence_claim("c-0001@1", "===")
+    victim = claim("c-0002@1")
+    out = render([hostile, victim], [], meta())
+    assert "\\===" in out
+    # No line anywhere in the document is a bare Setext underline -- report.py
+    # never emits one itself, so any such line would have to be the
+    # un-neutralized hostile one.
+    for line in out.splitlines():
+        assert not re.fullmatch(r"[ \t]{0,3}=+[ \t]*", line), line
+    assert "### c-0002@1" in out
+
+
+@pytest.mark.skipif(CMARK is None, reason="cmark not installed on this machine")
+def test_hostile_html_comment_evidence_does_not_swallow_findings_under_cmark():
+    """End-to-end proof against a real CommonMark renderer, not just an
+    assertion on the escaped source: both claims must render as real
+    headings, and neither disappears into `<!-- raw HTML omitted -->`."""
+    hostile = _two_line_evidence_claim("c-0001@1", "<!-- never closes")
+    victim = claim("c-0002@1")
+    html = _render_with_cmark(render([hostile, victim], [], meta()))
+    assert html.count("<h3") == 2
+    assert "raw HTML omitted" not in html
+
+
+@pytest.mark.skipif(CMARK is None, reason="cmark not installed on this machine")
+def test_hostile_setext_underline_does_not_forge_a_heading_under_cmark():
+    hostile = _two_line_evidence_claim("c-0001@1", "===")
+    victim = claim("c-0002@1")
+    html = _render_with_cmark(render([hostile, victim], [], meta()))
+    assert html.count("<h3") == 2
+    # Exactly the document's own top-level "# Adversarial review" title --
+    # not a second, forged <h1> out of the hostile claim's evidence line.
+    assert html.count("<h1") == 1
+
+
+@pytest.mark.skipif(CMARK is None, reason="cmark not installed on this machine")
+def test_hostile_div_evidence_does_not_swallow_the_next_field_under_cmark():
+    hostile = _two_line_evidence_claim("c-0001@1", "<div>never closes")
+    victim = claim("c-0002@1")
+    html = _render_with_cmark(render([hostile, victim], [], meta()))
+    assert html.count("<h3") == 2
+    assert "raw HTML omitted" not in html
+
+
+def test_hostile_claim_cannot_remove_another_claims_id_from_the_rendered_source():
+    """General property, across every marker this fix adds: no matter what
+    a hostile claim's own fields contain, every OTHER claim's id must still
+    be present in the rendered output, attached to a real heading -- not
+    merely present as leftover text swallowed inside a comment/HTML span."""
+    for hostile_marker in ("<!-- never closes", "<div>never closes", "===",
+                          "### c-9999@1 — fabricated", "```\nunterminated fence"):
+        hostile = _two_line_evidence_claim("c-0001@1", hostile_marker)
+        victim = claim("c-0002@1")
+        out = render([hostile, victim], [], meta())
+        heading_lines = [ln for ln in out.splitlines() if ln.startswith("### ")]
+        assert any(ln.startswith("### c-0002@1") for ln in heading_lines), (
+            f"victim's real heading was lost for hostile marker {hostile_marker!r}: "
+            f"{heading_lines}"
+        )
+
+
+# --- I2: corroboration -- rendering claim.origin per finding --------------
+
+
+def test_report_renders_origin_for_a_finding():
+    out = render([claim("c-0001@1")], [], meta())
+    assert "**Raised by:** codex/ops" in out
+
+
+def test_report_marks_corroboration_when_multiple_friends_raised_the_same_claim():
+    corroborated = Claim(**{**claim("c-0001@1").__dict__,
+                            "origin": ["codex/ops", "agy/security", "opencode/scope"]})
+    out = render([corroborated], [], meta())
+    assert "**Raised by:** codex/ops, agy/security, opencode/scope" in out
+    assert "corroborated by 3 friends" in out
+
+
+def test_report_does_not_claim_corroboration_for_a_single_origin():
+    out = render([claim("c-0001@1")], [], meta())
+    assert "corroborated" not in out

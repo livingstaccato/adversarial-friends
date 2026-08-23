@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "severity": "medium",
+      "claim": "missing input validation",
+      "location": "src/handler.py:10",
+      "evidence": "src/handler.py:10 reads argv[1] unchecked",
+      "failure_scenario": "a malformed argument crashes the handler",
+      "suggested_fix": "validate argv before use"
+    }
+  ]
+}

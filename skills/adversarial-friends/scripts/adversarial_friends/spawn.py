@@ -53,7 +53,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-from .normalize import NormalizeResult, normalize
+from .normalize import Envelope, NormalizeResult, normalize
 
 # Wait windows for group escalation: this long for the group to exit after
 # SIGTERM, then (if anything is still alive) this long for it to actually
@@ -247,7 +247,9 @@ def _early_failure(argv: list[str], duration: float, reason: str) -> SpawnResult
 
 
 def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
-                 cwd: Path, abort_event: threading.Event | None = None) -> SpawnResult:
+                 cwd: Path, abort_event: threading.Event | None = None,
+                 envelope: Envelope | None = None,
+                 structured_output: bool = False) -> SpawnResult:
     """Run one friend; see the module docstring for the process-group and
     pump-thread hazards this guards against.
 
@@ -260,6 +262,22 @@ def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
     wants. Default `None` means this call behaves exactly as before: no new
     exit condition is checked, so every existing caller and test is
     unaffected.
+
+    `envelope`/`structured_output` are passed straight through to
+    normalize() -- see its docstring. Defaults (None/False) reproduce
+    exactly the prior behavior for every existing caller.
+
+    Popen() can fail for reasons beyond a missing or non-executable binary:
+    `Argument list too long` (E2BIG, when a friend's prompt landed in a
+    single argv element and exceeded the kernel's per-argument limit) or
+    `Exec format error` (ENOEXEC, a corrupt or non-executable-format file
+    that nonetheless has the execute bit set) are both plain OSError, not
+    FileNotFoundError/PermissionError. This function's contract is "return a
+    SpawnResult naming the cause," full stop -- catching only the two
+    specific subclasses let every other OSError escape Popen() and propagate
+    out of the worker thread that calls this (see cli.py's dispatch wrapper
+    for the second half of that fix: even if something here still slipped
+    through, one friend's exception must never end the whole run).
     """
     started = time.monotonic()
     try:
@@ -271,6 +289,8 @@ def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
         return _early_failure(argv, time.monotonic() - started, f"binary not found: {argv[0]}")
     except PermissionError:
         return _early_failure(argv, time.monotonic() - started, f"binary not executable: {argv[0]}")
+    except OSError as exc:
+        return _early_failure(argv, time.monotonic() - started, f"failed to start: {exc}")
     # start_new_session=True runs setsid() in the child before exec, which
     # makes it both a new session leader and a new process group leader --
     # its pgid is therefore always its own pid. Capturing that now means
@@ -362,7 +382,7 @@ def run_process(argv: list[str], stdin_text: str | None, timeout_s: int,
             orphans_suspected,
         )
 
-    result = normalize(stdout)
+    result = normalize(stdout, envelope=envelope, structured_output=structured_output)
     failure_reason = None
     if process.returncode != 0:
         failure_reason = f"exit {process.returncode}"

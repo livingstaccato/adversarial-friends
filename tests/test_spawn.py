@@ -197,6 +197,32 @@ def test_non_executable_binary_returns_a_spawn_result_not_an_exception(tmp_path)
     assert result.failure_reason == f"binary not executable: {not_executable}"
 
 
+def test_enoexec_binary_returns_a_spawn_result_not_a_raw_traceback(tmp_path):
+    """C3 (whole-branch review): run_process previously caught only
+    FileNotFoundError and PermissionError from Popen(), which are the only
+    two OSError subclasses is_executable-style checks anticipate. A broken
+    shim -- executable bit set, but not a valid executable format at all
+    (no shebang, not a real binary) -- raises OSError with errno ENOEXEC
+    ("Exec format error"), a plain OSError that is neither of those two
+    subclasses. Verified this reproduces on this machine (empty file,
+    +x, Popen()) before writing this test; see spawn.run_process's own
+    docstring for why E2BIG (Argument list too long, from an oversized
+    prompt in a single argv element) is the other realistic OSError this
+    same broad catch exists for, even though it isn't reliably triggerable
+    in a portable test."""
+    broken = tmp_path / "broken-shim"
+    broken.write_bytes(b"")  # empty file: no shebang, no recognizable format
+    broken.chmod(0o755)
+    result = spawn.run_process([str(broken)], None, 5, Path.cwd())
+    assert result.exit_code is None
+    assert result.timed_out is False
+    assert result.orphans_suspected is False
+    assert result.result.succeeded is False
+    assert result.failure_reason is not None
+    assert "failed to start" in result.failure_reason
+    assert str(broken) in result.failure_reason
+
+
 def test_setsid_escape_does_not_leak_pump_threads():
     """Finding: the earlier implementation's daemon pump threads blocked
     forever in a plain readline() on a pipe an escaped descendant held

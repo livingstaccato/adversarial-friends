@@ -1,6 +1,6 @@
 ---
 name: adversarial-friends
-description: Cross-examine a spec, plan, design doc, or another reviewer's findings by dispatching it to other agent CLIs (claude, codex, agy, opencode, local ollama models) as independent adversarial reviewers, then merging their critiques into one ranked findings report. Use this whenever the user wants a design or plan challenged, wants a second or third opinion on a review, says something like "poke holes in this", "what's wrong with this plan", "have another model check this", "review my spec", "sanity-check this doc", "tell me why this is a bad idea" — or is about to commit to an architectural decision and wants more than one model's eyes on it before doing so.
+description: Cross-examine a spec, plan, design doc, or another reviewer's findings by dispatching it to other agent CLIs (claude, codex, agy, opencode) as independent adversarial reviewers, then merging their critiques into one ranked findings report. Use this whenever the user wants a design or plan challenged, wants a second or third opinion on a review, says something like "poke holes in this", "what's wrong with this plan", "have another model check this", "review my spec", "sanity-check this doc", "tell me why this is a bad idea" — or is about to commit to an architectural decision and wants more than one model's eyes on it before doing so.
 ---
 
 # Adversarial Friends

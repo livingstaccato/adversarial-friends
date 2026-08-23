@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "severity": "low",
+      "claim": "log line leaks a token",
+      "location": "src/log.py:5",
+      "evidence": "src/log.py:5 prints the raw auth header",
+      "failure_scenario": "the token appears in shared CI logs",
+      "suggested_fix": "redact the header before logging"
+    }
+  ]
+}

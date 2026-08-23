@@ -9,8 +9,20 @@ schema_flag = "--json-schema"
 model_flag = "--model"
 internal_timeout_flag = "--print-timeout"
 effort_kind = "native"
+structured_output = true
 
 [effort]
 low = ["--effort", "low"]
 medium = ["--effort", "medium"]
 high = ["--effort", "high"]
+
+# Captured directly from `agy --output-format json`: the answer is the
+# top-level "response" string; on error, "response" is empty and "error"
+# carries the message instead (see normalize.py's module docstring). A
+# missing/empty "response" makes json_path unwrapping report "found
+# nothing," so normalize() falls back to scanning the raw envelope, which
+# still degrades cleanly (structured_output=true keeps that fallback's
+# failure message legible).
+[envelope]
+kind = "json_path"
+path = "response"

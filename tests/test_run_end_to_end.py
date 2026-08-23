@@ -154,6 +154,43 @@ def test_unknown_cli_in_friend_flag_exits_2_not_3(tmp_path):
     assert "no-such-cli" in result.stderr
 
 
+def test_friend_ollama_is_rejected_as_unimplemented_not_a_silent_empty_binary(tmp_path):
+    """I3 (whole-branch review): ollama.toml declares transport="http" with
+    an empty `binary` (there is no HTTP transport in this build -- only
+    exec/Popen dispatch). Before this fix, --friend ollama:x fell straight
+    through to build_argv, which handed spawn.run_process argv[0] == "" and
+    failed opaquely as "binary not found: " -- while README, SKILL.md's
+    frontmatter, af doctor, and troubleshooting.md all implied ollama
+    worked. Rejecting outright (exit 2, before dispatch) rather than
+    implementing HTTP transport (a feature, not a fix)."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "ollama:ops")
+    assert result.returncode == 2, result.stderr
+    assert "ollama" in result.stderr
+    assert "not implemented" in result.stderr.lower()
+
+
+def test_preset_other_than_inherit_is_rejected(tmp_path):
+    """I5: --preset is accepted and printed in the report header, but
+    nothing reads it -- no code path varies behavior by preset name.
+    Rejected explicitly (same pattern as --mode) rather than silently
+    accepted and doing nothing."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--preset", "thorough", "--friend", "fake:good")
+    assert result.returncode == 2, result.stderr
+    assert "thorough" in result.stderr
+    assert "not implemented" in result.stderr.lower()
+
+
+def test_preset_inherit_is_accepted(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--preset", "inherit", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+
+
 def test_artifact_outside_git_repo_downgrades_every_friend_to_doc_scope(tmp_path):
     """The artifact lives directly under tmp_path, which is never a git
     repository in these tests -- this is already exercised implicitly by
@@ -190,20 +227,74 @@ def test_artifact_in_a_nested_subdirectory_of_a_repo_resolves_the_real_root(tmp_
     assert "not inside a git repository" not in report.lower()
 
 
-def test_a_slow_friend_timing_out_does_not_prevent_others_from_being_reported(tmp_path):
+def test_a_slow_friend_timing_out_does_not_prevent_others_from_being_reported(
+    monkeypatch, tmp_path
+):
     """One friend hangs past the timeout; a second succeeds. The run must
     still exit 0 (at least one friend produced a usable result) and the
     report must show both outcomes -- the timeout must not silently drop
-    either friend's row."""
+    either friend's row.
+
+    Run in-process (not via the `run_af` subprocess helper every other test
+    in this file uses) specifically so cli.KILL_GRACE_S can be monkeypatched
+    down: I4 (spec 11.3) makes the real kill deadline `--timeout +
+    KILL_GRACE_S` (60s in production), so a subprocess run with `--timeout 2`
+    would now take 62+ real seconds to observe the same timeout behavior
+    this test only needs to confirm the MECHANISM for, not the exact
+    production grace window (asserted separately, cheaply, in
+    test_kill_grace_period_constant_is_sixty_seconds below)."""
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setattr(cli, "KILL_GRACE_S", 1)
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
-    result = run_af(tmp_path, artifact, "--timeout", "2",
-                    "--friend", "fake:good", "--friend", "fake:hang")
-    assert result.returncode == 0, result.stderr
+    parser = cli.build_parser()
+    parsed = parser.parse_args([
+        "run", str(artifact), "--mode", "report", "--timeout", "2",
+        "--out", str(tmp_path / "runs"),
+        "--friend", "fake:good", "--friend", "fake:hang",
+    ])
+    returncode = cli.cmd_run(parsed)
+    assert returncode == 0
     runs = sorted((tmp_path / "runs").iterdir())
     report = (runs[0] / "report.md").read_text()
     assert "timeout" in report.lower() or "failed" in report.lower()
     assert "# c-0001" in report or "c-0001" in report
+
+
+# --- I4: the runner's kill deadline must be strictly greater than --timeout
+#
+# The kill deadline previously equaled the CLI's internal timeout exactly
+# (spec 11.3 requires strictly greater), so a friend with its own internal
+# timeout (agy --print-timeout) could be killed by the runner at the exact
+# instant it was trying to report its own timeout cleanly, mid-write.
+
+
+def test_kill_grace_period_constant_is_sixty_seconds():
+    assert cli.KILL_GRACE_S == 60
+
+
+def test_kill_deadline_is_strictly_greater_than_the_configured_timeout(monkeypatch, tmp_path):
+    """Direct proof of the arithmetic (not just "eventually times out"):
+    with KILL_GRACE_S monkeypatched down to 1s (see the test above this
+    section for why), a friend that hangs must survive strictly past
+    --timeout alone (1s) and be killed only once timeout + KILL_GRACE_S
+    (2s) has elapsed."""
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setattr(cli, "KILL_GRACE_S", 1)
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    parser = cli.build_parser()
+    parsed = parser.parse_args([
+        "run", str(artifact), "--mode", "report", "--timeout", "1",
+        "--out", str(tmp_path / "runs"), "--friend", "fake:hang",
+    ])
+    started = time.monotonic()
+    returncode = cli.cmd_run(parsed)
+    elapsed = time.monotonic() - started
+    assert returncode == 1  # the only dispatched friend timed out
+    assert elapsed >= 2.0, (
+        f"killed after {elapsed:.2f}s -- expected >= timeout(1) + KILL_GRACE_S(1) == 2s"
+    )
 
 
 def test_all_friends_failing_exits_1_and_says_so(tmp_path):
@@ -256,6 +347,81 @@ def test_two_friends_with_identical_cli_and_lens_get_distinct_names(tmp_path):
     meta = json.loads((runs[0] / "run.json").read_text())
     names = [f["name"] for f in meta["friends"]]
     assert len(names) == len(set(names)) == 2
+
+
+# --- I2: corroboration must survive exact-merge, end to end ---------------
+#
+# report.render never touched claim.origin/claim.lens, and cli.py appended
+# only KEPT claims and aliases to the ledger -- the duplicate claim record
+# itself was never written. Four friends independently finding the same
+# defect collapsed to one claim with origin of length 1 plus dangling alias
+# references (an Alias.duplicate id with no matching `claim` record
+# anywhere in claims.jsonl). fake_friend.py's mode dispatch falls back to
+# "good" for any unrecognized mode name (see fake_friend.py's MODES.get
+# fallback), so --friend fake:security and --friend fake:ops (both real
+# lens files, so neither trips the "no lens file found" downgrade) produce
+# BYTE-IDENTICAL findings under two DISTINCT (cli, lens) origins --
+# "fake/security" and "fake/ops" -- exactly the exact-merge scenario this
+# fix targets, without needing two different real agent CLIs.
+
+
+def test_corroborating_friends_leave_no_dangling_alias_reference_in_the_ledger(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:security", "--friend", "fake:ops")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    records = [json.loads(line) for line in
+              (runs[0] / "claims.jsonl").read_text().strip().splitlines()]
+    claim_ids = {r["id"] for r in records if r["type"] == "claim"}
+    aliases = [r for r in records if r["type"] == "alias"]
+    assert aliases, "expected at least one alias from the identical-finding merge"
+    for alias in aliases:
+        assert alias["duplicate"] in claim_ids, (
+            f"alias {alias} references a duplicate id with no claim record "
+            f"in the ledger -- known ids: {sorted(claim_ids)}"
+        )
+        assert alias["canonical"] in claim_ids
+
+
+def test_corroborating_friends_origins_are_reconstructible_from_the_ledger_alone(tmp_path):
+    """The canonical claim's OWN ledger record keeps whatever origin it had
+    when first written (the ledger is append-only -- nothing already
+    written is rewritten in place); it is the alias chain plus the
+    duplicate's OWN claim record (see the dangling-reference test above)
+    that lets a reader reconstruct full corroboration from claims.jsonl by
+    itself, without needing the in-memory state a live `af run` process
+    held. This is the ledger-level guarantee; the merged, ready-to-read
+    origin list lives in report.md (see
+    test_report_shows_corroboration_for_a_claim_multiple_friends_raised)."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:security", "--friend", "fake:ops")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    records = [json.loads(line) for line in
+              (runs[0] / "claims.jsonl").read_text().strip().splitlines()]
+    claims_by_id = {r["id"]: r for r in records if r["type"] == "claim"}
+    aliases = [r for r in records if r["type"] == "alias"]
+    assert len(aliases) == 1
+    alias = aliases[0]
+
+    reconstructed_origin: set[str] = set(claims_by_id[alias["canonical"]]["origin"])
+    reconstructed_origin |= set(claims_by_id[alias["duplicate"]]["origin"])
+    assert reconstructed_origin == {"fake/security", "fake/ops"}
+
+
+def test_report_shows_corroboration_for_a_claim_multiple_friends_raised(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:security", "--friend", "fake:ops")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    report = (runs[0] / "report.md").read_text()
+    assert "corroborated by 2 friends" in report
+    assert "fake/security" in report and "fake/ops" in report
+    # A single-friend-run finding must NOT claim corroboration it doesn't have.
+    assert report.count("### c-") == 1  # the duplicate was merged, not double-listed
 
 
 def test_symlinked_artifact_is_reviewed_via_its_real_content(tmp_path):
@@ -636,6 +802,19 @@ def test_doctor_reports_missing_clis_and_exits_3(tmp_path):
     assert "missing" in result.stdout
 
 
+def test_doctor_marks_ollama_unimplemented_not_merely_unprobed(tmp_path):
+    """I3: af doctor's http-transport branch previously printed a neutral
+    'reachability not probed by doctor' line for ollama, which reads as
+    'supported but unverified' rather than 'not implemented at all in this
+    build' -- misleading given --friend ollama:* is rejected outright."""
+    result = subprocess.run(
+        [sys.executable, str(AF), "doctor"],
+        capture_output=True, text=True, env=_env(),
+    )
+    ollama_line = next(ln for ln in result.stdout.splitlines() if ln.startswith("ollama"))
+    assert "unimplemented" in ollama_line.lower()
+
+
 # --- Lens wiring (Task 13 coordinator finding) ----------------------------
 #
 # Before this fix, cmd_run built exactly one prompt.txt (PROMPT_HEADER +
@@ -774,3 +953,182 @@ def test_two_friend_run_does_not_record_the_single_friend_downgrade(tmp_path):
     runs = sorted((tmp_path / "runs").iterdir())
     meta = json.loads((runs[0] / "run.json").read_text())
     assert not any("cross-examin" in note.lower() for note in meta["downgrades"]), meta["downgrades"]
+
+
+# --- C3: one friend's unexpected exception must not end the whole run -----
+#
+# spawn.run_process previously caught only FileNotFoundError/PermissionError
+# from Popen(); any other OSError (E2BIG from an oversized prompt in one
+# argv element, ENOEXEC from a broken shim -- see test_spawn.py for the
+# unit-level proof of both) escaped the worker thread, was not an AfError,
+# and killed the WHOLE run with a raw traceback -- losing every other
+# friend's already-succeeded result along with it. Fixed at two layers:
+# spawn.run_process now catches OSError broadly, and cli.py's own per-friend
+# dispatch wrapper (_run_one, inside cmd_run) catches any OTHER unexpected
+# exception too, so nothing short of a deliberate AfError can end a run.
+
+
+def test_enoexec_friend_does_not_prevent_a_second_friend_from_being_reported(tmp_path):
+    """End-to-end version of test_spawn.py's ENOEXEC unit test: a real
+    adapter ('codex') resolves, via PATH, to a broken shim (executable bit
+    set, but not a valid executable format at all) instead of the real
+    codex CLI. This must fail as a clean per-friend result, not take down
+    the dispatch of a second, working friend (fake:good)."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+
+    broken_dir = Path(tempfile.mkdtemp(prefix="af-broken-bin-"))
+    broken = broken_dir / "codex"
+    broken.write_bytes(b"")  # empty file: no shebang, no recognizable format
+    broken.chmod(0o755)
+
+    combined_path = f"{_safe_path_dir()}{os.pathsep}{broken_dir}"
+    result = run_af(tmp_path, artifact, "--friend", "codex:ops", "--friend", "fake:good",
+                    env_extra={"PATH": combined_path})
+    assert result.returncode == 0, result.stderr
+
+    runs = sorted((tmp_path / "runs").iterdir())
+    report = (runs[0] / "report.md").read_text()
+    assert "failed" in report.lower()
+    assert "the guard is missing" in report  # fake:good's finding still came through
+
+    meta = json.loads((runs[0] / "run.json").read_text())
+    codex_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("codex"))
+    assert "failed" in codex_status.lower()
+    fake_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("fake"))
+    assert fake_status == "ok"
+
+
+def test_unexpected_exception_in_one_friends_dispatch_does_not_end_the_run(monkeypatch, tmp_path):
+    """Simulates a bug unrelated to process-spawning entirely (something
+    spawn.run_process's own OSError handling could never catch, since it
+    never even reaches Popen()) by monkeypatching build_argv to raise for
+    exactly one friend's cli ('codex'), while a second friend ('fake:good',
+    which never calls build_argv at all -- see cli._dispatch) succeeds
+    normally. cli.cmd_run is called in-process (not via subprocess) because
+    the patch target is an internal cli.py name."""
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("PATH", str(_safe_path_dir()))
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+
+    real_build_argv = adapters.build_argv
+
+    def _boom(adapter, spec, prompt_file, schema_file):
+        if spec.cli == "codex":
+            raise RuntimeError("simulated unexpected bug in adapter wiring")
+        return real_build_argv(adapter, spec, prompt_file, schema_file)
+
+    monkeypatch.setattr(cli, "build_argv", _boom)
+    parser = cli.build_parser()
+    parsed = parser.parse_args([
+        "run", str(artifact), "--mode", "report",
+        "--out", str(tmp_path / "runs"),
+        "--friend", "codex:ops", "--friend", "fake:good",
+    ])
+    returncode = cli.cmd_run(parsed)
+    assert returncode == 0
+
+    runs = sorted((tmp_path / "runs").iterdir())
+    report = (runs[0] / "report.md").read_text()
+    assert "the guard is missing" in report  # fake:good's finding survived
+    meta = json.loads((runs[0] / "run.json").read_text())
+    codex_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("codex"))
+    assert "unexpected error" in codex_status.lower()
+    assert "simulated unexpected bug" in codex_status
+    fake_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("fake"))
+    assert fake_status == "ok"
+
+
+def test_oversized_prompt_for_a_non_stdin_adapter_records_an_e2big_downgrade(tmp_path):
+    """claude places the whole prompt in one argv element (prompt_mode
+    'trailing-arg'); Linux caps a single argv element near 128KB, so a large
+    artifact can make the real dispatch fail with E2BIG. This is detected
+    and recorded up front (see cmd_run's PROMPT_ARGV_WARN_BYTES check), not
+    solved -- switching prompt modes is a design change. The downgrade must
+    appear regardless of whether the friend actually resolves (claude is not
+    on the safe-PATH used by this test, so it also fails for an unrelated
+    reason -- 'binary not found' -- but the downgrade is recorded before
+    dispatch even starts, independent of that outcome)."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n" + ("x" * 150_000) + "\n")
+    result = run_af(tmp_path, artifact, "--friend", "claude:ops", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert any("E2BIG" in note or "Argument list too long" in note
+               for note in meta["downgrades"]), meta["downgrades"]
+    assert any("claude" in note for note in meta["downgrades"])
+
+
+def test_small_prompt_does_not_record_an_e2big_downgrade(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nshort\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert not any("E2BIG" in note for note in meta["downgrades"]), meta["downgrades"]
+
+
+# --- I1: friend stderr is captured and persisted, not thrown away ---------
+#
+# SpawnResult.stderr was populated by spawn.run_process but referenced
+# nowhere in cli.py: an unauthenticated friend showed up as "failed: exit 1"
+# with a 0-byte .raw and no diagnosis anywhere, while troubleshooting.md
+# sent the operator to `af doctor`, which only calls shutil.which and never
+# probes auth. fake:crash (fake_friend.py) prints "boom" to stderr and
+# exits 1 -- a real, if minimal, stand-in for that unauthenticated-friend
+# shape.
+
+
+def test_failed_friends_stderr_is_written_to_its_own_err_file(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:crash", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    err_text = (runs[0] / "round-1" / "fake-crash-0.err").read_text()
+    assert err_text.strip() == "boom"
+
+
+def test_successful_friends_err_file_still_exists_and_is_empty(tmp_path):
+    """A stable, always-present file beats one that only sometimes exists --
+    an operator grepping round-1/*.err should never have to first check
+    which friends failed before knowing which files are there to read."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    err_path = runs[0] / "round-1" / "fake-good-0.err"
+    assert err_path.exists()
+    assert err_path.read_text() == ""
+
+
+def test_failed_friends_status_carries_a_short_stderr_tail_and_points_at_the_err_file(tmp_path):
+    """The report/run.json status column must show enough to diagnose an
+    unauthenticated/misconfigured friend without a second file open --
+    'failed: exit 1' alone (the pre-fix behavior) gave no clue at all."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:crash", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    crash_status = next(f["status"] for f in meta["friends"] if f["name"] == "fake-crash-0")
+    assert "boom" in crash_status
+    assert "fake-crash-0.err" in crash_status
+    report = (runs[0] / "report.md").read_text()
+    assert "boom" in report
+    assert "fake-crash-0.err" in report
+
+
+def test_successful_friends_status_does_not_carry_a_stderr_tail(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert meta["friends"][0]["status"] == "ok"

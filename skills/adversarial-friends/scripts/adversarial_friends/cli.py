@@ -26,15 +26,33 @@ from .errors import AfError, NoFriendsError, UsageError
 from .ids import format_claim_id, validate_friend_name
 from .ledger import Claim
 from .merge import exact_merge
+from .normalize import NormalizeResult
 from .report import render
 from .roster import discover_clis, resolve
 from .runstore import RunStore, default_root
-from .spawn import run_process
+from .spawn import SpawnResult, run_process
 from .trust import check_denied_values
 
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_DIR = SKILL_ROOT / "adapters"
 LENS_DIR = SKILL_ROOT / "lenses"
+
+# Spec §11.3: the runner's own kill deadline must be strictly greater than a
+# friend's configured --timeout, so a CLI with its own internal timeout
+# (agy --print-timeout, set by build_argv to exactly `spec.timeout` -- see
+# adapters.build_argv) gets the chance to report its own timeout cleanly and
+# exit before this runner would otherwise kill it out from under a
+# mid-write. Distinct from spawn.GRACE_SECONDS (the much shorter
+# SIGTERM->SIGKILL escalation window used once a kill has already begun).
+KILL_GRACE_S = 60
+
+# A conservative threshold for warning that a friend's prompt may trigger
+# E2BIG ("Argument list too long") when its adapter places the whole prompt
+# in one argv element (prompt_mode != "stdin"). Linux caps a single argv
+# element near 128KiB; this is comfortably under that so the downgrade is
+# visible before a real dispatch would fail, not only after.
+PROMPT_ARGV_WARN_BYTES = 100_000
+
 PROMPT_HEADER = (
     "You are an adversarial reviewer. Read the artifact below and challenge it.\n"
     "Return ONLY a JSON object matching this shape:\n"
@@ -48,6 +66,28 @@ PROMPT_HEADER = (
 # Capability to surface. Always doc-scope, no schema enforcement, no
 # verifiable effort -- reported honestly rather than guessed.
 _FAKE_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
+
+# A synthetic capability for a friend whose dispatch raised an unexpected
+# exception (see cmd_run's _run_one, defined inline in its dispatch section)
+# before -- or instead of -- ever reaching a real Capability. Same values as
+# _FAKE_CAPABILITY, but a separate name/docstring: this one means "unknown,
+# because dispatch never got far enough to know," not "this is the test-only
+# cli."
+_UNKNOWN_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
+
+
+def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
+    """Build a SpawnResult for a friend whose dispatch raised something
+    spawn.run_process's own OSError handling did not already turn into a
+    clean result -- e.g. a bug in adapter wiring, or an OSError that still
+    somehow escaped Popen(). Mirrors spawn._early_failure's shape so cmd_run's
+    single per-friend result-processing loop below needs no special case for
+    "this friend never actually ran a process at all."""
+    return SpawnResult(
+        argv=argv, exit_code=None, stdout="", stderr="", duration_s=0.0,
+        timed_out=False, result=NormalizeResult(None, [str(exc)], False),
+        failure_reason=f"unexpected error: {exc}", orphans_suspected=False,
+    )
 
 
 def available_lenses() -> list[str]:
@@ -204,6 +244,20 @@ def _specs_from_flags(values: list[str], timeout: int, registry: dict[str, Adapt
                 raise UsageError(
                     f"unknown cli: {cli!r} (known: {sorted(registry) or 'none'})"
                 )
+            if adapter.transport == "http":
+                # ollama.toml declares transport="http" with an empty
+                # `binary` -- there is no HTTP transport in this build (only
+                # `exec`/Popen dispatch is implemented), so build_argv would
+                # hand spawn.run_process argv[0] == "" and fail opaquely
+                # ("binary not found: "). Reject explicitly instead:
+                # implementing real HTTP dispatch is a feature, not a fix
+                # (see references/troubleshooting.md and af doctor, which
+                # both now say the same thing).
+                raise UsageError(
+                    f"cli {cli!r} uses HTTP transport, which is not "
+                    "implemented in this build (exec-only); see "
+                    "references/troubleshooting.md"
+                )
             scope = "repo" if adapter.readonly_argv else "doc"
         name = f"{cli}-{lens}-{index}"
         validate_friend_name(name)
@@ -232,6 +286,19 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = 200) -> str:
+    """A short, status-column-sized excerpt of a friend's stderr -- not the
+    whole capture, which lives in `round-1/<friend>.err` (see cmd_run).
+    Takes the LAST non-empty lines: the actionable diagnostic (an auth
+    error, a missing env var) is usually near the end of a CLI's stderr,
+    after any banner/progress noise, not the first line."""
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    tail = " | ".join(lines[-max_lines:])
+    if len(tail) > max_chars:
+        tail = tail[:max_chars - 1].rstrip() + "…"
+    return tail
+
+
 def _dispatch(spec: FriendSpec, cwd: Path, registry: dict[str, Adapter],
               fake_cmd: list[str] | None, prompt_file: Path, schema_file: Path,
               abort_event: threading.Event | None = None):
@@ -253,16 +320,35 @@ def _dispatch(spec: FriendSpec, cwd: Path, registry: dict[str, Adapter],
     --timeout -- see cmd_run's signal handling for why this matters: a
     cancelled run must not leave a metered agent CLI process running
     unbounded.
+
+    The kill deadline handed to run_process is `spec.timeout + KILL_GRACE_S`,
+    strictly greater than `spec.timeout` itself -- spec §11.3. Adapters with
+    an internal_timeout_flag (agy) have that CLI's OWN timeout set to
+    exactly `spec.timeout` by build_argv (see adapters.build_argv), so the
+    two deadlines can never collide: the CLI gets the chance to report its
+    own timeout cleanly and exit before this runner would otherwise kill it
+    out from under a mid-write.
+
+    `envelope`/`structured_output` come from the adapter (None/False for the
+    test-only "fake" cli, which never touches adapters.py at all -- see
+    _FAKE_CAPABILITY's own docstring) and are passed straight through to
+    spawn.run_process/normalize; see normalize.normalize's docstring.
     """
     if spec.cli == "fake":
         argv = [*fake_cmd, spec.lens]
         stdin_text = None
         capability = _FAKE_CAPABILITY
+        envelope = None
+        structured_output = False
     else:
         adapter = registry[spec.cli]
         argv, stdin_text, capability = build_argv(adapter, spec, prompt_file, schema_file)
         check_denied_values(argv)
-    outcome = run_process(argv, stdin_text, spec.timeout, cwd, abort_event=abort_event)
+        envelope = adapter.envelope
+        structured_output = adapter.structured_output
+    outcome = run_process(argv, stdin_text, spec.timeout + KILL_GRACE_S, cwd,
+                          abort_event=abort_event, envelope=envelope,
+                          structured_output=structured_output)
     return spec, capability, outcome
 
 
@@ -273,6 +359,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.mode != "report":
         raise UsageError(
             f"mode {args.mode!r} is not implemented yet; only 'report' is available"
+        )
+    if args.preset != "inherit":
+        # --preset is accepted and printed in the report header, but nothing
+        # reads it: no code path varies model/effort/timeout selection by
+        # preset name. Rejecting explicitly (same pattern as the --mode
+        # check just above) rather than silently accepting and doing
+        # nothing -- a report that says "preset: thorough" while running
+        # exactly like "inherit" would misrepresent what actually happened.
+        raise UsageError(
+            f"preset {args.preset!r} is not implemented yet; only 'inherit' is available"
         )
     # Deliberately NOT resolved here: resolving would follow a symlinked
     # artifact to its target's own name, so a review of `link_spec.md ->
@@ -410,6 +506,27 @@ def cmd_run(args: argparse.Namespace) -> int:
             prompt_text, advisory, lens_downgrade = _build_friend_prompt(spec, artifact_text)
             if lens_downgrade:
                 downgrades.append(lens_downgrade)
+            # claude, opencode, and agy all place the WHOLE prompt in one
+            # argv element (prompt_mode "trailing-arg"/"flag-value"); Linux
+            # caps a single argument near 128KB, so a large artifact can
+            # make Popen() fail with E2BIG ("Argument list too long"). This
+            # is detected, not solved -- switching prompt modes is a design
+            # change, out of scope here (see spawn.run_process's OSError
+            # handling for what happens if it fires anyway). Recording the
+            # risk up front means an E2BIG failure is already explained by
+            # the time it's read, not a surprise raw exit code.
+            if spec.cli != "fake":
+                adapter = registry[spec.cli]
+                if adapter.prompt_mode != "stdin":
+                    prompt_bytes = len(prompt_text.encode("utf-8"))
+                    if prompt_bytes > PROMPT_ARGV_WARN_BYTES:
+                        downgrades.append(
+                            f"{spec.name}: prompt is {prompt_bytes} bytes and "
+                            f"{adapter.name} passes it as a single argv element "
+                            f"(prompt_mode={adapter.prompt_mode!r}); Linux caps a "
+                            "single argument near 128KB, so this friend's dispatch "
+                            "may fail with 'Argument list too long' (E2BIG)."
+                        )
             prompt_path = store.friend_prompt_path(1, spec.name)
             prompt_path.write_text(prompt_text, encoding="utf-8")
             prompt_for[spec.name] = prompt_path
@@ -452,8 +569,29 @@ def cmd_run(args: argparse.Namespace) -> int:
                     cwd_for[spec.name] = dest
 
                 def _run_one(spec: FriendSpec):
-                    return _dispatch(spec, cwd_for[spec.name], registry, fake_cmd,
-                                     prompt_for[spec.name], schema_file, abort_event)
+                    # spawn.run_process already turns most process-launch
+                    # failures (missing binary, E2BIG, ENOEXEC, ...) into a
+                    # SpawnResult rather than raising. This is the second,
+                    # broader layer: ANYTHING else that goes wrong for one
+                    # friend -- a bug in adapter wiring, an OSError that
+                    # still somehow escaped Popen(), anything unforeseen --
+                    # must not end the whole run. pool.map (below) collects
+                    # this function's return values one per future; letting
+                    # an exception escape here would propagate out of
+                    # pool.map entirely, losing every other friend's
+                    # (possibly already-succeeded) result along with it. A
+                    # deliberate AfError (e.g. check_denied_values inside
+                    # _dispatch refusing a dangerous flag) is a real,
+                    # intentional stop condition with its own exit code --
+                    # that still propagates, unlike a genuinely unexpected
+                    # exception.
+                    try:
+                        return _dispatch(spec, cwd_for[spec.name], registry, fake_cmd,
+                                         prompt_for[spec.name], schema_file, abort_event)
+                    except AfError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 -- see comment above
+                        return spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
 
                 # Only specs that actually got an isolation directory (i.e.
                 # every one of them, unless the loop above broke early on
@@ -491,7 +629,20 @@ def cmd_run(args: argparse.Namespace) -> int:
                 f"orphans_suspected={outcome.orphans_suspected}\n",
                 encoding="utf-8",
             )
+            # stderr is captured by spawn.run_process on every friend
+            # (SpawnResult.stderr) but was previously written nowhere and
+            # referenced nowhere -- an unauthenticated friend showed up as
+            # "failed: exit 1" with a 0-byte .raw and no diagnosis anywhere.
+            # Persisted unconditionally (even "" -- a stable, always-present
+            # file beats one that only sometimes exists), with a short tail
+            # folded into the status column for a failed friend so the
+            # diagnosis is visible without opening a second file.
+            err_path = store.friend_err_path(1, spec.name)
+            err_path.write_text(outcome.stderr, encoding="utf-8")
             status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
+            if outcome.failure_reason is not None and outcome.stderr.strip():
+                status += (f" (stderr: {_stderr_tail(outcome.stderr)}; "
+                          f"full text in round-1/{spec.name}.err)")
             if outcome.orphans_suspected:
                 # A leaked descendant must not look identical to a clean run --
                 # surfaced in the same status column readers already check for
@@ -516,11 +667,33 @@ def cmd_run(args: argparse.Namespace) -> int:
                     failure_scenario=finding["failure_scenario"],
                     suggested_fix=finding["suggested_fix"],
                 ))
-            kept, aliases = exact_merge(all_claims, incoming, round_no=1)
-            for record in kept:
+            kept, aliases, updated_existing = exact_merge(all_claims, incoming, round_no=1)
+            # Every incoming claim is written to the ledger, not just the
+            # ones exact_merge kept: an Alias record's `duplicate` id must
+            # resolve to a real `claim` record, or claims.jsonl has a
+            # dangling reference -- a reader following canonical<-duplicate
+            # links (the only way to recover full corroboration from the
+            # ledger alone; see merge.exact_merge's docstring) hits a dead
+            # end. `incoming` already IS the superset of `kept` plus every
+            # claim that became an alias, so writing it once here replaces
+            # writing `kept` alone.
+            for record in incoming:
                 store.ledger.append(record)
             for alias in aliases:
                 store.ledger.append(alias)
+            if updated_existing:
+                # A canonical claim from an EARLIER friend just gained this
+                # friend's origin too (it aliased one of that friend's
+                # claims). The ledger keeps its original, immutable record
+                # as first written -- Alias + the duplicate's own claim
+                # record (written above) already let a reader reconstruct
+                # the same corroboration from claims.jsonl alone -- but the
+                # in-memory `all_claims` this run still uses (for the NEXT
+                # friend's dedup pass, and for the final report) must
+                # reflect the grown origin, or report.md would undercount
+                # how many friends actually agreed.
+                updated_by_id = {c.id: c for c in updated_existing}
+                all_claims = [updated_by_id.get(c.id, c) for c in all_claims]
             all_claims.extend(kept)
             all_aliases.extend(aliases)
 
@@ -562,8 +735,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         schema_file = schema_path(tmp)
         for name, adapter in sorted(registry.items()):
             if adapter.transport == "http":
-                print(f"{name:10} {'n/a':8} http endpoint={adapter.endpoint} "
-                      "(reachability not probed by doctor)")
+                # HTTP transport (ollama) is declared but not implemented in
+                # this build -- `--friend ollama:*` is rejected outright
+                # (see _specs_from_flags). Say so plainly here too, rather
+                # than a neutral "reachability not probed" that reads as
+                # "supported but unverified."
+                print(f"{name:10} {'unimplemented':13} http endpoint={adapter.endpoint} "
+                      "(HTTP transport not implemented in this build)")
                 continue
             binary = shutil.which(adapter.binary) if adapter.binary else None
             # capability is always what build_argv reports for a
