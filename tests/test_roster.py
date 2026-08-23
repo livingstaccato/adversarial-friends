@@ -3,8 +3,13 @@ import pytest
 from adversarial_friends import adapters, roster
 from adversarial_friends.errors import NoFriendsError, UsageError
 
-ADAPTER_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / \
-    "skills" / "adversarial-friends" / "adapters"
+ADAPTER_DIR = (
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "src"
+    / "adversarial_friends"
+    / "assets"
+    / "adapters"
+)
 LENSES = ["assumptions", "security", "ops"]
 
 
@@ -39,8 +44,7 @@ def test_host_cli_is_excluded_by_default(registry):
 
 
 def test_include_self_keeps_the_host(registry):
-    friends = roster.resolve(registry, LENSES, {"CLAUDECODE": "1"}, which_all,
-                             include_self=True)
+    friends = roster.resolve(registry, LENSES, {"CLAUDECODE": "1"}, which_all, include_self=True)
     assert any(f.cli == "claude" for f in friends)
 
 
@@ -71,7 +75,11 @@ def test_override_without_its_own_timeout_key_falls_back_to_the_passed_timeout(r
     entry that doesn't set its own `timeout` key -- an override's own
     explicit key still wins (see the next test)."""
     friends = roster.resolve(
-        registry, LENSES, {}, which_all, timeout=42,
+        registry,
+        LENSES,
+        {},
+        which_all,
+        timeout=42,
         overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops"}],
     )
     assert friends[0].timeout == 42
@@ -79,7 +87,11 @@ def test_override_without_its_own_timeout_key_falls_back_to_the_passed_timeout(r
 
 def test_override_s_own_timeout_key_still_wins_over_the_passed_timeout(registry):
     friends = roster.resolve(
-        registry, LENSES, {}, which_all, timeout=42,
+        registry,
+        LENSES,
+        {},
+        which_all,
+        timeout=42,
         overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops", "timeout": 7}],
     )
     assert friends[0].timeout == 7
@@ -99,9 +111,19 @@ def test_no_binaries_raises_no_friends(registry):
 
 def test_overrides_replace_discovery(registry):
     friends = roster.resolve(
-        registry, LENSES, {}, which_all,
-        overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops",
-                    "model": "gpt-5.6-sol", "effort": "high"}],
+        registry,
+        LENSES,
+        {},
+        which_all,
+        overrides=[
+            {
+                "name": "codex-ops",
+                "cli": "codex",
+                "lens": "ops",
+                "model": "gpt-5.6-sol",
+                "effort": "high",
+            }
+        ],
     )
     assert len(friends) == 1
     assert friends[0].name == "codex-ops"
@@ -122,8 +144,13 @@ def test_override_unknown_cli_raises_no_friends(registry):
 
     Fails cleanly: NoFriendsError, unchanged from the brief's own code."""
     with pytest.raises(NoFriendsError, match="unknown cli"):
-        roster.resolve(registry, LENSES, {}, which_all,
-                        overrides=[{"name": "x", "cli": "no-such-cli", "lens": "ops"}])
+        roster.resolve(
+            registry,
+            LENSES,
+            {},
+            which_all,
+            overrides=[{"name": "x", "cli": "no-such-cli", "lens": "ops"}],
+        )
 
 
 @pytest.mark.parametrize("bad_name", ["Codex-Ops", "codex/ops", "../../etc", "a" * 40])
@@ -133,15 +160,19 @@ def test_override_invalid_friend_name_raises_usage_error(registry, bad_name):
     Fails cleanly: UsageError, unchanged from the brief's own code (routed
     through trust.validate_roster_entry as required)."""
     with pytest.raises(UsageError, match="invalid friend name"):
-        roster.resolve(registry, LENSES, {}, which_all,
-                        overrides=[{"name": bad_name, "cli": "codex", "lens": "ops"}])
+        roster.resolve(
+            registry,
+            LENSES,
+            {},
+            which_all,
+            overrides=[{"name": bad_name, "cli": "codex", "lens": "ops"}],
+        )
 
 
 def test_override_missing_name_raises_usage_error(registry):
     """Attack: an override omits the required name key entirely."""
     with pytest.raises(UsageError, match="missing required key: name"):
-        roster.resolve(registry, LENSES, {}, which_all,
-                        overrides=[{"cli": "codex", "lens": "ops"}])
+        roster.resolve(registry, LENSES, {}, which_all, overrides=[{"cli": "codex", "lens": "ops"}])
 
 
 def test_empty_lens_list_raises_usage_error_not_zero_division(registry):
@@ -159,7 +190,10 @@ def test_override_with_empty_lens_list_is_unaffected(registry):
     """The empty-lens guard must not fire on the overrides path, which
     never reads the `lenses` parameter at all."""
     friends = roster.resolve(
-        registry, [], {}, which_all,
+        registry,
+        [],
+        {},
+        which_all,
         overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops"}],
     )
     assert len(friends) == 1
@@ -206,11 +240,12 @@ def test_multiple_host_markers_set_at_once_is_deterministic():
     order, so the result is deterministic regardless of which markers are
     also set."""
     assert roster.detect_host({"CLAUDECODE": "1", "CODEX_SANDBOX": "seatbelt"}) == "claude"
-    assert roster.detect_host({"CODEX_SANDBOX": "seatbelt",
-                               "OPENCODE_SERVER_PASSWORD": "x"}) == "codex"
+    assert (
+        roster.detect_host({"CODEX_SANDBOX": "seatbelt", "OPENCODE_SERVER_PASSWORD": "x"})
+        == "codex"
+    )
     # Reversed insertion order in the input env changes nothing.
-    assert roster.detect_host({"OPENCODE_SERVER_PASSWORD": "x",
-                               "CLAUDECODE": "1"}) == "claude"
+    assert roster.detect_host({"OPENCODE_SERVER_PASSWORD": "x", "CLAUDECODE": "1"}) == "claude"
 
 
 def test_which_returning_unverified_path_is_trusted_by_discover_clis(registry, tmp_path):
@@ -235,6 +270,7 @@ def test_which_returning_unverified_path_is_trusted_by_discover_clis(registry, t
     assert "codex" in found  # discover_clis trusted the lying which
 
     import shutil
+
     assert shutil.which("codex", path=str(tmp_path)) is None  # real which does not lie
 
 
@@ -294,4 +330,4 @@ def test_friend_count_not_cli_count_for_degraded_mode(registry):
 
 
 def test_degraded_modes_constant():
-    assert roster.DEGRADED_MODES == frozenset({"report"})
+    assert frozenset({"report"}) == roster.DEGRADED_MODES

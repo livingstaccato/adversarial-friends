@@ -1,0 +1,25 @@
+name = "claude"
+binary = "claude"
+base_argv = ["--print", "--output-format", "json"]
+prompt_mode = "trailing-arg"
+readonly_argv = ["--tools", "Read,Grep,Glob"]
+schema_flag = "--json-schema"
+model_flag = "--model"
+internal_timeout_flag = ""
+effort_kind = "native"
+# --output-format json wraps the answer in claude's own envelope. Captured
+# from claude 2.1.240 on 2026-08-23: a single JSON object with
+# type="result", subtype="success", and the model's answer in `result` as a
+# JSON-escaped string, alongside session_id/usage/total_cost_usd.
+structured_output = true
+
+[envelope]
+kind = "json_path"
+path = "result"
+
+[effort]
+low = ["--effort", "low"]
+medium = ["--effort", "medium"]
+high = ["--effort", "high"]
+xhigh = ["--effort", "xhigh"]
+max = ["--effort", "max"]

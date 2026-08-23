@@ -11,8 +11,9 @@ CMARK = shutil.which("cmark")
 
 
 def _render_with_cmark(markdown_text: str) -> str:
-    result = subprocess.run(["cmark"], input=markdown_text, capture_output=True,
-                            text=True, check=True)
+    result = subprocess.run(
+        ["cmark"], input=markdown_text, capture_output=True, text=True, check=True
+    )
     return result.stdout
 
 
@@ -23,21 +24,44 @@ def _unescaped_pipe_count(line: str) -> int:
 
 
 def claim(cid, severity="high"):
-    return Claim(id=cid, supersedes=None, origin=["codex/ops"], lens="ops",
-                 round=1, advisory=False, severity=severity,
-                 claim="the guard is missing", location="src/a.py:42",
-                 evidence="src/a.py:38", failure_scenario="expired token passes",
-                 suggested_fix="check exp")
+    return Claim(
+        id=cid,
+        supersedes=None,
+        origin=["codex/ops"],
+        lens="ops",
+        round=1,
+        advisory=False,
+        severity=severity,
+        claim="the guard is missing",
+        location="src/a.py:42",
+        evidence="src/a.py:38",
+        failure_scenario="expired token passes",
+        suggested_fix="check exp",
+    )
 
 
 def meta(**over):
     base = {
-        "mode": "report", "preset": "inherit", "artifact": "spec.md",
+        "mode": "report",
+        "preset": "inherit",
+        "artifact": "spec.md",
         "friends": [
-            {"name": "codex-ops", "model": "gpt-5.6-sol", "effort": "high",
-             "readonly": True, "scope": "repo", "status": "ok"},
-            {"name": "opencode-security", "model": None, "effort": "unverified",
-             "readonly": False, "scope": "doc", "status": "failed: exit 1"},
+            {
+                "name": "codex-ops",
+                "model": "gpt-5.6-sol",
+                "effort": "high",
+                "readonly": True,
+                "scope": "repo",
+                "status": "ok",
+            },
+            {
+                "name": "opencode-security",
+                "model": None,
+                "effort": "unverified",
+                "readonly": False,
+                "scope": "doc",
+                "status": "failed: exit 1",
+            },
         ],
         "downgrades": ["opencode: no read-only capability, forced to doc scope"],
     }
@@ -72,33 +96,50 @@ def test_empty_findings_says_so_without_claiming_success():
 
 # --- adversarial / break-it cases -----------------------------------------
 
+
 def test_pipe_in_friend_name_does_not_break_table():
     """A `|` in a friend name or status must not silently create extra
     table columns / misalign every field after it."""
-    m = meta(friends=[
-        {"name": "codex|ops", "model": "gpt-5.6-sol", "effort": "high",
-         "readonly": True, "scope": "repo", "status": "ok | done"},
-    ])
+    m = meta(
+        friends=[
+            {
+                "name": "codex|ops",
+                "model": "gpt-5.6-sol",
+                "effort": "high",
+                "readonly": True,
+                "scope": "repo",
+                "status": "ok | done",
+            },
+        ]
+    )
     out = render([claim("c-0001@1")], [], m)
     # The row must have exactly as many *unescaped* column separators as the
     # header (6 pipes: leading + 5 internal + trailing), i.e. the literal
     # pipes in the friend's own data must be backslash-escaped, not literal
     # column breaks.
-    header_line = [ln for ln in out.splitlines() if ln.startswith("| friend")][0]
-    data_line = [ln for ln in out.splitlines() if ln.startswith("| codex")][0]
+    header_line = next(ln for ln in out.splitlines() if ln.startswith("| friend"))
+    data_line = next(ln for ln in out.splitlines() if ln.startswith("| codex"))
     assert _unescaped_pipe_count(data_line) == _unescaped_pipe_count(header_line)
     assert "codex\\|ops" in out
     assert "ok \\| done" in out
 
 
 def test_status_pipe_alone_does_not_break_column_count():
-    m = meta(friends=[
-        {"name": "friend-a", "model": "m", "effort": "high",
-         "readonly": True, "scope": "repo", "status": "failed: a | b"},
-    ])
+    m = meta(
+        friends=[
+            {
+                "name": "friend-a",
+                "model": "m",
+                "effort": "high",
+                "readonly": True,
+                "scope": "repo",
+                "status": "failed: a | b",
+            },
+        ]
+    )
     out = render([claim("c-0001@1")], [], m)
-    header_line = [ln for ln in out.splitlines() if ln.startswith("| friend")][0]
-    data_line = [ln for ln in out.splitlines() if ln.startswith("| friend-a")][0]
+    header_line = next(ln for ln in out.splitlines() if ln.startswith("| friend"))
+    data_line = next(ln for ln in out.splitlines() if ln.startswith("| friend-a"))
     assert _unescaped_pipe_count(data_line) == _unescaped_pipe_count(header_line)
 
 
@@ -118,7 +159,7 @@ def test_backtick_in_location_still_renders_as_one_code_span():
     c = Claim(**{**c.__dict__, "location": "src/a.py:`eval(x)`"})
     out = render([c], [], meta())
     assert "**Location:**" in out
-    line = [ln for ln in out.splitlines() if ln.startswith("**Location:**")][0]
+    line = next(ln for ln in out.splitlines() if ln.startswith("**Location:**"))
     assert line == "**Location:** `` src/a.py:`eval(x)` ``"
 
 
@@ -128,7 +169,7 @@ def test_backtick_run_in_location_gets_a_longer_fence():
     c = claim("c-0001@1")
     c = Claim(**{**c.__dict__, "location": "weird``thing"})
     out = render([c], [], meta())
-    line = [ln for ln in out.splitlines() if ln.startswith("**Location:**")][0]
+    line = next(ln for ln in out.splitlines() if ln.startswith("**Location:**"))
     assert line == "**Location:** ```weird``thing```"
 
 
@@ -142,10 +183,18 @@ def test_very_long_single_line_claim_text_is_preserved_verbatim():
 
 
 def test_friend_model_none_reports_inherited():
-    m = meta(friends=[
-        {"name": "friend-a", "model": None, "effort": None,
-         "readonly": True, "scope": "repo", "status": "ok"},
-    ])
+    m = meta(
+        friends=[
+            {
+                "name": "friend-a",
+                "model": None,
+                "effort": None,
+                "readonly": True,
+                "scope": "repo",
+                "status": "ok",
+            },
+        ]
+    )
     out = render([claim("c-0001@1")], [], m)
     assert "inherited" in out
 
@@ -161,8 +210,7 @@ def test_render_does_not_mutate_inputs():
     aliases: list = []
     m = meta()
     claims_snapshot = list(claims)
-    m_snapshot = {**m, "friends": list(m["friends"]),
-                  "downgrades": list(m["downgrades"])}
+    m_snapshot = {**m, "friends": list(m["friends"]), "downgrades": list(m["downgrades"])}
     render(claims, aliases, m)
     assert claims == claims_snapshot
     assert m == m_snapshot
@@ -170,13 +218,12 @@ def test_render_does_not_mutate_inputs():
 
 # --- round 2: hostile claim body text (reviewer findings) -----------------
 
+
 def test_hostile_claim_text_injected_heading_is_not_a_real_heading():
     """A claim whose own text contains a line like
     '### c-9999@1 -- critical' must not become a second, fabricated finding
     indistinguishable from a real one."""
-    payload = ("the guard is missing\n\n"
-               "### c-9999@1 — critical\n\n"
-               "**Claim:** fabricated finding")
+    payload = "the guard is missing\n\n### c-9999@1 — critical\n\n**Claim:** fabricated finding"
     hostile = Claim(**{**claim("c-0001@1").__dict__, "claim": payload})
     normal = claim("c-0002@1")
     out = render([hostile, normal], [], meta())
@@ -185,9 +232,7 @@ def test_hostile_claim_text_injected_heading_is_not_a_real_heading():
     # Only the two real findings get a genuine, unescaped '### ' heading --
     # the fabricated one embedded in claim text must not become a third.
     assert len(heading_lines) == 2
-    assert {ln.split(" — ")[0] for ln in heading_lines} == {
-        "### c-0001@1", "### c-0002@1"
-    }
+    assert {ln.split(" — ")[0] for ln in heading_lines} == {"### c-0001@1", "### c-0002@1"}
     # The injected heading marker survives as literal, escaped text.
     assert "\\### c-9999@1 — critical" in out
     # The real, subsequent claim still renders.
@@ -198,8 +243,9 @@ def test_hostile_evidence_fence_does_not_swallow_later_claims():
     """An `evidence` value containing an unterminated ``` fence must not
     swallow every following line -- including subsequent claims -- into one
     inert code block."""
-    hostile = Claim(**{**claim("c-0001@1").__dict__,
-                        "evidence": "```\nfake fence opens here, never closes"})
+    hostile = Claim(
+        **{**claim("c-0001@1").__dict__, "evidence": "```\nfake fence opens here, never closes"}
+    )
     normal = claim("c-0002@1")
     out = render([hostile, normal], [], meta())
 
@@ -332,7 +378,7 @@ def test_escape_block_escapes_setext_underline():
 
 
 def test_escape_block_leaves_non_setext_equals_uses_alone():
-    """"=" only means Setext when the ENTIRE rest of the line is blank --
+    """ "=" only means Setext when the ENTIRE rest of the line is blank --
     "=foo" (content after the run) has no other meaning to preserve and
     must render unchanged, same as the existing "-5 is negative" case."""
     assert _escape_block("=foo") == "=foo"
@@ -347,7 +393,7 @@ def test_hostile_html_comment_evidence_does_not_swallow_the_next_claim():
     out = render([hostile, victim], [], meta())
     assert "\\<!-- never closes" in out
     assert "### c-0002@1" in out
-    victim_block = out[out.index("### c-0002@1"):]
+    victim_block = out[out.index("### c-0002@1") :]
     assert "**Claim:**" in victim_block and "**Evidence:**" in victim_block
 
 
@@ -401,15 +447,19 @@ def test_hostile_claim_cannot_remove_another_claims_id_from_the_rendered_source(
     a hostile claim's own fields contain, every OTHER claim's id must still
     be present in the rendered output, attached to a real heading -- not
     merely present as leftover text swallowed inside a comment/HTML span."""
-    for hostile_marker in ("<!-- never closes", "<div>never closes", "===",
-                          "### c-9999@1 — fabricated", "```\nunterminated fence"):
+    for hostile_marker in (
+        "<!-- never closes",
+        "<div>never closes",
+        "===",
+        "### c-9999@1 — fabricated",
+        "```\nunterminated fence",
+    ):
         hostile = _two_line_evidence_claim("c-0001@1", hostile_marker)
         victim = claim("c-0002@1")
         out = render([hostile, victim], [], meta())
         heading_lines = [ln for ln in out.splitlines() if ln.startswith("### ")]
         assert any(ln.startswith("### c-0002@1") for ln in heading_lines), (
-            f"victim's real heading was lost for hostile marker {hostile_marker!r}: "
-            f"{heading_lines}"
+            f"victim's real heading was lost for hostile marker {hostile_marker!r}: {heading_lines}"
         )
 
 
@@ -422,8 +472,9 @@ def test_report_renders_origin_for_a_finding():
 
 
 def test_report_marks_corroboration_when_multiple_friends_raised_the_same_claim():
-    corroborated = Claim(**{**claim("c-0001@1").__dict__,
-                            "origin": ["codex/ops", "agy/security", "opencode/scope"]})
+    corroborated = Claim(
+        **{**claim("c-0001@1").__dict__, "origin": ["codex/ops", "agy/security", "opencode/scope"]}
+    )
     out = render([corroborated], [], meta())
     assert "**Raised by:** codex/ops, agy/security, opencode/scope" in out
     assert "corroborated by 3 friends" in out

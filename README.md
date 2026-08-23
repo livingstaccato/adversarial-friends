@@ -2,73 +2,296 @@
 
 # Adversarial Friends
 
-A skill that challenges your specs, plans, and reviews by handing them to
-**other** agent CLIs — codex, claude, agy, opencode — as independent
-adversarial reviewers, then merging their critiques into one ranked findings
-report.
+> Hand your spec, plan, or review to **other** agent CLIs — `claude`, `codex`,
+> `agy`, `opencode` — as independent adversarial reviewers, then merge their
+> critiques into one ranked findings report.
+
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-360-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
 back. Doing that manually means holding a claim ledger in your head. This
 keeps the ledger on disk.
 
-## Why more than one model
+---
+
+## 📋 Contents
+
+- [Why more than one model](#-why-more-than-one-model)
+- [Install](#-install)
+- [Quickstart](#-quickstart)
+- [How it works](#-how-it-works)
+- [Lenses](#-lenses)
+- [What you get back](#-what-you-get-back)
+- [What's implemented](#-whats-implemented)
+- [Documentation](#-documentation)
+- [Development](#-development)
+
+---
+
+## 🎯 Why more than one model
 
 A single reviewer produces confident prose. Several reviewers produce claims
-that can be compared — and the disagreements are where the real problems are.
-This tool's own design spec was built this way: `codex` returned 17 findings,
-`claude` returned 15 plus one marked `unproven` ("lens leaks attribution"),
-and a third reviewer, `agy`, independently reproduced two of `claude`'s
-findings on its own and caught a shared-worktree race that neither of the
-other two had flagged. The `unproven` claim was later confirmed and fixed.
-No single reviewer's pass would have surfaced all of it — see the revision
-history in [the design spec](docs/superpowers/specs/2026-08-22-adversarial-friends-design.md#19-revision-history)
+that **can be compared** — and the disagreements are where the real problems
+are.
+
+This tool's own design spec was built exactly this way:
+
+| Reviewer | Result |
+|---|---|
+| `codex` | 17 findings |
+| `claude` | 15 findings, plus one marked `unproven` — *"lens leaks attribution"* |
+| `agy` | independently reproduced two of `claude`'s findings, **and** caught a shared-worktree race neither of the other two flagged |
+
+That `unproven` claim was later confirmed and fixed. No single reviewer's pass
+would have surfaced all of it — see the [revision history in the design
+spec](docs/superpowers/specs/2026-08-22-adversarial-friends-design.md#19-revision-history)
 for the full account.
 
-## Install
+---
 
-Requires Python 3.11+ and at least one agent CLI besides the one you are
-running under. No dependencies to install — the runner is stdlib-only.
+## 📦 Install
+
+Requires **Python 3.11+** and at least one agent CLI besides the one you're
+running under. The runner itself is **stdlib-only** — zero runtime
+dependencies.
 
 ```bash
+uv tool install git+ssh://git@github.com/livingstaccato/adversarial-friends
+```
+
+<details>
+<summary>Other install methods</summary>
+
+```bash
+# From a local checkout
 git clone https://github.com/livingstaccato/adversarial-friends
 cd adversarial-friends
-bin/af doctor
+uv tool install .
+
+# Without installing at all
+python -m adversarial_friends doctor
 ```
 
-`doctor` tells you which friends are available and what each can actually
-enforce — schema validation, a real read-only mode, a verifiable effort level.
+</details>
 
-## Use
+Then confirm what's actually available:
 
 ```bash
-bin/af run docs/my-design.md --mode report
+afriend doctor
 ```
 
-Read `report.md` in the run directory it prints.
+```
+agy        found    schema=True  readonly=True  effort=native      /Users/you/.local/bin/agy
+claude     found    schema=True  readonly=True  effort=native      /Users/you/.local/bin/claude
+codex      found    schema=True  readonly=True  effort=native      /opt/homebrew/bin/codex
+opencode   found    schema=False readonly=False effort=unverified  /Users/you/.opencode/bin/opencode
+ollama     unimplemented http endpoint=http://127.0.0.1:11434/api/generate
+```
 
-## What's implemented
+`doctor` reports what each friend can genuinely **enforce** — schema
+validation, a real read-only mode, a verifiable effort level — rather than
+what it claims to support. `opencode` showing `readonly=False` is not a bug;
+it has no read-only mode, so the tool says so instead of pretending.
 
-`report` is the only mode this build runs — every friend critiques the
-artifact once, in parallel, and the claims are merged into one report.
-Cross-examination (friends judging each other's claims across rounds),
-gates, and revision loops are the design this tool is built toward, not
-something you can invoke today. `af run --mode crossexam` (or `gate`, or
-`loop`) exits `2` with a message saying so rather than pretending to run
-them. See [docs/](docs/README.md) for what each mode is meant to become.
+---
 
-Four friends ship: `claude`, `codex`, `agy`, and `opencode`. An `ollama`
-adapter is declared but not implemented in this build — it uses an HTTP
-transport (no CLI to exec), which this runner does not support yet; `--friend
-ollama:*` exits `2` rather than pretending to work. There is no `gemini`
-adapter — the `gemini` CLI returns an ineligible-tier error on the
-individual free tier, and Google's own supported path from there is
-Antigravity, which is `agy`.
+## 🚀 Quickstart
 
-## Documentation
+```bash
+afriend run docs/my-design.md --mode report
+```
 
-See [docs/](docs/README.md).
+It prints one thing — the run directory. Read `report.md` inside it:
 
-## License
+```bash
+cat "$(afriend run docs/my-design.md --mode report)/report.md"
+```
+
+Pick your reviewers and lenses explicitly:
+
+```bash
+afriend run spec.md --friend codex:security --friend claude:ops
+```
+
+> ⚠️ `--friend` **replaces** discovery rather than adding to it. One
+> `--friend` flag means a one-friend run — which cannot cross-examine
+> anything. The tool records that as a downgrade in `run.json` and
+> `report.md` rather than letting it look like a full review.
+
+---
+
+## ⚙️ How it works
+
+![module architecture](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/components.png)
+
+Every friend gets its **own** prompt built from its **own** lens, runs in its
+**own** isolated directory, in its **own** process group:
+
+| Stage | What happens |
+|---|---|
+| 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
+| ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
+| 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot; everyone else gets a bare directory holding only the artifact |
+| ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
+| 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
+| 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |
+| 📄 **Report** | Rank findings, render `report.md`, write the append-only ledger |
+
+The snapshot includes **untracked** files (`git stash create` omits them), and
+the working tree is never touched — a friend reviewing your repo can't see a
+half-staged index or scribble on your checkout.
+
+<details>
+<summary>Full run flow, step by step</summary>
+
+![run flow](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/run-flow.png)
+
+</details>
+
+### Corroboration is the point
+
+Two friends independently reaching the same conclusion is the strongest signal
+this tool produces, so deduplication is built to never destroy it:
+
+![claim lifecycle](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/claim-lifecycle.png)
+
+Dedup is **deliberately** exact-match — whitespace and case only. Two friends
+describing one defect in different words produce two claims, which costs a
+round. Guessing at equivalence would corrupt the ledger, which is worse.
+
+---
+
+## 🔬 Lenses
+
+A lens is prose, not a config string. Its text is injected into that friend's
+prompt, so it shapes what the friend actually looks for.
+
+| Lens | Default scope | Requires a failure scenario |
+|---|---|---|
+| `assumptions` | doc | ✅ |
+| `security` | repo | ✅ |
+| `ops` | repo | ✅ |
+| `testability` | repo | ✅ |
+| `spec-vs-reality` | repo | ✅ |
+| `scope` | doc | ❌ — advisory only |
+
+`scope` is the one lens that doesn't demand a concrete failure scenario;
+"this is more than you need" is a legitimate finding without one. Claims from
+it are marked *(advisory)* in the report so they never carry the same weight
+as a reproducible defect.
+
+---
+
+## 📂 What you get back
+
+```
+<run-dir>/
+├── report.md          ← ranked findings, corroboration, downgrades
+├── run.json           ← machine-readable: friends, statuses, downgrades
+├── claims.jsonl       ← append-only ledger: claims, aliases
+├── artifact/          ← frozen copy of what was reviewed, hashed
+└── round-1/
+    ├── <friend>.prompt ← exactly what this friend was asked
+    ├── <friend>.raw    ← its unmodified stdout
+    ├── <friend>.err    ← its stderr (always present, even when empty)
+    └── <friend>.meta   ← argv, exit code, duration, timeout, orphan status
+```
+
+Runs land under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
+or wherever `--out` points.
+
+Everything a friend was asked and everything it said is on disk. When a run
+comes back thin, that's what you read — not a guess.
+
+---
+
+## ✅ What's implemented
+
+**`report` is the only mode this build runs.** Every friend critiques the
+artifact once, in parallel, and the claims merge into one report.
+
+Cross-examination (friends judging each other's claims across rounds), gates,
+and revision loops are the design this is built *toward*, not something you
+can invoke today. `afriend run --mode crossexam` (or `gate`, or `loop`) exits
+`2` with a message saying so rather than pretending to run.
+
+| Friend | Status |
+|---|---|
+| `claude` | ✅ ships |
+| `codex` | ✅ ships |
+| `agy` | ✅ ships |
+| `opencode` | ✅ ships — no read-only mode, reported honestly |
+| `ollama` | ⚠️ declared, **not implemented** — HTTP transport, no CLI to exec; `--friend ollama:*` exits `2` |
+
+There is no `gemini` adapter: the `gemini` CLI returns an ineligible-tier
+error on the individual free tier, and Google's own supported path from there
+is Antigravity — which is `agy`.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | at least one friend produced a usable critique |
+| `1` | ran, but every dispatched friend failed |
+| `2` | usage error — bad flag, unknown CLI, unimplemented mode |
+| `3` | no usable friends found at all |
+| `128+N` | aborted by signal N — isolation torn down, friends killed |
+
+---
+
+## 📚 Documentation
+
+| Where | What |
+|---|---|
+| [docs/](docs/README.md) | Documentation index |
+| [SKILL.md](src/adversarial_friends/assets/SKILL.md) | The skill itself — when it fires, how to read its output |
+| [modes.md](src/adversarial_friends/assets/references/modes.md) | `report`, `crossexam`, `gate`, `loop` — and which are real |
+| [ledger.md](src/adversarial_friends/assets/references/ledger.md) | Claim, verdict, alias, and resolution records |
+| [troubleshooting.md](src/adversarial_friends/assets/references/troubleshooting.md) | Verified CLI traps, empty reports, timeouts |
+| [architecture/](docs/architecture/README.md) | Diagrams and their sources |
+| [design spec](docs/superpowers/specs/2026-08-22-adversarial-friends-design.md) | The full design, including the adversarial review that produced it |
+
+### Using it as a skill or plugin
+
+The skill payload ships **inside the wheel** as package data, and is mirrored
+under [`plugins/`](plugins/) for loaders that can't install a Python package:
+
+```bash
+# Claude Code
+/plugin marketplace add /path/to/adversarial-friends/plugins
+```
+
+The skill invokes `afriend`, so the package must be installed for it to work —
+`afriend doctor` is the check.
+
+---
+
+## 🛠 Development
+
+```bash
+make install    # uv sync
+make test       # pytest — 360 tests
+make quality    # lint + type-check + every sync gate + tests
+make diagrams   # re-render docs/architecture/*.puml
+```
+
+`make quality` runs exactly what CI runs. Two gates catch drift that is
+otherwise silent:
+
+- **`plugin-sync`** — `src/adversarial_friends/assets/` is canonical; the
+  `plugins/` tree is a byte-identical mirror. Edit assets, then
+  `make plugin-sync-copy`.
+- **`version-sync`** — `VERSION` must match the `version` field in every
+  plugin manifest.
+
+See [AGENTS.md](AGENTS.md) for repository layout and conventions.
+
+---
+
+## 📄 License
 
 MIT — see [LICENSE](LICENSE).

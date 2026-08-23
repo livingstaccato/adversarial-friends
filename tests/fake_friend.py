@@ -1,32 +1,57 @@
 """A scripted stand-in for a real agent CLI. Never makes a model call."""
+
 import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 MODES = {
-    "good": lambda: print(json.dumps({"findings": [{
-        "severity": "high", "claim": "the guard is missing",
-        "location": "src/auth.py:42", "evidence": "src/auth.py:38",
-        "failure_scenario": "expired token reaches the handler",
-        "suggested_fix": "check exp before dispatch"}]})),
+    "good": lambda: print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "high",
+                        "claim": "the guard is missing",
+                        "location": "src/auth.py:42",
+                        "evidence": "src/auth.py:38",
+                        "failure_scenario": "expired token reaches the handler",
+                        "suggested_fix": "check exp before dispatch",
+                    }
+                ]
+            }
+        )
+    ),
     "empty": lambda: print(json.dumps({"findings": []})),
     "no_findings": lambda: print(json.dumps({"no_findings": True})),
     "offtopic": lambda: print("It looks like you just typed `--mode`."),
     "prose_wrapped": lambda: print(
-        "Sure! " + json.dumps({"no_findings": True}) + " Hope that helps!"),
+        "Sure! " + json.dumps({"no_findings": True}) + " Hope that helps!"
+    ),
     # Not a scripted verdict -- reports this process's own cwd as the
     # "evidence" field, so a caller can directly confirm what directory it
     # was actually run in (e.g. a private isolation worktree/doc dir, not
     # the af process's own working directory). Added for Task 12's
     # end-to-end isolation-wiring tests.
-    "cwd_probe": lambda: print(json.dumps({"findings": [{
-        "severity": "low", "claim": "cwd probe",
-        "location": None, "evidence": str(Path.cwd()),
-        "failure_scenario": "n/a", "suggested_fix": "n/a"}]})),
+    "cwd_probe": lambda: print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "low",
+                        "claim": "cwd probe",
+                        "location": None,
+                        "evidence": str(Path.cwd()),
+                        "failure_scenario": "n/a",
+                        "suggested_fix": "n/a",
+                    }
+                ]
+            }
+        )
+    ),
 }
 
 
@@ -75,8 +100,11 @@ def main() -> int:
         # message could plausibly contain (a bracketed value, an angle-
         # bracketed placeholder, asterisks) to prove they render as inert
         # text, not real emphasis/links/raw HTML.
-        print("auth failed: **please** [login](http://evil.example) "
-              "`token` <script>alert(1)</script>", file=sys.stderr)
+        print(
+            "auth failed: **please** [login](http://evil.example) "
+            "`token` <script>alert(1)</script>",
+            file=sys.stderr,
+        )
         return 1
 
     if mode == "_descendant":
@@ -102,14 +130,17 @@ def main() -> int:
         # group can never reach it -- a genuine, irreducible escape without
         # OS-level containment (cgroups / job objects / pid namespaces).
         pidfile = sys.argv[2]
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, sys, time\n"
-            "os.setsid()\n"
-            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
-            "time.sleep(600)\n",
-            pidfile,
-        ])
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time\n"
+                "os.setsid()\n"
+                "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                "time.sleep(600)\n",
+                pidfile,
+            ]
+        )
         time.sleep(600)
         return 0
 
@@ -133,17 +164,29 @@ def main() -> int:
         # signal (see its module docstring): the output-pump threads are
         # still alive, well past the drain window, even though this
         # process itself already exited cleanly and fast.
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, time\n"
-            "os.setsid()\n"
-            "# af-leaky-escape-marker\n"
-            "time.sleep(600)\n",
-        ])
-        print(json.dumps({"findings": [{
-            "severity": "low", "claim": "leaky escape probe",
-            "location": None, "evidence": "spawned a setsid escapee, then exited",
-            "failure_scenario": "n/a", "suggested_fix": "n/a"}]}))
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, time\nos.setsid()\n# af-leaky-escape-marker\ntime.sleep(600)\n",
+            ]
+        )
+        print(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "severity": "low",
+                            "claim": "leaky escape probe",
+                            "location": None,
+                            "evidence": "spawned a setsid escapee, then exited",
+                            "failure_scenario": "n/a",
+                            "suggested_fix": "n/a",
+                        }
+                    ]
+                }
+            )
+        )
         return 0
 
     if mode == "ignore_sigterm":
@@ -171,13 +214,16 @@ def main() -> int:
         # stays alive in the same process group after the round is already
         # marked complete.
         pidfile = sys.argv[2]
-        subprocess.Popen([
-            sys.executable, "-c",
-            "import os, sys, time\n"
-            "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
-            "time.sleep(600)\n",
-            pidfile,
-        ])
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time\n"
+                "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+                "time.sleep(600)\n",
+                pidfile,
+            ]
+        )
         print(json.dumps({"no_findings": True}))
         return 0
 

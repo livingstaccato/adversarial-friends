@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      # Checkout source
+      - uses: actions/checkout@v6
+
+      # Install uv and the matrix Python (uv manages its own interpreters,
+      # so we don't need actions/setup-python).
+      - uses: astral-sh/setup-uv@v8
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Install dependencies (this package has none at runtime; --all-extras
+      # pulls the dev dependency group: pytest, mypy, ruff)
+      - run: uv sync --all-extras
+
+      # Lint and format check
+      - name: ruff format
+        run: uv run ruff format --check .
+
+      - name: ruff lint
+        run: uv run ruff check .
+
+      # Type check
+      - name: mypy
+        run: uv run mypy src
+
+      # Enforce 500-line per-file cap
+      - name: max-loc
+        run: make max-loc
+
+      # Verify plugins/ matches the packaged assets/ mirror
+      - name: plugin-sync
+        run: make plugin-sync
+
+      # Verify VERSION matches every plugin manifest's version field
+      - name: version-sync
+        run: make version-sync
+
+      # Build the wheel and confirm every adapter, lens, and reference file
+      # actually ships in it -- package-data misconfiguration is otherwise
+      # silent until first run.
+      - name: build wheel and verify assets
+        run: ci/verify_wheel_assets.sh
+
+      # Tests
+      - name: pytest
+        run: uv run pytest

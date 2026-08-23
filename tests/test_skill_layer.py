@@ -1,6 +1,8 @@
 from pathlib import Path
+import subprocess
+import sys
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "adversarial-friends"
+SKILL = Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets"
 
 
 def frontmatter(text: str) -> dict:
@@ -35,28 +37,31 @@ def test_every_lens_file_has_frontmatter():
 
 def test_referenced_files_exist():
     body = (SKILL / "SKILL.md").read_text()
-    for name in ("references/modes.md", "references/ledger.md",
-                 "references/troubleshooting.md"):
+    for name in ("references/modes.md", "references/ledger.md", "references/troubleshooting.md"):
         assert name in body
         assert (SKILL / name).exists()
 
 
-def test_bin_symlink_resolves_to_the_runner():
-    link = Path(__file__).resolve().parents[1] / "bin" / "af"
-    assert link.resolve() == (SKILL / "scripts" / "af").resolve()
+def test_afriend_console_script_is_installed_and_runs():
+    """Package-data misconfiguration (a missing adapter/lens in the wheel) is
+    silent at import time -- it only surfaces when the installed entry point
+    actually runs. This is the packaging-level equivalent of the old
+    bin/af-symlink check: it proves the *installed* `afriend` command works,
+    not merely that some file exists on disk."""
+    af = Path(sys.executable).parent / "afriend"
+    result = subprocess.run([str(af), "--help"], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "afriend" in result.stdout
 
 
 def test_lens_filenames_match_roster_expectations():
     """Lens filenames are the lens names roster.resolve assigns via
     cli.available_lenses(), which reads lenses/*.md stems directly."""
-    import sys
-    sys.path.insert(0, str(SKILL / "scripts"))
     from adversarial_friends import cli as af_cli
 
     names = {p.stem for p in (SKILL / "lenses").glob("*.md")}
     assert names == set(af_cli.available_lenses())
-    assert names >= {"assumptions", "security", "ops", "scope",
-                      "testability", "spec-vs-reality"}
+    assert names >= {"assumptions", "security", "ops", "scope", "testability", "spec-vs-reality"}
 
 
 def test_scope_lens_is_the_only_advisory_lens():

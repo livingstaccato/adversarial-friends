@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "adversarial-friends",
+  "version": "0.1.0",
+  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers",
+  "owner": {
+    "name": "livingstaccato"
+  },
+  "plugins": [
+    {
+      "name": "adversarial-friends",
+      "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers",
+      "version": "0.1.0",
+      "source": "./adversarial-friends",
+      "category": "development"
+    }
+  ]
+}

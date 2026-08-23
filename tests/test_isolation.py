@@ -1,6 +1,4 @@
-import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -12,7 +10,10 @@ from adversarial_friends.errors import AfError
 def repo(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
-    run = lambda *a: subprocess.run(a, cwd=root, check=True, capture_output=True)
+
+    def run(*a):
+        return subprocess.run(a, cwd=root, check=True, capture_output=True)
+
     run("git", "init", "-q")
     run("git", "config", "user.email", "t@example.com")
     run("git", "config", "user.name", "T")
@@ -41,8 +42,9 @@ def test_snapshot_leaves_working_tree_untouched(repo, tmp_path):
     (repo / "tracked.py").write_text("modified\n")
     isolation.snapshot_commit(repo)
     assert (repo / "tracked.py").read_text() == "modified\n"
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo,
-                            capture_output=True, text=True).stdout
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
     assert "tracked.py" in status  # still dirty; nothing was stashed away
 
 
@@ -133,7 +135,10 @@ def test_snapshot_works_on_a_repo_with_no_commits(tmp_path):
     pointing at a ref that does not exist yet)."""
     root = tmp_path / "unborn"
     root.mkdir()
-    run = lambda *a: subprocess.run(a, cwd=root, check=True, capture_output=True)
+
+    def run(*a):
+        return subprocess.run(a, cwd=root, check=True, capture_output=True)
+
     run("git", "init", "-q")
     run("git", "config", "user.email", "t@example.com")
     run("git", "config", "user.name", "T")
@@ -143,15 +148,19 @@ def test_snapshot_works_on_a_repo_with_no_commits(tmp_path):
     dest = isolation.add_worktree(root, sha, tmp_path / "wt-unborn")
     assert (dest / "never_committed.py").read_text() == "brand new project\n"
     # The operator's repo is still commit-less; nothing was staged into the real index.
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=root,
-                            capture_output=True, text=True).stdout
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True
+    ).stdout
     assert "never_committed.py" in status
 
 
 def test_snapshot_works_on_a_detached_head_repo(tmp_path):
     root = tmp_path / "detached"
     root.mkdir()
-    run = lambda *a: subprocess.run(a, cwd=root, check=True, capture_output=True)
+
+    def run(*a):
+        return subprocess.run(a, cwd=root, check=True, capture_output=True)
+
     run("git", "init", "-q")
     run("git", "config", "user.email", "t@example.com")
     run("git", "config", "user.name", "T")
@@ -184,8 +193,12 @@ def test_snapshot_commit_accepts_a_worktree_root(repo, tmp_path):
     """A linked worktree's `.git` is a FILE (`gitdir: <path>`), not a directory --
     this is the case this very project runs in, and it must work."""
     wt_root = tmp_path / "linked-worktree"
-    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(wt_root), "HEAD"],
-                   cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "--detach", str(wt_root), "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
     assert (wt_root / ".git").is_file()  # confirms this is exercising the FILE case
 
     sha = isolation.snapshot_commit(wt_root)
@@ -198,7 +211,10 @@ def test_snapshot_commit_accepts_a_submodule_root(repo, tmp_path):
     own `--show-toplevel` is its own directory, not the superproject's."""
     sub = tmp_path / "sub"
     sub.mkdir()
-    run_sub = lambda *a: subprocess.run(a, cwd=sub, check=True, capture_output=True)
+
+    def run_sub(*a):
+        return subprocess.run(a, cwd=sub, check=True, capture_output=True)
+
     run_sub("git", "init", "-q")
     run_sub("git", "config", "user.email", "t@example.com")
     run_sub("git", "config", "user.name", "T")
@@ -206,10 +222,15 @@ def test_snapshot_commit_accepts_a_submodule_root(repo, tmp_path):
     run_sub("git", "add", "-A")
     run_sub("git", "commit", "-q", "-m", "sub c1")
 
-    subprocess.run(["git", "-c", "protocol.file.allow=always", "submodule", "add",
-                    "-q", str(sub), "subdir"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-q", "-m", "add submodule"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub), "subdir"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add submodule"], cwd=repo, check=True, capture_output=True
+    )
     sub_root = repo / "subdir"
     assert (sub_root / ".git").is_file()  # confirms this is exercising the FILE case
 
@@ -285,24 +306,26 @@ def test_symlink_inside_the_repo_pointing_outside_survives_the_snapshot_verbatim
     itself. See the task report for the full write-up."""
     outside = tmp_path / "outside_secret.txt"
     outside.write_text("outside the repo\n")
-    os.symlink(str(outside), str(repo / "escape_link"))
+    (repo / "escape_link").symlink_to(outside)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-q", "-m", "add symlink"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add symlink"], cwd=repo, check=True, capture_output=True
+    )
 
     sha = isolation.snapshot_commit(repo)
     dest = isolation.add_worktree(repo, sha, tmp_path / "wt")
     link = dest / "escape_link"
     assert link.is_symlink()
-    assert os.readlink(str(link)) == str(outside)
+    assert link.readlink() == outside
 
 
 def test_unicode_and_newline_filenames_survive_the_snapshot(repo, tmp_path):
     unicode_name = "café-日本語-\U0001f600.txt"
-    (repo / unicode_name).write_bytes("unicode, committed\n".encode())
+    (repo / unicode_name).write_bytes(b"unicode, committed\n")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-q", "-m", "unicode filename"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "unicode filename"], cwd=repo, check=True, capture_output=True
+    )
     newline_name = "weird\nname.txt"
     (repo / newline_name).write_bytes(b"newline in filename, never committed\n")
 

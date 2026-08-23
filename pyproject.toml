@@ -1,0 +1,155 @@
+[build-system]
+requires = ["setuptools>=77", "wheel>=0.43"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adversarial-friends"
+dynamic = ["version"]
+description = "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Tim" },
+]
+keywords = [
+    "claude",
+    "codex",
+    "agent",
+    "code-review",
+    "cli",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# Deliberately no runtime dependencies: this tool's entire job is shelling out
+# to other agent CLIs (claude, codex, agy, opencode) that are already
+# installed on the host. Staying stdlib-only keeps it trivially installable
+# alongside any of them without dependency resolution risk.
+dependencies = []
+
+[project.scripts]
+afriend = "adversarial_friends.cli:main"
+
+[project.urls]
+Repository = "https://github.com/livingstaccato/adversarial-friends"
+Issues = "https://github.com/livingstaccato/adversarial-friends/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["adversarial_friends*"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[tool.setuptools.package-data]
+adversarial_friends = [
+    "assets/SKILL.md",
+    "assets/adapters/*.toml",
+    "assets/lenses/*.md",
+    "assets/references/*.md",
+]
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+target-version = "py311"
+# docs/ holds prose specs and plans, some with embedded Python code fences
+# used as illustrative snippets, not real source. Newer ruff formats
+# fenced code inside Markdown by default; excluding docs/ keeps `ruff
+# format` from rewriting a historical design/plan doc's embedded examples
+# as a side effect of formatting the actual codebase.
+extend-exclude = ["docs/"]
+
+[tool.ruff.lint]
+# C90 (mccabe complexity) deliberately omitted: several functions here are
+# complex by design and heavily commented explaining why (cmd_run's
+# signal-handling/isolation/dispatch orchestration, run_process's
+# spawn/timeout/reap state machine) -- see the "Scope" decision in
+# docs/superpowers/plans/ for the packaging pass that chose not to adopt a
+# complexity gate here. Revisit if/when those functions are deliberately
+# restructured, not as a side effect of a lint config.
+select = ["E", "F", "W", "I", "UP", "ANN", "B", "SIM", "PTH", "RUF"]
+ignore = ["ANN401", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["adversarial_friends", "tests"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ── MyPy ─────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+strict = true
+pretty = true
+show_error_codes = true
+show_column_numbers = true
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_no_return = true
+namespace_packages = true
+explicit_package_bases = true
+
+# mypy strict runs against src/ only (see Makefile's type-check target and
+# CI), not tests/. pytest's own idiom -- untyped test functions, fixtures
+# passed by name, dict-built kwargs unpacked into dataclass constructors --
+# fights disallow_untyped_defs and strict's call-checking on every helper,
+# producing hundreds of findings that reflect strict mode meeting an
+# existing, working test suite rather than real defects. Type safety in the
+# tests matters far less than in src/, which is what actually ships; this
+# keeps the gate meaningful instead of noisy. Revisit if tests/ is ever
+# written with strict typing as a goal from the start.
+
+# ── Pytest ───────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-q",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--color=yes",
+]
+norecursedirs = [".git", "build", "dist", "*.egg-info", ".venv"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.0",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.9",
+]

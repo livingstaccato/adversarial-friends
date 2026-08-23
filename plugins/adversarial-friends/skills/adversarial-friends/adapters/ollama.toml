@@ -1,0 +1,14 @@
+# HTTP transport: `ollama run` writes ANSI control codes into its own payload.
+name = "ollama"
+transport = "http"
+endpoint = "http://127.0.0.1:11434/api/generate"
+binary = ""
+base_argv = []
+prompt_mode = "stdin"
+readonly_argv = []
+schema_flag = ""
+model_flag = ""
+internal_timeout_flag = ""
+effort_kind = "none"
+
+[effort]

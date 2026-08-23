@@ -1,7 +1,7 @@
+import pytest
+
 from adversarial_friends.errors import UsageError
 from adversarial_friends.runstore import RunStore
-
-import pytest
 
 
 def test_layout_is_created(tmp_path):

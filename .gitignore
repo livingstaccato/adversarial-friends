@@ -1,5 +1,19 @@
+# Environments and build output
 .venv/
-.superpowers/
+build/
+dist/
+*.egg-info/
+
+# Python bytecode
 __pycache__/
 *.pyc
+
+# Tool caches (mypy and ruff also self-ignore, but be explicit)
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local agent/session scratch
+.superpowers/
+.claude/settings.local.json
+.claude/worktrees/
