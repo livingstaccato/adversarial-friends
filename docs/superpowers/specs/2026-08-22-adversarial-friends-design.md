@@ -932,3 +932,52 @@ Also folded in from v2's §19.1 backlog and from operating the CLIs directly:
 | opencode `--variant` ladder unprobed | Probed: accepts any string silently; effort recorded as `unverified` (§10, §18.8) |
 | Local models unconsidered | §11.5 — ollama as a tool-free friend over HTTP, and as a backing provider for codex and opencode; `ollama launch` excluded as TTY-only |
 | CI forbade all live model calls | §16 — restriction narrowed to *metered* calls; local end-to-end tests added, paid endpoints must fail closed |
+
+## 20. Divergences from the shipped implementation
+
+Recorded rather than edited into the sections above: §1–§19 are v3 as approved
+for planning on 2026-08-22, and rewriting them would falsify what was actually
+signed off. Where the built runner departs from that design, the departure is
+listed here with which side is authoritative.
+
+| § | Spec says | Shipped code does | Authoritative |
+|---|---|---|---|
+| §11.1 | Capability is "computed from the **final effective argv**" | Capability is computed from the flags `build_argv` decides to emit, and the finished argv is never scanned | **Code** |
+| §18 risk 1 | "A stub adapter remains that errors with the migration URL" | No `gemini` adapter ships in any form | **Code** |
+
+### §11.1 — capability must not be derived by reading argv
+
+The spec's phrasing describes a real vulnerability, and the implementation
+deliberately does not follow it.
+
+The artifact under review is untrusted text, and for adapters whose
+`prompt_mode` is not `stdin` that text is placed **into argv** as a single
+element. Deriving capability by scanning the finished argv would therefore let
+a document forge its own capability simply by containing the right literal —
+an artifact containing `Read,Grep,Glob` or `--sandbox read-only` could make a
+run report `readonly=True` for a friend that received no such flag.
+
+`adapters.build_argv` instead returns a `Capability` computed from the flags it
+itself chose to emit, and `dispatch._dispatch` propagates exactly that value
+without re-deriving it. `test_prompt_text_cannot_forge_a_capability` pins the
+attack directly, and `test_dispatch_never_rederives_capability_from_requested_scope`
+pins the weaker re-derivation (`readonly = spec.scope == "repo"`), which is
+also wrong: `opencode` declares no `readonly_argv`, so it is `readonly=False`
+even when repo scope was requested.
+
+Read §11.1 as "capability reflects what the friend was actually given, computed
+at the point of construction — never recovered by parsing argv afterwards."
+
+### §18 risk 1 — no gemini stub ships
+
+The risk entry is otherwise accurate: the `gemini` CLI returns
+`IneligibleTierError` on the individual free tier and `agy` is the supported
+Google path. Only the final sentence is untrue — no stub adapter was built.
+
+A stub would have to justify its own existence, and it cannot: `roster.resolve`
+skips any adapter whose binary is absent, so a stub would never be selected on
+a machine without `gemini`, and on a machine *with* `gemini` it would produce a
+friend that always fails. The honest outcome is what the code does now — no
+adapter, and `--friend gemini:*` rejected as an unknown cli (exit 2) with the
+known adapters listed. Users looking for the Google path are pointed at `agy`
+by the README's "What's implemented" table.
