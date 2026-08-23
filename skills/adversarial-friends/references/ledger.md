@@ -12,9 +12,12 @@ an amendment would create a new version rather than editing in place, so a
 verdict is never ambiguous about which wording it judged — versioning exists
 in the id format today even though nothing yet amends a claim. `origin` is a
 list of `cli/lens` strings identifying which friend(s) produced it. `advisory`
-is always `false` in this build regardless of which lens produced the claim
-(see `SKILL.md`'s "Choosing lenses" section) — treat `scope`-lens claims as
-advisory yourself rather than relying on this field.
+is derived from the originating lens's `requires_failure_scenario` frontmatter
+field (`false` there means `true` here) — currently only `scope`-lens claims
+come back `advisory: true`; every other lens's claims are `false` (see
+`SKILL.md`'s "Choosing lenses" section for what that means in practice, and
+for the one thing this does *not* do: the schema still requires
+`failure_scenario` on every finding regardless of lens).
 
 Example, taken from a real run:
 

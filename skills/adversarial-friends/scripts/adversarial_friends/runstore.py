@@ -50,6 +50,13 @@ class RunStore:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def friend_prompt_path(self, round_no: int, friend_name: str) -> Path:
+        """Path for the exact prompt text a friend received, written next
+        to its .raw/.meta so a human can see what it was actually asked."""
+        validate_friend_name(friend_name)
+        base = self.round_dir(round_no)
+        return contain_path(self.run_dir, base / f"{friend_name}.prompt")
+
     def friend_paths(self, round_no: int, friend_name: str) -> tuple[Path, Path, Path]:
         validate_friend_name(friend_name)
         base = self.round_dir(round_no)

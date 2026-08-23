@@ -35,8 +35,9 @@ wrote, saved to disk. `report` is the only mode this build implements; see
 artifact to every discovered friend in parallel and writes a run directory
 (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`, or
 `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, and each
-friend's raw output under `round-1/`. `af run` prints only the run directory
-path to stdout; read `report.md` from there and present the findings.
+friend's own prompt and raw output under `round-1/<friend>.{prompt,raw,meta}`.
+`af run` prints only the run directory path to stdout; read `report.md` from
+there and present the findings.
 
 Exit codes from `af run --mode report`: `0` at least one friend produced a
 usable critique; `1` every dispatched friend failed (the run mechanism still
@@ -79,29 +80,31 @@ judgment the runner deliberately declines to make.
 
 ## Choosing lenses
 
-Each friend is labeled with one lens, a prose file in `lenses/` describing
-what to look for and what counts as evidence. The default assignment is
-round-robin over discovered friends; override it with `--friend cli:lens`
-(repeatable) when the artifact has an obvious weak flank — a deployment plan
-wants `ops`, an auth design wants `security`, a spec that keeps growing wants
-`scope`.
+Each friend runs under one lens, a prose file in `lenses/` describing what to
+look for and what counts as evidence. Its full text — frontmatter stripped —
+is prepended to that friend's prompt, so a `security`-assigned friend is
+actually asked to attack trust boundaries while an `ops`-assigned friend is
+asked what happens at 3am; they are not just labeled differently after the
+fact. Every friend's exact prompt is written to
+`round-1/<friend>.prompt` in the run directory, so you can always check what
+a given friend was actually asked. The default assignment is round-robin
+over discovered friends; override it with `--friend cli:lens` (repeatable)
+when the artifact has an obvious weak flank — a deployment plan wants `ops`,
+an auth design wants `security`, a spec that keeps growing wants `scope`. A
+lens name with no matching file falls back to the generic prompt alone and
+is recorded as a downgrade in `run.json`, rather than failing the run or
+silently pretending the friend had lens guidance.
 
-Today the lens label organizes the *output* — it tags every claim's origin
-and names the friend's own directory under `round-N/` — but this build's
-`report` pipeline does not yet inline the lens's prose into the prompt a
-friend receives: every friend is asked the same generic "challenge this
-artifact" question. Read the lens file yourself before interpreting a batch
-of claims labeled with it, and do not expect a `security`-labeled friend's
-output to differ in kind from an `ops`-labeled one on that basis alone.
-
-Lenses marked `requires_failure_scenario: false` (currently only `scope`) are
-meant to produce claims you should treat as *advisory* — real feedback that
-should never block a decision, because "this is more than you need" is
-judgment rather than a defect, and demanding a failure scenario for it would
-silence the lens entirely. The runner's claim schema does not yet vary by
-lens (every finding must include a `failure_scenario` field to pass
-validation), so apply this judgment yourself when you present `scope`
-findings, rather than expecting the report to have already flagged them.
+Lenses marked `requires_failure_scenario: false` (currently only `scope`)
+produce claims flagged `advisory` in `claims.jsonl` and rendered with an
+`*(advisory)*` tag in `report.md` — real feedback that should never block a
+decision, because "this is more than you need" is judgment rather than a
+defect, and demanding a failure scenario for it would silence the lens
+entirely. One thing this does *not* do yet: the claim schema still requires
+every finding to include a non-empty `failure_scenario` field regardless of
+lens, so a `scope`-lens friend must still supply something in that field
+even though the design intends it to be optional for advisory lenses — a
+known divergence, not something to paper over when you see it.
 
 ## Further reading
 

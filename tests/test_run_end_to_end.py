@@ -634,3 +634,108 @@ def test_doctor_reports_missing_clis_and_exits_3(tmp_path):
     assert result.returncode == 3, result.stderr
     assert "codex" in result.stdout
     assert "missing" in result.stdout
+
+
+# --- Lens wiring (Task 13 coordinator finding) ----------------------------
+#
+# Before this fix, cmd_run built exactly one prompt.txt (PROMPT_HEADER +
+# artifact) before the dispatch loop and handed the same Path to every
+# friend regardless of --friend cli:lens. LENS_DIR/available_lenses() only
+# ever harvested filename stems for round-robin assignment and bookkeeping
+# (friend naming, claim origin/lens fields) -- no code path ever read a
+# lens file's prose into a prompt. Every friend therefore received a
+# byte-identical, lens-blind prompt: the only diversity in a run was model
+# diversity, and the lens name on a claim was decorative. These tests prove
+# the fix by reading the actual <friend>.prompt files a real run writes to
+# disk, not by inspecting cli.py internals.
+
+
+def test_two_friends_with_different_lenses_get_demonstrably_different_prompts(tmp_path):
+    """The core fix. security and ops are both real, shipped lens files
+    with genuinely different prose. Each friend's prompt must carry its own
+    lens's body -- frontmatter stripped, not appended whole -- while both
+    still carry the shared contract header and the artifact."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nA design with a missing guard.\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:security", "--friend", "fake:ops")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    round_dir = runs[0] / "round-1"
+
+    security_prompt = (round_dir / "fake-security-0.prompt").read_text()
+    ops_prompt = (round_dir / "fake-ops-1.prompt").read_text()
+
+    assert security_prompt != ops_prompt
+
+    # Each prompt carries its own lens's distinctive prose, and not the
+    # other lens's...
+    assert "Attack the design as written" in security_prompt
+    assert "Attack the design as written" not in ops_prompt
+    assert "Ask what happens at 3am" in ops_prompt
+    assert "Ask what happens at 3am" not in security_prompt
+
+    # ...with the YAML frontmatter stripped, not carried into the prompt...
+    assert "requires_failure_scenario:" not in security_prompt
+    assert "requires_failure_scenario:" not in ops_prompt
+
+    # ...and both still carry the shared contract header and the artifact.
+    assert "Return ONLY a JSON object" in security_prompt
+    assert "Return ONLY a JSON object" in ops_prompt
+    assert "A design with a missing guard" in security_prompt
+    assert "A design with a missing guard" in ops_prompt
+
+
+def test_friend_with_unknown_lens_falls_back_to_generic_prompt_and_records_a_downgrade(tmp_path):
+    """fake:good's lens slot is "good", which has no lenses/good.md file --
+    every other fake-friend test in this file already relies on exactly
+    this fallback (fake:offtopic, fake:hang, fake:cwd_probe, ...) and must
+    keep working unchanged. The fallback must be explicit and visible, not
+    silent: no --- LENS --- section in the written prompt, and a downgrade
+    naming the friend and the missing lens in run.json."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    prompt_text = (runs[0] / "round-1" / "fake-good-0.prompt").read_text()
+    assert "--- LENS ---" not in prompt_text
+    assert "Return ONLY a JSON object" in prompt_text
+
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert any("fake-good-0" in note and "good" in note and "lens" in note.lower()
+               for note in meta["downgrades"]), meta["downgrades"]
+
+
+def test_advisory_flag_is_set_from_the_lens_requires_failure_scenario(tmp_path):
+    """lenses/scope.md is the one shipped lens with
+    requires_failure_scenario: false. A claim produced under it must come
+    back with advisory=True -- previously hardcoded False for every claim
+    regardless of lens. report.py already renders an *(advisory)* marker;
+    only the runner ever needed to set the field truthfully."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:scope")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    ledger = [json.loads(line) for line in
+             (runs[0] / "claims.jsonl").read_text().strip().splitlines()]
+    claims = [r for r in ledger if r["type"] == "claim"]
+    assert claims and all(c["advisory"] is True for c in claims)
+
+    report = (runs[0] / "report.md").read_text()
+    assert "(advisory)" in report
+
+
+def test_advisory_flag_is_false_for_a_lens_that_requires_a_failure_scenario(tmp_path):
+    """The converse of the above: security.md sets
+    requires_failure_scenario: true (the default for every lens but
+    scope), so its claims must come back non-advisory."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:security")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    ledger = [json.loads(line) for line in
+             (runs[0] / "claims.jsonl").read_text().strip().splitlines()]
+    claims = [r for r in ledger if r["type"] == "claim"]
+    assert claims and all(c["advisory"] is False for c in claims)
