@@ -87,11 +87,23 @@ actually asked to attack trust boundaries while an `ops`-assigned friend is
 asked what happens at 3am; they are not just labeled differently after the
 fact. Every friend's exact prompt is written to
 `round-1/<friend>.prompt` in the run directory, so you can always check what
-a given friend was actually asked. The default assignment is round-robin
-over discovered friends; override it with `--friend cli:lens` (repeatable)
-when the artifact has an obvious weak flank — a deployment plan wants `ops`,
-an auth design wants `security`, a spec that keeps growing wants `scope`. A
-lens name with no matching file falls back to the generic prompt alone and
+a given friend was actually asked. The default — no `--friend` flag at all —
+is round-robin lens assignment over every discovered friend.
+
+**`--friend cli:lens` (repeatable) does not add to or bias that default
+roster — it replaces it entirely.** Any `--friend` flag switches `af run`
+from auto-discovery to exactly the friends you listed and no others: `af run
+spec.md --friend agy:security` runs with *one* friend, not the normal
+discovered set plus a nudge toward `security`. To emphasize a lens on part
+of an otherwise-normal run, list every friend you want the run to have, one
+`--friend cli:lens` per friend — e.g. `--friend codex:ops --friend
+agy:security --friend opencode:scope` — never a single `--friend` layered on
+top of discovery. A `--friend`-built (or discovered) roster with fewer than
+two friends cannot cross-examine anything; `af run` records this as a
+downgrade in `run.json` and `report.md` rather than letting a single-reviewer
+run look like the real thing.
+
+A lens name with no matching file falls back to the generic prompt alone and
 is recorded as a downgrade in `run.json`, rather than failing the run or
 silently pretending the friend had lens guidance.
 

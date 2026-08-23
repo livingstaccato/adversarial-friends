@@ -319,6 +319,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     # unconditionally in the outer `finally` -- a library-ish function
     # should not permanently hijack process-wide signal disposition.
     downgrades: list[str] = []
+    if len(specs) == 1:
+        # --friend REPLACES the roster rather than augmenting discovery (see
+        # _specs_from_flags above), so a single --friend flag -- or, per
+        # design doc §8.3, discovery itself resolving to just one friend --
+        # produces a run that cannot cross-examine anything: it is one
+        # reviewer's opinion, not disagreement between several. That
+        # reduced guarantee must be visible in run.json/report.md rather
+        # than a single-reviewer report quietly looking like the real
+        # thing -- the same rule already applied to every other downgrade
+        # this function records.
+        downgrades.append(
+            f"only one friend ({specs[0].name}) resolved for this run; "
+            "cross-examination needs at least two independent friends, so "
+            "this report reflects a single reviewer's opinion, not "
+            "disagreement between several."
+        )
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]

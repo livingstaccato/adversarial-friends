@@ -739,3 +739,38 @@ def test_advisory_flag_is_false_for_a_lens_that_requires_a_failure_scenario(tmp_
              (runs[0] / "claims.jsonl").read_text().strip().splitlines()]
     claims = [r for r in ledger if r["type"] == "claim"]
     assert claims and all(c["advisory"] is False for c in claims)
+
+
+# --- Single-friend visibility (Task 13 coordinator review, round 2) -------
+#
+# --friend REPLACES the whole roster rather than augmenting default
+# discovery (cli.py branches `if args.friend: _specs_from_flags(...) else
+# resolve(...)` -- there is no path that layers a --friend override on top
+# of discovery). A single --friend flag therefore produces a single-friend
+# run, which cannot cross-examine anything (design doc §8.3's "degraded
+# single-friend mode"). That reduced guarantee must be visible in run.json
+# and report.md, the same rule already applied to every other downgrade
+# this runner records (repo-scope, missing lens, degraded signal handling).
+
+
+def test_single_friend_run_via_friend_flag_records_a_downgrade(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert any("one friend" in note.lower() and "cross-examin" in note.lower()
+               for note in meta["downgrades"]), meta["downgrades"]
+    report = (runs[0] / "report.md").read_text()
+    assert "cross-examin" in report.lower()
+
+
+def test_two_friend_run_does_not_record_the_single_friend_downgrade(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
+    assert not any("cross-examin" in note.lower() for note in meta["downgrades"]), meta["downgrades"]
