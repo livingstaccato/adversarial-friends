@@ -73,6 +73,36 @@ def test_doc_scope_dir_contains_only_the_artifact(tmp_path):
     assert not (dest / ".git").exists()
 
 
+def test_doc_scope_dir_raises_instead_of_clobbering_a_pre_existing_file(tmp_path):
+    """dest is explicitly allowed to pre-exist; a file already occupying
+    dest/<artifact-name> must not be silently overwritten."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# new spec\n")
+    docdir = tmp_path / "docdir"
+    docdir.mkdir()
+    (docdir / "spec.md").write_text("# pre-existing, different content\n")
+
+    with pytest.raises(AfError):
+        isolation.doc_scope_dir(docdir, artifact)
+    # Untouched -- the pre-existing file's content survives the failed call.
+    assert (docdir / "spec.md").read_text() == "# pre-existing, different content\n"
+
+
+def test_doc_scope_dir_raises_instead_of_nesting_under_a_pre_existing_directory(tmp_path):
+    """If dest/<artifact-name> already exists as a directory, shutil.copy2 would nest
+    the artifact one level deeper (dest/spec.md/spec.md), silently breaking the 'bare
+    directory holding only the artifact' contract. Must raise instead."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    docdir = tmp_path / "docdir"
+    (docdir / "spec.md").mkdir(parents=True)  # spec.md is a directory, not a file
+
+    with pytest.raises(AfError):
+        isolation.doc_scope_dir(docdir, artifact)
+    # Nothing was nested underneath it.
+    assert list((docdir / "spec.md").iterdir()) == []
+
+
 # --- Adversarial isolation-breaking attempts (beyond the brief's 6 required tests) ---
 #
 # The brief's own reference implementation (git rev-parse HEAD, unconditionally) raises
@@ -83,6 +113,17 @@ def test_doc_scope_dir_contains_only_the_artifact(tmp_path):
 # directly against this git before writing the fix) and build a parentless root commit in
 # that case, rather than surface git's generic message. Genuinely not-a-repo is checked
 # separately so it still gets its own clear error.
+#
+# Fix round: `_require_repo_root` replaced a bare `(repo / ".git").exists()` check.
+# That check is true for a FILE, not just a directory -- a linked worktree's or a
+# submodule's `.git` is a one-line file pointing elsewhere -- so it let both proceed
+# into a temp-index path that no longer exists relative to `repo` (the fix round also
+# moved the temp index out of `.git` into its own `tempfile.TemporaryDirectory`,
+# closing that failure mode independently). `_require_repo_root` now checks identity
+# against `git rev-parse --show-toplevel`, which correctly accepts a worktree root, a
+# submodule root, and a plain repo root, and correctly rejects a subdirectory nested
+# inside a larger repo -- verified directly against real git worktrees and submodules
+# before writing the five tests below.
 
 
 def test_snapshot_works_on_a_repo_with_no_commits(tmp_path):
@@ -128,31 +169,77 @@ def test_snapshot_works_on_a_detached_head_repo(tmp_path):
     assert (dest / "f.txt").read_text() == "v3-uncommitted-while-detached\n"
 
 
-def test_snapshot_commit_raises_af_error_for_a_non_git_directory(tmp_path):
+# The five inputs `_require_repo_root` must distinguish: repo root, worktree root, and
+# submodule root must all succeed; a nested subdirectory and a plain non-repo directory
+# must both raise AfError, with messages that say which problem it is.
+
+
+def test_snapshot_commit_accepts_a_plain_repo_root(repo, tmp_path):
+    sha = isolation.snapshot_commit(repo)
+    dest = isolation.add_worktree(repo, sha, tmp_path / "wt")
+    assert (dest / "tracked.py").read_text() == "original\n"
+
+
+def test_snapshot_commit_accepts_a_worktree_root(repo, tmp_path):
+    """A linked worktree's `.git` is a FILE (`gitdir: <path>`), not a directory --
+    this is the case this very project runs in, and it must work."""
+    wt_root = tmp_path / "linked-worktree"
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(wt_root), "HEAD"],
+                   cwd=repo, check=True, capture_output=True)
+    assert (wt_root / ".git").is_file()  # confirms this is exercising the FILE case
+
+    sha = isolation.snapshot_commit(wt_root)
+    dest = isolation.add_worktree(wt_root, sha, tmp_path / "wt-from-worktree")
+    assert (dest / "tracked.py").read_text() == "original\n"
+
+
+def test_snapshot_commit_accepts_a_submodule_root(repo, tmp_path):
+    """A submodule's `.git` is also a FILE (`gitdir: ../.git/modules/<name>`), and its
+    own `--show-toplevel` is its own directory, not the superproject's."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    run_sub = lambda *a: subprocess.run(a, cwd=sub, check=True, capture_output=True)
+    run_sub("git", "init", "-q")
+    run_sub("git", "config", "user.email", "t@example.com")
+    run_sub("git", "config", "user.name", "T")
+    (sub / "s.txt").write_text("submodule content\n")
+    run_sub("git", "add", "-A")
+    run_sub("git", "commit", "-q", "-m", "sub c1")
+
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "submodule", "add",
+                    "-q", str(sub), "subdir"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add submodule"], cwd=repo,
+                   check=True, capture_output=True)
+    sub_root = repo / "subdir"
+    assert (sub_root / ".git").is_file()  # confirms this is exercising the FILE case
+
+    sha = isolation.snapshot_commit(sub_root)
+    dest = isolation.add_worktree(sub_root, sha, tmp_path / "wt-from-submodule")
+    assert (dest / "s.txt").read_text() == "submodule content\n"
+
+
+def test_snapshot_commit_rejects_a_non_git_directory(tmp_path):
     plain = tmp_path / "not_a_repo"
     plain.mkdir()
     (plain / "f.txt").write_text("just files, no .git\n")
-    with pytest.raises(AfError):
+    with pytest.raises(AfError, match=r"^not a git repository:"):
         isolation.snapshot_commit(plain)
 
 
-def test_snapshot_commit_gives_a_clear_error_for_a_subdir_of_a_larger_repo(repo):
+def test_snapshot_commit_rejects_a_subdir_nested_inside_a_larger_repo(repo):
     """A directory with no .git of its own, but nested inside a real repo, is a
     materially different -- and more plausible -- mistake than a directory with no
     git ancestry anywhere (e.g. passing a monorepo package path instead of the repo
     root). Without an explicit up-front check, git's own upward .git discovery finds
     the *outer* repo, `rev-parse HEAD` and `git add -A` both succeed against it, and
-    the snapshot only fails later at `read-tree`/`write-tree` because GIT_INDEX_FILE
-    was pointed at a `.git/` path that does not exist under the subdirectory --
-    surfacing as 'Unable to create .../af-snapshot-index-*.lock: No such file or
-    directory', which reads like a filesystem/permissions problem, not 'wrong path'.
-    Verified directly (see task report) before writing this assertion. The explicit
-    `.git` existence check in snapshot_commit exists to turn that into a clear error
-    instead."""
+    the snapshot only fails later, deep inside read-tree/write-tree, with a message
+    that reads like a filesystem/permissions problem, not 'wrong path'. Verified
+    directly before writing this assertion. Message is required to be distinct from
+    the plain non-repo case above, per review."""
     subdir = repo / "not_its_own_repo_root"
     subdir.mkdir()
     (subdir / "f.txt").write_text("lives inside a real repo, but isn't a repo root\n")
-    with pytest.raises(AfError, match="not a git repository"):
+    with pytest.raises(AfError, match=r"^not the root of its git repository:"):
         isolation.snapshot_commit(subdir)
 
 

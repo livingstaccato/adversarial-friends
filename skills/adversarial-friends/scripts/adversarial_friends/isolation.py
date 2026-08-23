@@ -12,7 +12,7 @@ operator's real index or working tree.
 import os
 import shutil
 import subprocess
-import uuid
+import tempfile
 from pathlib import Path
 
 from .errors import AfError
@@ -45,25 +45,57 @@ def _resolve_head(repo: Path) -> str | None:
     return None
 
 
+def _require_repo_root(repo: Path) -> None:
+    """Raise AfError unless `repo` is itself the root of a git repository.
+
+    Checked by identity against `git rev-parse --show-toplevel`, not by
+    `.git`'s mere presence: `.git` is a FILE (not a directory) in a linked
+    worktree or a submodule, so a bare `.exists()` check can't tell those
+    apart from "not a repository at all", and it also can't tell a genuine
+    repository root apart from a subdirectory nested inside a larger repo
+    (git's own upward `.git` search finds the outer repo either way).
+    `--show-toplevel` reports a linked worktree's own root (not the main
+    repo it was created from) and a submodule's own root (its own repo
+    boundary), so both are correctly accepted; a nested, non-root
+    subdirectory reports the *enclosing* repo's root, which does not match
+    `repo` and is correctly rejected -- verified directly against real git
+    worktrees and submodules before writing this.
+    """
+    resolved = repo.resolve()
+    result = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                            cwd=str(repo), capture_output=True, text=True)
+    if result.returncode != 0:
+        raise AfError(f"not a git repository: {repo}")
+    toplevel = Path(result.stdout.strip()).resolve()
+    if toplevel != resolved:
+        raise AfError(
+            f"not the root of its git repository: {repo} "
+            f"(repository root is {toplevel})"
+        )
+
+
 def snapshot_commit(repo: Path) -> str:
     """Create a commit object capturing tracked, staged, and untracked state.
 
-    The working tree is never modified: a temporary index (a fresh file,
-    never the repo's real .git/index) is used for the read-tree/add/write-tree
-    sequence, so the operator's dirty tree survives the run exactly as it
-    was. `git add -A` honors .gitignore, so ignored files (.env and similar)
-    are deliberately absent from the snapshot -- friends never see them.
+    The working tree is never modified: a temporary index -- a fresh file in
+    its own throwaway directory, never anywhere under the repo's own .git --
+    is used for the read-tree/add/write-tree sequence, so the operator's
+    dirty tree survives the run exactly as it was. Keeping the temp index
+    outside .git entirely also means this never has to care whether .git is
+    a directory, a file (worktree/submodule), or missing, and can never
+    leave a stray lock file inside someone's repository. `git add -A` honors
+    .gitignore, so ignored files (.env and similar) are deliberately absent
+    from the snapshot -- friends never see them.
 
     Works even when `repo` has no commits yet (an unborn HEAD): the snapshot
     becomes a parentless root commit built from whatever untracked,
     non-ignored files are present.
     """
     repo = Path(repo)
-    if not (repo / ".git").exists():
-        raise AfError(f"not a git repository: {repo}")
-    index = repo / ".git" / f"af-snapshot-index-{os.getpid()}-{uuid.uuid4().hex}"
-    env = dict(os.environ, GIT_INDEX_FILE=str(index))
-    try:
+    _require_repo_root(repo)
+    with tempfile.TemporaryDirectory(prefix="af-snapshot-index-") as tmpdir:
+        index = Path(tmpdir) / "index"
+        env = dict(os.environ, GIT_INDEX_FILE=str(index))
         head = _resolve_head(repo)
         if head is not None:
             _git(repo, "read-tree", head, env=env)
@@ -73,8 +105,6 @@ def snapshot_commit(repo: Path) -> str:
             return _git(repo, "commit-tree", tree, "-p", head, "-m", "af-snapshot",
                         env=env)
         return _git(repo, "commit-tree", tree, "-m", "af-snapshot", env=env)
-    finally:
-        index.unlink(missing_ok=True)
 
 
 def add_worktree(repo: Path, sha: str, dest: Path) -> Path:
@@ -97,5 +127,8 @@ def doc_scope_dir(dest: Path, artifact: Path) -> Path:
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(artifact, dest / Path(artifact).name)
+    target = dest / Path(artifact).name
+    if target.exists():
+        raise AfError(f"doc scope destination already occupied: {target}")
+    shutil.copy2(artifact, target)
     return dest
