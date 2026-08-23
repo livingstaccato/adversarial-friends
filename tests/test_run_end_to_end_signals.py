@@ -31,9 +31,22 @@ from e2e_helpers import AF, _env, _git_commit, _git_repo, run_af
 def _ps_all() -> list[tuple[int, int, str]]:
     """Return (pid, ppid, command) for every process, via the real `ps`
     (not the safe-PATH restricted one -- this reads the test's own host
-    process table, nothing to do with what `afriend` itself can execute)."""
+    process table, nothing to do with what `afriend` itself can execute).
+
+    `-ww` is load-bearing, not cosmetic. Without it `ps` truncates the
+    command column to the terminal width, defaulting to 80 when there is no
+    tty -- and the `pid`/`ppid` columns eat 16 of those, leaving 64. Every
+    caller below identifies processes by substring-matching the command
+    (`"fake_friend.py" in cmd`, `"hang" in cmd`, the escapee's marker
+    comment), and all of those substrings sit *after* a long absolute path,
+    so they were being cut off entirely. That made the signal-teardown
+    tests fail on a CI runner whose checkout path was long enough to blow
+    the 64-character budget, while passing locally and in a container where
+    it was not, reported as "friend process never started" when the friend
+    had in fact started and was sitting right there in the process table.
+    """
     result = subprocess.run(
-        ["ps", "-eo", "pid,ppid,command"], capture_output=True, text=True, check=True
+        ["ps", "-eo", "pid,ppid,command", "-ww"], capture_output=True, text=True, check=True
     )
     rows = []
     for line in result.stdout.splitlines()[1:]:
