@@ -1,0 +1,30 @@
+@startuml
+title af run --mode report
+
+start
+:copy artifact into run dir, hash it;
+:snapshot repo (tracked + untracked) into a commit object;
+partition "per friend, in parallel" {
+  :build argv from adapter record;
+  :compute capability from effective argv;
+  if (adapter has a real read-only mode?) then (yes: repo scope)
+    :private git worktree, checked out from the shared snapshot;
+  else (no: doc scope)
+    :doc-only dir holding a copy of the artifact, no repo access;
+  endif
+  :spawn in its own process group;
+  if (timed out?) then (yes)
+    :kill process group; mark failed;
+  else (no)
+    :strip ANSI, extract JSON, validate;
+    if (usable output?) then (yes)
+      :emit claims;
+    else (no)
+      :mark failed;
+    endif
+  endif
+}
+:exact-merge claims into ledger;
+:render report.md;
+stop
+@enduml

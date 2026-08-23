@@ -1,0 +1,23 @@
+{
+  "skill_name": "adversarial-friends",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I've got a design doc at docs/superpowers/specs/2026-08-22-adversarial-friends-design.md that I'm about to start building from. Before I commit to it, can you get a couple of other models to poke holes in it? I want to know what I'm going to regret.",
+      "expected_output": "Runs af run with mode report against the spec, reports which friends actually succeeded and which failed, and presents merged findings ranked by severity rather than relaying each friend's output separately.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "codex just gave me a review of my auth refactor with 9 findings. honestly some of them feel like nitpicks and one or two might be flat wrong. can you have something else check its work?",
+      "expected_output": "Treats the existing review as the artifact to challenge, dispatches it to friends other than codex, and separates findings that survived scrutiny from ones that did not — rather than generating a fresh code review.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "before I ship this I want a second opinion, run the adversarial thing on my migration plan. heads up though, this box only has claude installed as far as I know, no codex or anything else",
+      "expected_output": "Runs af doctor first to confirm what is actually on PATH, finds no second friend, and says plainly that cross-examination needs at least two independent agent CLIs — it does not silently produce a report that looks like a clean multi-reviewer result. Either offers a clearly-labeled single-friend report (naming it as a downgrade, not a real cross-examination) or tells the user which CLI to install (codex, agy, opencode, or a local ollama model) to get a real second opinion.",
+      "files": []
+    }
+  ]
+}
