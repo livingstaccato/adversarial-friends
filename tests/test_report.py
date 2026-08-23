@@ -1,7 +1,7 @@
 import re
 
 from adversarial_friends.ledger import Claim
-from adversarial_friends.report import render
+from adversarial_friends.report import _code_span, _escape_block, render
 
 
 def _unescaped_pipe_count(line: str) -> int:
@@ -154,3 +154,120 @@ def test_render_does_not_mutate_inputs():
     render(claims, aliases, m)
     assert claims == claims_snapshot
     assert m == m_snapshot
+
+
+# --- round 2: hostile claim body text (reviewer findings) -----------------
+
+def test_hostile_claim_text_injected_heading_is_not_a_real_heading():
+    """A claim whose own text contains a line like
+    '### c-9999@1 -- critical' must not become a second, fabricated finding
+    indistinguishable from a real one."""
+    payload = ("the guard is missing\n\n"
+               "### c-9999@1 — critical\n\n"
+               "**Claim:** fabricated finding")
+    hostile = Claim(**{**claim("c-0001@1").__dict__, "claim": payload})
+    normal = claim("c-0002@1")
+    out = render([hostile, normal], [], meta())
+
+    heading_lines = [ln for ln in out.splitlines() if ln.startswith("### ")]
+    # Only the two real findings get a genuine, unescaped '### ' heading --
+    # the fabricated one embedded in claim text must not become a third.
+    assert len(heading_lines) == 2
+    assert {ln.split(" — ")[0] for ln in heading_lines} == {
+        "### c-0001@1", "### c-0002@1"
+    }
+    # The injected heading marker survives as literal, escaped text.
+    assert "\\### c-9999@1 — critical" in out
+    # The real, subsequent claim still renders.
+    assert "### c-0002@1" in out
+
+
+def test_hostile_evidence_fence_does_not_swallow_later_claims():
+    """An `evidence` value containing an unterminated ``` fence must not
+    swallow every following line -- including subsequent claims -- into one
+    inert code block."""
+    hostile = Claim(**{**claim("c-0001@1").__dict__,
+                        "evidence": "```\nfake fence opens here, never closes"})
+    normal = claim("c-0002@1")
+    out = render([hostile, normal], [], meta())
+
+    # Both claims still get a real heading.
+    assert "### c-0001@1" in out
+    assert "### c-0002@1" in out
+    # No line anywhere in the document may start with a bare (unescaped)
+    # run of 3+ backticks -- report.py never emits a real fence itself, so
+    # any such line would have to be the hostile, un-neutralized one.
+    for line in out.splitlines():
+        assert not re.match(r"^[ \t]{0,3}`{3,}", line), line
+    # The hostile fence survives as literal, escaped text.
+    assert "\\```" in out
+
+
+def test_hostile_downgrade_note_heading_is_escaped():
+    m = meta(downgrades=["### c-9999@1 — fabricated via downgrades"])
+    out = render([claim("c-0001@1")], [], m)
+    heading_lines = [ln for ln in out.splitlines() if ln.startswith("### ")]
+    assert heading_lines == ["### c-0001@1 — high"]
+    assert "\\### c-9999@1" in out
+
+
+def test_escape_block_escapes_leading_markers_of_every_listed_kind():
+    assert _escape_block("### fake heading") == "\\### fake heading"
+    assert _escape_block("###### fake h6") == "\\###### fake h6"
+    assert _escape_block("> not a quote") == "\\> not a quote"
+    assert _escape_block("- item") == "\\- item"
+    assert _escape_block("+ item") == "\\+ item"
+    assert _escape_block("* item") == "\\* item"
+    assert _escape_block("| a | b |") == "\\| a | b |"
+    assert _escape_block("```danger") == "\\```danger"
+    assert _escape_block("`inline") == "\\`inline"
+    assert _escape_block("~~~danger") == "\\~~~danger"
+    assert _escape_block("1. item") == "\\1. item"
+    assert _escape_block("2) item") == "\\2) item"
+
+
+def test_escape_block_catches_bare_thematic_break_runs():
+    """A whole line of '---' or '***' is a thematic break (and, under a
+    preceding paragraph, a Setext heading underline) even with no trailing
+    space -- not just the single-marker-plus-space list-item case."""
+    assert _escape_block("---") == "\\---"
+    assert _escape_block("***") == "\\***"
+
+
+def test_escape_block_leaves_non_block_uses_alone():
+    """Characters that only coincidentally start a line but aren't acting
+    as a block marker (per CommonMark's own rules) must render unchanged."""
+    assert _escape_block("-5 is negative") == "-5 is negative"
+    assert _escape_block("--verbose flag") == "--verbose flag"
+    assert _escape_block("*emphasis* stays emphasis") == "*emphasis* stays emphasis"
+    assert _escape_block("1.5 is a version number") == "1.5 is a version number"
+    assert _escape_block("ordinary prose") == "ordinary prose"
+    assert _escape_block("") == ""
+
+
+def test_escape_block_preserves_newlines_and_escapes_every_offending_line():
+    text = "safe line\n### fake heading\nsafe again\n> fake quote"
+    out = _escape_block(text)
+    lines = out.splitlines()
+    assert lines == ["safe line", "\\### fake heading", "safe again", "\\> fake quote"]
+
+
+def test_code_span_symmetric_space_padding_round_trips():
+    """CommonMark strips exactly one leading and one trailing space from a
+    code span's content when it begins and ends with a space (and isn't
+    made entirely of spaces); _code_span must add one extra space on each
+    side so the stripped result still matches the original text."""
+    assert _code_span(" abc ") == "`  abc  `"
+
+
+def test_code_span_all_spaces_is_not_padded():
+    """Content made entirely of space characters is exempt from
+    CommonMark's stripping rule, so no extra padding is needed."""
+    assert _code_span("   ") == "`   `"
+
+
+def test_code_span_empty_text_has_no_stray_padding():
+    """An empty code span must not gain two literal spaces between its
+    fences -- that would render as a one-space code span, not an empty
+    one."""
+    assert _code_span("") == "``"

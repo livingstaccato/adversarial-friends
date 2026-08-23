@@ -11,10 +11,48 @@ same as "no problems found."
 `render` is a pure function: it only reads its arguments and returns a
 string. It never writes files, never mutates `claims`/`aliases`/`run_meta`,
 and never calls anything external.
+
+`claim`, `evidence`, `failure_scenario`, and `suggested_fix` are untrusted
+prose straight from an adversarial friend's stdout, as are `downgrades`
+notes. A line in any of those fields that happens to start with a Markdown
+block construct -- an ATX heading (`#`), a fence (backtick run or `~~~`), a
+blockquote (`>`), a list marker (`-`/`+`/`*`/`1.`), or a table pipe (`|`) --
+is otherwise interpreted as real document structure once concatenated into
+report.md. A claim whose text opens with `### c-9999@1 -- critical` renders
+as a second, fabricated finding indistinguishable from a real one; a claim
+whose evidence contains an unterminated code fence swallows every
+subsequent line of the document -- every following claim -- into one inert
+code block. `_escape_block` neutralizes exactly the leading marker on each
+line so these fields still render as prose, without collapsing newlines or
+wrapping the field in a code block of its own.
 """
+import re
+
 from .ledger import Alias, Claim
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+# A line-initial (up to 3 spaces of indentation) Markdown block construct:
+# ATX heading, blockquote, bullet/thematic-break marker, table pipe, a
+# backtick run (fence or inline span), a tilde fence, or an ordered-list
+# marker. Bullet/ordered-list markers require a trailing space/EOL per
+# CommonMark (so inline uses like "*emphasis*", "-5 is negative", or "1.5"
+# are left alone), but a run of 2+ of the same -/+/* character followed by
+# space/EOL is matched too, since a bare line of "---" or "***" is a
+# thematic break (or, under the previous line, a Setext heading underline)
+# even with no space after it -- the single-marker-plus-space check alone
+# would miss that.
+_BLOCK_LEADER_RE = re.compile(
+    r"^(?P<indent>[ \t]{0,3})(?P<marker>"
+    r"#{1,6}(?=[ \t]|$)"
+    r"|>"
+    r"|[-+*]+(?=[ \t]|$)"
+    r"|\|"
+    r"|`+"
+    r"|~{3,}"
+    r"|\d+[.)](?=[ \t]|$)"
+    r")"
+)
 
 
 def _escape_cell(value: object) -> str:
@@ -35,13 +73,24 @@ def _escape_cell(value: object) -> str:
 def _code_span(text: str) -> str:
     """Wrap `text` in backticks so it still renders as inline code even if
     `text` itself contains backticks (e.g. a location like
-    ``src/a.py:`eval(...)```).
+    ``src/a.py:`eval(...)```), and so a viewer displays exactly `text` --
+    including its edge whitespace, if any.
 
     Per CommonMark, a backtick-delimited code span's fence must be a run of
     backticks strictly longer than the longest backtick run inside the
     content, and if the content starts or ends with a backtick, one space
     of padding on that side keeps the delimiter from fusing with it.
+    Separately, CommonMark also strips exactly one leading and one trailing
+    space from a code span's content whenever that content both begins and
+    ends with a space (and isn't made entirely of spaces) -- so content
+    like " abc " needs one extra space of padding on each side to survive
+    that stripping and still display as " abc ". The two padding reasons
+    are independent but never conflict: whenever either applies, adding
+    exactly one space on each side is enough to round-trip the original
+    text, because CommonMark only ever removes one space per side.
     """
+    if text == "":
+        return "``"
     longest_run = 0
     current = 0
     for ch in text:
@@ -52,9 +101,36 @@ def _code_span(text: str) -> str:
             current = 0
     fence = "`" * (longest_run + 1)
     text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    if text == "" or text.startswith("`") or text.endswith("`"):
+    backtick_edge = text.startswith("`") or text.endswith("`")
+    space_bracketed = (
+        text.startswith(" ") and text.endswith(" ") and text.strip(" ") != ""
+    )
+    if backtick_edge or space_bracketed:
         return f"{fence} {text} {fence}"
     return f"{fence}{text}{fence}"
+
+
+def _escape_block(text: str) -> str:
+    """Backslash-escape a Markdown block-level construct at the start of
+    each line of `text`, leaving everything else -- including newlines --
+    untouched.
+
+    Only the leading marker character is escaped (e.g. "### heading"
+    becomes "\\### heading"); the rest of the line is left as-is, since a
+    single leading backslash is enough to stop a block parser from
+    recognizing the construct at all. This keeps the field rendering as
+    ordinary prose rather than being wrapped in a code block, which would
+    misrepresent prose fields like `claim` and `suggested_fix`.
+    """
+    escaped_lines = []
+    for line in text.split("\n"):
+        match = _BLOCK_LEADER_RE.match(line)
+        if match:
+            marker = match.group("marker")
+            start, end = match.span("marker")
+            line = line[:start] + "\\" + marker[0] + marker[1:] + line[end:]
+        escaped_lines.append(line)
+    return "\n".join(escaped_lines)
 
 
 def render(claims: list[Claim], aliases: list[Alias], run_meta: dict) -> str:
@@ -82,7 +158,7 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict) -> str:
         lines.append("## Downgrades")
         lines.append("")
         for note in run_meta["downgrades"]:
-            lines.append(f"- {note}")
+            lines.append(f"- {_escape_block(note)}")
         lines.append("")
 
     lines.append("## Findings")
@@ -99,12 +175,12 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict) -> str:
         flag = " *(advisory)*" if claim.advisory else ""
         lines.append(f"### {claim.id} — {claim.severity}{flag}")
         lines.append("")
-        lines.append(f"**Claim:** {claim.claim}")
+        lines.append(f"**Claim:** {_escape_block(claim.claim)}")
         if claim.location:
             lines.append(f"**Location:** {_code_span(claim.location)}")
-        lines.append(f"**Evidence:** {claim.evidence}")
-        lines.append(f"**Failure scenario:** {claim.failure_scenario}")
-        lines.append(f"**Suggested fix:** {claim.suggested_fix}")
+        lines.append(f"**Evidence:** {_escape_block(claim.evidence)}")
+        lines.append(f"**Failure scenario:** {_escape_block(claim.failure_scenario)}")
+        lines.append(f"**Suggested fix:** {_escape_block(claim.suggested_fix)}")
         lines.append("")
 
     if aliases:
