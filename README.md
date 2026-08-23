@@ -68,4 +68,5 @@ See [docs/](docs/README.md).
 
 ## License
 
-MIT
+Not yet chosen. A `LICENSE` file will be added before this is distributed;
+until then, no license is granted.
