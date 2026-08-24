@@ -205,9 +205,70 @@ One combination is refused: `--merge orchestrator` with `--mode loop`. A loop
 halts once per iteration and would resume into mid-iteration budget and
 streak state this build does not reconstruct.
 
-Not in this build: `afriend init`, and §14.2's parse-halt extraction (the other
-user of this same halt/resume handshake). Run `afriend run --help` to see the
-flags this build accepts.
+## Choosing friends without repeating flags
+
+`--friend cli:lens` on every invocation gets old. A roster file is the same
+thing, checked in:
+
+```toml
+# ~/.config/adversarial-friends/roster.toml
+[[friend]]
+name = "codex-ops"
+cli  = "codex"
+lens = "ops"
+
+[[friend]]
+name = "claude-security"
+cli    = "claude"
+lens   = "security"
+effort = "high"        # optional; also model, scope, timeout
+```
+
+`afriend init` writes one from what is actually installed, with the caveats
+for each CLI as comments. It asks nothing and refuses to overwrite without
+`--force` — it is a file you are meant to edit.
+
+**Where a roster may come from is a security question** (§13). A cloned
+repository is hostile input, and a roster decides who reviews your code:
+
+| Location | Picked up automatically? |
+|---|---|
+| `~/.config/adversarial-friends/roster.toml` | **Yes** — your own machine-wide config |
+| Anywhere named with `--roster FILE` | Yes — naming it is your explicit act |
+| Repo-local `.adversarial-friends/` | **Never** |
+
+A roster supplies *values only*, for `name`, `cli`, `lens`, `model`,
+`effort`, `scope` and `timeout`. There is no mechanism for a file to inject a
+flag; `--unsafe-extra-args` exists only on the command line.
+
+### Effort presets
+
+| Preset | Behaviour |
+|---|---|
+| `inherit` **(default)** | Emit no model or effort flags at all |
+| `thorough` **(default for `gate`)** | Maximum *available* effort per friend |
+| `cheap` | Lowest available effort |
+
+`inherit` is the default because each CLI already carries an effort its owner
+chose deliberately; overriding silently produces surprise behaviour and
+surprise cost.
+
+`thorough` is uneven by construction — claude reaches `max`, codex `xhigh`,
+agy stops at `high`, ollama has no effort concept at all — which is why the
+report states the effort each friend actually received. Otherwise a weak
+critique from a friend that topped out low reads as a signal about the
+artifact when it is a signal about the flag matrix.
+
+**A preset promises nothing for `opencode`.** Its effort flag accepts any
+string silently, so the level it ran at cannot be confirmed; the run records
+a note saying so rather than implying the preset was honoured.
+
+Precedence, strongest last: adapter default → `--preset` → roster entry →
+`--friend`. Each layer fills only what the one above left unset, so you can
+keep a roster and still override a single run from the command line.
+
+Not in this build: §14.2's parse-halt extraction (the other user of the
+halt/resume handshake). Run `afriend run --help` for the full flag list.
 
 ## Exit codes
 

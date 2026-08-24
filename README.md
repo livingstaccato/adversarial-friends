@@ -273,7 +273,12 @@ afriend run docs/design.md --merge orchestrator   # exit 10, writes REQUEST.json
 afriend run --resume <run-id>                     # round 1 is not re-run
 ```
 
-Not in this build: `afriend init`.
+Tired of `--friend` flags? `afriend init` writes a roster from what is
+actually installed, and `~/.config/adversarial-friends/roster.toml` is picked
+up automatically. A repo-local roster never is — a cloned repo does not get
+to choose who reviews it (§13).
+
+Not in this build: §14.2's parse-halt extraction.
 
 | Friend | Status |
 |---|---|

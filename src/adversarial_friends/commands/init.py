@@ -63,9 +63,14 @@ def cmd_init(args: argparse.Namespace) -> int:
             entry["model"] = "CHANGE-ME"
             notes.append(
                 f"{cli}: set a model. It is an HTTP endpoint with no default, "
-                "so this entry will not run until you name one."
+                "so this entry will not run until you name one. It has no "
+                "filesystem access of any kind, so it needs no confinement."
             )
-        if not adapter.readonly_argv:
+        if not adapter.readonly_argv and adapter.transport != "http":
+            # Only an adapter that SPAWNS something can be confined. An HTTP
+            # friend is a bare model behind an endpoint with no subprocess and
+            # no filesystem access at all -- telling the operator it runs
+            # under a sandbox would describe a mechanism that never engages.
             notes.append(
                 f"{cli}: no read-only mode, so it runs under OS confinement "
                 "(§12.2) and is limited to doc scope."

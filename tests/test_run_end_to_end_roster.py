@@ -178,3 +178,29 @@ def test_a_roster_effort_beats_the_preset(tmp_path):
     # the effort it was given is recorded either way.
     meta = _run_json(tmp_path)
     assert meta["friends"][0]["effort"] == "medium", result.stderr
+
+
+def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
+    """Found by running `afriend init` on a real machine: ollama was
+    described as running "under OS confinement", which never engages for it.
+
+    An HTTP friend is a bare model behind an endpoint -- no subprocess, no
+    filesystem access -- so dispatch returns before the sandbox is even
+    considered. Describing a mechanism that never runs is worse than saying
+    nothing, in a file the operator is meant to read and trust.
+    """
+    from adversarial_friends.commands import init as init_module
+
+    registry = init_module.load_adapters(init_module.ADAPTER_DIR)
+    monkeypatch.setattr(init_module, "discover_clis", lambda *a, **k: ["ollama"])
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+    init_module.cmd_init(args)
+
+    text = target.read_text()
+    assert "ollama" in text
+    # The specific false claim, not the word: the corrected note says it
+    # "needs no confinement", which is the opposite and must survive.
+    assert "runs under OS confinement" not in text
+    assert "no filesystem access" in text
+    assert registry["ollama"].transport == "http"
