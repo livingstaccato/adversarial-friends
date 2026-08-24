@@ -27,12 +27,22 @@ line so these fields still render as prose, without collapsing newlines or
 wrapping the field in a code block of its own.
 """
 
+from collections import Counter
 import re
 from typing import Any
 
-from .ledger import Alias, Claim
+from .ledger import Alias, Claim, Verdict
+from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+# The states where a reader has to see the argument rather than a label.
+# `deadlocked` is the one §7.2 names explicitly ("both sides quoted
+# verbatim"), but the same applies to a claim still contested when the run
+# stopped and to one no judge could verify: in all three the tool has
+# declined to decide, and hiding the reasoning behind a one-word state would
+# make that look like a decision.
+_NEEDS_BOTH_SIDES = frozenset({DEADLOCKED, CONTESTED, UNPROVEN, INCOMPLETE})
 
 # A line-initial (up to 3 spaces of indentation) Markdown block construct:
 # ATX heading, blockquote, bullet/thematic-break marker, table pipe, a
@@ -153,7 +163,91 @@ def _escape_block(text: str) -> str:
     return "\n".join(escaped_lines)
 
 
-def render(claims: list[Claim], aliases: list[Alias], run_meta: dict[str, Any]) -> str:
+def _render_verdict_sections(
+    claims: list[Claim],
+    verdicts: list[Verdict],
+    states: dict[str, str],
+    run_meta: dict[str, Any],
+) -> list[str]:
+    """The cross-examination half of the report: what each claim's state is,
+    and -- for anything the judges could not settle -- what each side
+    actually said.
+
+    §7.2 requires deadlocks be "reported as deadlocks with both sides quoted
+    verbatim, never resolved by majority or orchestrator preference". That is
+    the whole reason this section exists rather than a state column alone: a
+    reader has to be able to see the disagreement and decide, because nothing
+    in this tool is entitled to decide it for them.
+    """
+    lines: list[str] = ["## Cross-examination", ""]
+    if run_meta.get("ceiling_hit"):
+        lines.append(
+            f"**{_escape_block(str(run_meta['ceiling_hit']))}** — this run stopped at a "
+            "ceiling. It has neither converged nor cleared anything; the states "
+            "below are where it was interrupted."
+        )
+        lines.append("")
+    lines.append(f"Rounds run: {run_meta.get('rounds_run', 1)}")
+    if run_meta.get("incomplete"):
+        lines.append("")
+        lines.append(
+            "A required friend failed during at least one round, so this run is "
+            "**incomplete**: any claim below that looks settled was settled by a "
+            "smaller judge set than the roster promised."
+        )
+    lines.append("")
+
+    tally = Counter(states.values())
+    lines.append("| state | claims |")
+    lines.append("|---|---|")
+    for state, count in sorted(tally.items()):
+        lines.append(f"| {_escape_cell(state)} | {count} |")
+    lines.append("")
+
+    by_id = {claim.id: claim for claim in claims}
+    unsettled = [cid for cid, state in states.items() if state in _NEEDS_BOTH_SIDES]
+    if unsettled:
+        lines.append("### Unsettled")
+        lines.append("")
+        lines.append(
+            "Judges did not agree, or could not decide. Both sides are quoted as "
+            "written — nothing here was resolved by majority."
+        )
+        lines.append("")
+        for cid in sorted(unsettled):
+            claim = by_id.get(cid)
+            lines.append(f"#### {_code_span(cid)} — {_escape_cell(states[cid])}")
+            lines.append("")
+            if claim is not None:
+                lines.append(f"**Claim:** {_escape_block(claim.claim)}")
+                lines.append("")
+            for verdict in [v for v in verdicts if v.claim_id == cid]:
+                lines.append(
+                    f"- **{_escape_cell(verdict.verdict)}** "
+                    f"(confidence {_escape_cell(verdict.confidence)}, "
+                    f"evidence {_escape_cell(verdict.evidence_assessment or 'not stated')}): "
+                    f"{_escape_block(verdict.reasoning)}"
+                )
+                if verdict.counter_evidence:
+                    lines.append(f"  - counter-evidence: {_escape_block(verdict.counter_evidence)}")
+            lines.append("")
+
+    if run_meta.get("amendment_notes"):
+        lines.append("### Amendments")
+        lines.append("")
+        for note in run_meta["amendment_notes"]:
+            lines.append(f"- {_escape_block(str(note))}")
+        lines.append("")
+    return lines
+
+
+def render(
+    claims: list[Claim],
+    aliases: list[Alias],
+    run_meta: dict[str, Any],
+    verdicts: list[Verdict] | None = None,
+    states: dict[str, str] | None = None,
+) -> str:
     lines: list[str] = [f"# Adversarial review — {run_meta['artifact']}", ""]
     lines.append(f"Mode: `{run_meta['mode']}` · preset: `{run_meta['preset']}`")
     lines.append("")
@@ -181,6 +275,9 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict[str, Any]) 
             lines.append(f"- {_escape_block(note)}")
         lines.append("")
 
+    if states is not None:
+        lines.extend(_render_verdict_sections(claims, verdicts or [], states, run_meta))
+
     lines.append("## Findings")
     lines.append("")
     if not claims:
@@ -193,7 +290,12 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict[str, Any]) 
     ordered = sorted(claims, key=lambda c: (SEVERITY_ORDER.get(c.severity, 3), c.id))
     for claim in ordered:
         flag = " *(advisory)*" if claim.advisory else ""
-        lines.append(f"### {claim.id} — {claim.severity}{flag}")
+        # The state belongs in the heading, not only in the table above: a
+        # reader scrolling the findings must not read a refuted claim as a
+        # live defect.
+        state = (states or {}).get(claim.id)
+        badge = f" — {state}" if state else ""
+        lines.append(f"### {claim.id} — {claim.severity}{flag}{badge}")
         lines.append("")
         lines.append(f"**Claim:** {_escape_block(claim.claim)}")
         if claim.location:
@@ -201,6 +303,8 @@ def render(claims: list[Claim], aliases: list[Alias], run_meta: dict[str, Any]) 
         lines.append(f"**Evidence:** {_escape_block(claim.evidence)}")
         lines.append(f"**Failure scenario:** {_escape_block(claim.failure_scenario)}")
         lines.append(f"**Suggested fix:** {_escape_block(claim.suggested_fix)}")
+        if claim.supersedes:
+            lines.append(f"**Supersedes:** {_code_span(claim.supersedes)} *(amended by judges)*")
         if claim.origin:
             corroborated = (
                 f" *(corroborated by {len(claim.origin)} friends)*" if len(claim.origin) > 1 else ""

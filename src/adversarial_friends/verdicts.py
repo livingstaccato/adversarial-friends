@@ -24,6 +24,7 @@ from collections import Counter
 from collections.abc import Iterable
 import dataclasses
 
+from .ids import bump_claim_id
 from .ledger import Claim, Verdict
 
 # A claim's verdicts reduced to a comparable, order-independent shape:
@@ -202,6 +203,71 @@ def apply_downgrades(verdict: Verdict, round_no: int, max_rounds: int) -> Verdic
       amendment-first would silently stop applying the evidence rule.
     """
     return downgrade_late_amendment(downgrade_unverifiable(verdict), round_no, max_rounds)
+
+
+def build_successor(
+    claim: Claim, amendments: list[Verdict], round_no: int
+) -> tuple[Claim, str | None]:
+    """The `c-0007@2` a unanimous `amended` produces -- §6.1.
+
+    Returns the successor and, when the amenders did not propose the same
+    wording, a note recording the proposals that were not adopted.
+
+    **Which wording wins is not in the spec, and something has to.** Judges
+    agree on the verdict word `amended` without agreeing on a rewrite, and
+    the successor can only carry one. The adopted wording is the amender's
+    first in sorted judge order: deterministic, so a replay of the same
+    ledger produces the same successor, and arbitrary in a way that does not
+    quietly favour any particular friend. Every other proposal goes into the
+    returned note rather than being dropped -- a rewrite a judge took the
+    trouble to write is exactly the kind of thing this tool exists to
+    surface, and silently discarding it would be the worst available
+    outcome.
+
+    `origin` is the union of the prior version's origin and every amender
+    (§6.1): none of them is independent of the successor's wording, so all
+    are excluded from judging it (§7.1). With a small roster this can leave
+    a successor with no judges at all -- that is a real, visible outcome
+    (it lands below quorum as `unproven`), not something to paper over by
+    letting an author judge its own rewrite.
+    """
+    ordered = sorted(amendments, key=lambda v: v.judge)
+    adopted = next((v for v in ordered if v.amended_claim), None)
+    if adopted is None:
+        # Guarded by verdictschema (an `amended` verdict must carry wording),
+        # so reaching here means a caller built Verdicts directly.
+        raise ValueError(f"no amender supplied wording for {claim.id}")
+
+    # Compared by WORDING, not by identity: judges that independently
+    # proposed the same rewrite have not disagreed about anything, and
+    # reporting that as a conflict would train a reader to ignore the note.
+    rejected = []
+    for verdict in ordered:
+        proposal = verdict.amended_claim
+        if proposal and proposal != adopted.amended_claim and proposal not in rejected:
+            rejected.append(proposal)
+    note = None
+    if rejected:
+        alternates = "; ".join(repr(p) for p in rejected)
+        note = (
+            f"{claim.id}: judges agreed to amend but proposed different wordings. "
+            f"Adopted {adopted.amended_claim!r}; also proposed: {alternates}"
+        )
+
+    origin = list(claim.origin)
+    for verdict in ordered:
+        if verdict.judge not in origin:
+            origin.append(verdict.judge)
+
+    successor = dataclasses.replace(
+        claim,
+        id=bump_claim_id(claim.id),
+        supersedes=claim.id,
+        origin=origin,
+        round=round_no,
+        claim=adopted.amended_claim or claim.claim,
+    )
+    return successor, note
 
 
 def round_is_dry(all_claims_were_aliases: bool, every_required_friend_ok: bool) -> bool:

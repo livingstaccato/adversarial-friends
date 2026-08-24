@@ -56,6 +56,8 @@ import time
 from typing import IO
 import warnings
 
+from .claimschema import CLAIM_CONTRACT
+from .contracts import PayloadContract
 from .normalize import Envelope, NormalizeResult, normalize
 
 # Wait windows for group escalation: this long for the group to exit after
@@ -262,6 +264,7 @@ def run_process(
     abort_event: threading.Event | None = None,
     envelope: Envelope | None = None,
     structured_output: bool = False,
+    contract: PayloadContract = CLAIM_CONTRACT,
 ) -> SpawnResult:
     """Run one friend; see the module docstring for the process-group and
     pump-thread hazards this guards against.
@@ -276,9 +279,11 @@ def run_process(
     exit condition is checked, so every existing caller and test is
     unaffected.
 
-    `envelope`/`structured_output` are passed straight through to
-    normalize() -- see its docstring. Defaults (None/False) reproduce
-    exactly the prior behavior for every existing caller.
+    `envelope`/`structured_output`/`contract` are passed straight through
+    to normalize() -- see its docstring. The defaults (None/False/claims)
+    reproduce exactly the prior behavior for every existing caller;
+    `contract` is what a cross-examination round overrides so a judge's
+    output is read against the verdict schema rather than the claim one.
 
     Popen() can fail for reasons beyond a missing or non-executable binary:
     `Argument list too long` (E2BIG, when a friend's prompt landed in a
@@ -419,7 +424,9 @@ def run_process(
             orphans_suspected,
         )
 
-    result = normalize(stdout, envelope=envelope, structured_output=structured_output)
+    result = normalize(
+        stdout, envelope=envelope, structured_output=structured_output, contract=contract
+    )
     failure_reason = None
     if process.returncode != 0:
         failure_reason = f"exit {process.returncode}"

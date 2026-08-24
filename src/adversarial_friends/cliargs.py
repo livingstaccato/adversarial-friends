@@ -8,6 +8,7 @@ import argparse
 
 from . import __version__
 from .adapters import Adapter, FriendSpec
+from .ceilings import DEFAULT_MAX_ROUNDS, DEFAULT_MAX_WALL_CLOCK_S
 from .errors import UsageError
 from .ids import validate_friend_name
 from .trust import MODEL_RE
@@ -31,6 +32,18 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--include-self", action="store_true")
     run_p.add_argument("--timeout", type=int, default=900)
     run_p.add_argument("--out", default=None)
+    run_p.add_argument(
+        "--attributed",
+        action="store_true",
+        help="show judges who wrote each claim (§5 defaults to blind)",
+    )
+    # §7.4's ceilings. --max-calls defaults to None rather than a number
+    # because its default is DERIVED from the roster size (see
+    # ceilings.derive_max_calls): a constant here is exactly the bug §7.4
+    # calls out, where the shipped default tripped its own ceiling mid-run.
+    run_p.add_argument("--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS)
+    run_p.add_argument("--max-calls", type=int, default=None)
+    run_p.add_argument("--max-wall-clock", type=int, default=DEFAULT_MAX_WALL_CLOCK_S)
 
     sub.add_parser("doctor")
     return parser

@@ -10,6 +10,8 @@ import threading
 
 from . import http_transport
 from .adapters import Adapter, Capability, FriendSpec, build_argv
+from .claimschema import CLAIM_CONTRACT
+from .contracts import PayloadContract
 from .normalize import NormalizeResult
 from .spawn import SpawnResult, run_process
 from .trust import check_denied_values
@@ -112,6 +114,7 @@ def _dispatch(
     prompt_file: Path,
     schema_file: Path,
     abort_event: threading.Event | None = None,
+    contract: PayloadContract = CLAIM_CONTRACT,
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -144,6 +147,11 @@ def _dispatch(
     test-only "fake" cli, which never touches adapters.py at all -- see
     _FAKE_CAPABILITY's own docstring) and are passed straight through to
     spawn.run_process/normalize; see normalize.normalize's docstring.
+
+    `contract` selects which payload kind this friend's output is read as.
+    It defaults to claims, so a critique round needs no argument; a
+    cross-examination round passes the verdict contract, and the choice
+    reaches both transports identically.
     """
     if spec.cli == "fake":
         # A spec with cli == "fake" only ever comes from
@@ -152,7 +160,18 @@ def _dispatch(
         # fake_enabled check. fake_cmd is None here only if that invariant
         # was broken by a caller constructing a FriendSpec directly.
         assert fake_cmd is not None
-        argv = [*fake_cmd, spec.lens]
+        # The prompt file is passed so a fake friend can actually READ what
+        # it was asked. Most modes ignore it and print a canned payload, but
+        # a judging round's fake has to respond to the real claim ids the
+        # runner generated -- ids it cannot know in advance. Without this the
+        # crossexam path could only be tested against hard-coded ids, which
+        # tests the fixture rather than the runner.
+        #
+        # Passed as a NAMED flag, not a positional: fake_friend.py's other
+        # modes already take positional pidfile arguments when a test invokes
+        # them directly (see tests/test_spawn.py), and appending a positional
+        # here would silently turn the prompt path into one of those.
+        argv = [*fake_cmd, spec.lens, f"--prompt={prompt_file}"]
         stdin_text = None
         capability = _FAKE_CAPABILITY
         envelope = None
@@ -166,7 +185,7 @@ def _dispatch(
         return (
             spec,
             http_transport.capability_for(adapter),
-            http_transport.run_request(adapter, spec, prompt_file, spec.timeout),
+            http_transport.run_request(adapter, spec, prompt_file, spec.timeout, contract),
         )
     else:
         adapter = registry[spec.cli]
@@ -182,5 +201,6 @@ def _dispatch(
         abort_event=abort_event,
         envelope=envelope,
         structured_output=structured_output,
+        contract=contract,
     )
     return spec, capability, outcome

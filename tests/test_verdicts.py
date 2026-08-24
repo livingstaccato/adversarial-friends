@@ -333,6 +333,61 @@ def test_apply_downgrades_leaves_an_ordinary_verdict_alone():
     assert verdicts.apply_downgrades(v, round_no=2, max_rounds=3) == v
 
 
+# --- §6.1 successors from a unanimous amendment ----------------------------
+
+
+def test_a_successor_bumps_the_version_and_records_what_it_supersedes():
+    amendments = [verdict("claude-security", "amended", amended="the guard is weak")]
+    successor, _note = verdicts.build_successor(claim(), amendments, round_no=2)
+    assert successor.id == "c-0001@2"
+    assert successor.supersedes == "c-0001@1"
+    assert successor.claim == "the guard is weak"
+
+
+def test_the_successor_origin_is_the_union_of_author_and_amenders():
+    """§6.1. Neither is independent of the successor's wording, so both are
+    excluded from judging it."""
+    amendments = [
+        verdict("claude-security", "amended", amended="reworded"),
+        verdict("agy-assumptions", "amended", amended="reworded"),
+    ]
+    successor, _ = verdicts.build_successor(claim(), amendments, round_no=2)
+    assert set(successor.origin) == {"codex-ops", "claude-security", "agy-assumptions"}
+    assert verdicts.judges_for(successor, ROSTER) == []
+
+
+def test_disagreeing_amenders_produce_a_note_naming_what_was_not_adopted():
+    """Judges can agree on `amended` without agreeing on a rewrite, and the
+    successor can only carry one. A discarded proposal is exactly the kind
+    of thing this tool exists to surface, so it must not vanish."""
+    amendments = [
+        verdict("agy-assumptions", "amended", amended="first wording"),
+        verdict("claude-security", "amended", amended="second wording"),
+    ]
+    successor, note = verdicts.build_successor(claim(), amendments, round_no=2)
+    # Sorted judge order, so a replay of the same ledger picks the same one.
+    assert successor.claim == "first wording"
+    assert note is not None
+    assert "second wording" in note
+
+
+def test_agreeing_amenders_produce_no_note():
+    amendments = [
+        verdict("agy-assumptions", "amended", amended="same"),
+        verdict("claude-security", "amended", amended="same"),
+    ]
+    _successor, note = verdicts.build_successor(claim(), amendments, round_no=2)
+    assert note is None
+
+
+def test_a_successor_keeps_the_advisory_flag_of_its_ancestor():
+    """Advisory-ness comes from the originating lens, which an amendment
+    does not change."""
+    amendments = [verdict("claude-security", "amended", amended="reworded")]
+    successor, _ = verdicts.build_successor(claim(advisory=True), amendments, round_no=2)
+    assert successor.advisory is True
+
+
 # --- §7.3 termination ------------------------------------------------------
 
 

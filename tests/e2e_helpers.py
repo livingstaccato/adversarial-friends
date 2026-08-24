@@ -63,7 +63,7 @@ def _env(extra=None):
     return env
 
 
-def run_af(tmp_path, artifact, *extra, env_extra=None):
+def run_af(tmp_path, artifact, *extra, env_extra=None, mode="report"):
     return subprocess.run(
         [
             sys.executable,
@@ -71,7 +71,7 @@ def run_af(tmp_path, artifact, *extra, env_extra=None):
             "run",
             str(artifact),
             "--mode",
-            "report",
+            mode,
             "--out",
             str(tmp_path / "runs"),
             *extra,

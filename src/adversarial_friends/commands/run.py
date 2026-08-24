@@ -15,25 +15,19 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from types import FrameType
 from typing import Any
 import uuid
 
-from .. import isolation
-from ..adapters import Capability, FriendSpec, load_adapters
+from .. import isolation, verdicts as vd
+from ..adapters import load_adapters
+from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
 from ..cliargs import _specs_from_flags
-from ..dispatch import (
-    _UNKNOWN_CAPABILITY,
-    PROMPT_ARGV_WARN_BYTES,
-    _dispatch,
-    _exception_outcome,
-    _stderr_tail,
-)
-from ..errors import AfError, NoFriendsError, UsageError
+from ..dispatch import PROMPT_ARGV_WARN_BYTES
+from ..errors import CeilingError, NoFriendsError, UsageError
 from ..ids import format_claim_id, validate_friend_name
 from ..ledger import Claim
 from ..merge import exact_merge
@@ -41,8 +35,10 @@ from ..paths import ADAPTER_DIR
 from ..prompt import _build_friend_prompt, available_lenses
 from ..report import render
 from ..roster import resolve
+from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore, default_root
-from ..spawn import SpawnResult
+from ..verdictschema import schema_path as verdict_schema_path
+from .crossexam import run_rounds
 
 # The type signal.signal() both accepts and returns, per typeshed: a
 # handler callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
@@ -75,8 +71,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     artifact = Path(args.artifact)
     if not artifact.is_file():
         raise UsageError(f"artifact not found: {artifact}")
-    if args.mode != "report":
-        raise UsageError(f"mode {args.mode!r} is not implemented yet; only 'report' is available")
+    if args.mode not in ("report", "crossexam"):
+        raise UsageError(
+            f"mode {args.mode!r} is not implemented yet; 'report' and 'crossexam' are available"
+        )
+    if args.max_rounds < 2 and args.mode == "crossexam":
+        # Round 1 is the critique round; judging starts at round 2. A
+        # crossexam capped at one round is a report with a misleading name.
+        raise UsageError(
+            f"--max-rounds={args.max_rounds} leaves no judging round for "
+            "--mode crossexam (round 1 is the critique round; judging starts "
+            "at round 2). Use --mode report, or --max-rounds 2 or more."
+        )
     if args.preset != "inherit":
         # --preset is accepted and printed in the report header, but nothing
         # reads it: no code path varies model/effort/timeout selection by
@@ -208,6 +214,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             specs = [dataclasses.replace(s, scope="doc") for s in specs]
 
+        run_started = time.monotonic()
         run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
         store = RunStore(Path(args.out) if args.out else default_root(), run_id)
         frozen, digest = store.artifact_copy(artifact)
@@ -279,85 +286,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         if repo_root is not None and any(s.scope == "repo" for s in specs):
             snapshot_sha = isolation.snapshot_commit(repo_root)
 
-        results = []
-        with tempfile.TemporaryDirectory(prefix="af-isolation-") as iso_root_str:
-            iso_root = Path(iso_root_str)
-            cwd_for: dict[str, Path] = {}
-            try:
-                for spec in specs:
-                    if abort_event.is_set():
-                        break
-                    dest = iso_root / spec.name
-                    if spec.scope == "repo":
-                        # A spec only reaches scope="repo" when repo_root was
-                        # not None (see the downgrade-to-"doc" branch above),
-                        # and any(s.scope == "repo" for s in specs) is exactly
-                        # what triggers snapshot_sha's assignment just above --
-                        # both are non-None by construction whenever this
-                        # branch runs.
-                        assert repo_root is not None
-                        assert snapshot_sha is not None
-                        isolation.add_worktree(repo_root, snapshot_sha, dest)
-                    else:
-                        isolation.doc_scope_dir(dest, artifact)
-                    cwd_for[spec.name] = dest
+        def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
+            active_pool[0] = pool
 
-                def _run_one(spec: FriendSpec) -> tuple[FriendSpec, Capability, SpawnResult]:
-                    # spawn.run_process already turns most process-launch
-                    # failures (missing binary, E2BIG, ENOEXEC, ...) into a
-                    # SpawnResult rather than raising. This is the second,
-                    # broader layer: ANYTHING else that goes wrong for one
-                    # friend -- a bug in adapter wiring, an OSError that
-                    # still somehow escaped Popen(), anything unforeseen --
-                    # must not end the whole run. pool.map (below) collects
-                    # this function's return values one per future; letting
-                    # an exception escape here would propagate out of
-                    # pool.map entirely, losing every other friend's
-                    # (possibly already-succeeded) result along with it. A
-                    # deliberate AfError (e.g. check_denied_values inside
-                    # dispatch._dispatch refusing a dangerous flag) is a
-                    # real, intentional stop condition with its own exit
-                    # code -- that still propagates, unlike a genuinely
-                    # unexpected exception.
-                    try:
-                        return _dispatch(
-                            spec,
-                            cwd_for[spec.name],
-                            registry,
-                            fake_cmd,
-                            prompt_for[spec.name],
-                            schema_file,
-                            abort_event,
-                        )
-                    except AfError:
-                        raise
-                    except Exception as exc:
-                        return spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
-
-                # Only specs that actually got an isolation directory (i.e.
-                # every one of them, unless the loop above broke early on
-                # abort) are dispatched -- _run_one would otherwise KeyError
-                # looking up cwd_for for a spec whose setup never happened.
-                dispatch_specs = [s for s in specs if s.name in cwd_for]
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=max(1, len(dispatch_specs))
-                ) as pool:
-                    active_pool[0] = pool
-                    try:
-                        results = list(pool.map(_run_one, dispatch_specs))
-                    finally:
-                        active_pool[0] = None
-            finally:
-                for spec in specs:
-                    if spec.scope == "repo" and spec.name in cwd_for:
-                        # Same invariant as the add_worktree call above:
-                        # scope == "repo" implies repo_root is not None.
-                        assert repo_root is not None
-                        isolation.remove_worktree(repo_root, cwd_for[spec.name])
-                # doc_scope_dir entries are cleaned up automatically: they all
-                # live under iso_root, and the TemporaryDirectory context
-                # manager removes it (and everything under it) on exit below,
-                # independent of whether dispatch raised.
+        results = dispatch_round(
+            specs,
+            1,
+            prompt_for,
+            store,
+            registry,
+            fake_cmd,
+            schema_file,
+            artifact,
+            repo_root,
+            snapshot_sha,
+            abort_event,
+            on_pool=_track_pool,
+        )
 
         counter = 0
         all_claims: list[Claim] = []
@@ -365,45 +310,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         friends_meta = []
         any_success = False
         for spec, capability, outcome in results:
-            raw_path, _json_path, meta_path = store.friend_paths(1, spec.name)
-            raw_path.write_text(outcome.stdout, encoding="utf-8")
-            meta_path.write_text(
-                f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
-                f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
-                f"orphans_suspected={outcome.orphans_suspected}\n",
-                encoding="utf-8",
-            )
-            # stderr is captured by spawn.run_process on every friend
-            # (SpawnResult.stderr) but was previously written nowhere and
-            # referenced nowhere -- an unauthenticated friend showed up as
-            # "failed: exit 1" with a 0-byte .raw and no diagnosis anywhere.
-            # Persisted unconditionally (even "" -- a stable, always-present
-            # file beats one that only sometimes exists), with a short tail
-            # folded into the status column for a failed friend so the
-            # diagnosis is visible without opening a second file.
-            err_path = store.friend_err_path(1, spec.name)
-            err_path.write_text(outcome.stderr, encoding="utf-8")
-            status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
-            if outcome.failure_reason is not None and outcome.stderr.strip():
-                status += (
-                    f" (stderr: {_stderr_tail(outcome.stderr)}; "
-                    f"full text in round-1/{spec.name}.err)"
-                )
-            if outcome.orphans_suspected:
-                # A leaked descendant must not look identical to a clean run --
-                # surfaced in the same status column readers already check for
-                # "failed", rather than a silent field only run.json carries.
-                status += " [orphans suspected]"
-            friends_meta.append(
-                {
-                    "name": spec.name,
-                    "model": spec.model,
-                    "effort": spec.effort,
-                    "readonly": capability.readonly,
-                    "scope": spec.scope,
-                    "status": status,
-                }
-            )
+            friends_meta.append(persist_result(store, 1, spec, capability, outcome))
             if outcome.failure_reason is not None:
                 continue
             any_success = True
@@ -456,7 +363,47 @@ def cmd_run(args: argparse.Namespace) -> int:
             all_claims.extend(kept)
             all_aliases.extend(aliases)
 
-        meta = {
+        cross = None
+        if args.mode == "crossexam" and all_claims:
+            # Only worth entering with claims in hand: with none there is
+            # nothing to judge, and a judging round would cost a full fan-out
+            # to decide nothing. A round-1 report is the honest result.
+            budget = Budget(
+                max_calls=(
+                    args.max_calls
+                    if args.max_calls is not None
+                    else derive_max_calls(len(specs), args.max_rounds, max_loop_iterations=1)
+                ),
+                max_rounds=args.max_rounds,
+                max_wall_clock_s=args.max_wall_clock,
+                started=run_started,
+            )
+            budget.spend(len(results))
+            unreachable = warn_if_unreachable(len(specs), args.max_rounds, budget.max_calls)
+            if unreachable:
+                downgrades.append(unreachable)
+            cross = run_rounds(
+                specs,
+                all_claims,
+                store,
+                registry,
+                fake_cmd,
+                verdict_schema_path(store.run_dir),
+                artifact,
+                artifact_text,
+                repo_root,
+                snapshot_sha,
+                abort_event,
+                budget,
+                args.max_rounds,
+                attributed=args.attributed,
+                on_pool=_track_pool,
+            )
+            all_claims = cross.claims
+            friends_meta.extend(cross.friends_meta)
+            downgrades.extend(cross.downgrades)
+
+        meta: dict[str, Any] = {
             "mode": args.mode,
             "preset": args.preset,
             "artifact": artifact.name,
@@ -464,8 +411,22 @@ def cmd_run(args: argparse.Namespace) -> int:
             "friends": friends_meta,
             "downgrades": downgrades,
         }
+        if cross is not None:
+            meta["rounds_run"] = cross.rounds_run
+            meta["claim_states"] = cross.states
+            meta["amendment_notes"] = cross.notes
+            meta["ceiling_hit"] = cross.ceiling_hit
+            meta["incomplete"] = cross.incomplete
         store.write_run_json(meta)
-        store.write_report(render(all_claims, all_aliases, meta))
+        store.write_report(
+            render(
+                all_claims,
+                all_aliases,
+                meta,
+                verdicts=cross.verdicts if cross else None,
+                states=cross.states if cross else None,
+            )
+        )
         print(store.run_dir)
 
         if abort_signum["value"] is not None:
@@ -478,13 +439,29 @@ def cmd_run(args: argparse.Namespace) -> int:
             # 11, 1, 0).
             print(f"afriend: aborted by signal {abort_signum['value']}", file=sys.stderr)
             return 128 + abort_signum["value"]
-        # "report" mode never gates on individual claims, but a run where not
-        # one friend produced a usable result (every round failed/timed out) is
-        # not a success either -- exit 1 ("gate blocked or incomplete") rather
-        # than 0, so a caller cannot mistake "we ran the mechanism" for "we got
-        # a trustworthy critique". Distinct from NoFriendsError's exit 3, which
-        # fires before any friend is even dispatched.
-        return 0 if any_success else 1
+        # §7.6's exit precedence. A ceiling outranks every outcome below it
+        # because a truncated run has not evaluated anything: a CI wrapper
+        # can then treat 11 as "retry" and 1 as "block" without ambiguity.
+        if cross is not None and cross.ceiling_hit is not None:
+            print(f"afriend: {cross.ceiling_hit}", file=sys.stderr)
+            return CeilingError.exit_code
+        # A run where not one friend produced a usable result (every round
+        # failed/timed out) is not a success -- exit 1 ("gate blocked or
+        # incomplete") rather than 0, so a caller cannot mistake "we ran the
+        # mechanism" for "we got a trustworthy critique". Distinct from
+        # NoFriendsError's exit 3, which fires before any friend is even
+        # dispatched.
+        if not any_success:
+            return 1
+        if cross is not None:
+            # A crossexam run that left claims undecided, or that lost a
+            # required friend mid-round (§7.2's M12), is incomplete. Only a
+            # run that actually reached terminal states for everything
+            # reports success.
+            unresolved = [s for s in cross.states.values() if s not in vd.TERMINAL_STATES]
+            if cross.incomplete or unresolved:
+                return 1
+        return 0
     finally:
         # A distinct loop variable name from the `for sig in (...)` loop
         # above: reusing `sig` here would bind it to a different type

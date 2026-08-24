@@ -33,6 +33,8 @@ from urllib.parse import urlparse
 import urllib.request
 
 from .adapters import Adapter, Capability, FriendSpec
+from .claimschema import CLAIM_CONTRACT
+from .contracts import PayloadContract
 from .normalize import NormalizeResult, normalize
 from .spawn import SpawnResult
 
@@ -120,8 +122,13 @@ def run_request(
     spec: FriendSpec,
     prompt_file: Path,
     timeout_s: int,
+    contract: PayloadContract = CLAIM_CONTRACT,
 ) -> SpawnResult:
-    """POST the prompt to the adapter's endpoint and normalize the reply."""
+    """POST the prompt to the adapter's endpoint and normalize the reply.
+
+    `contract` selects which payload kind the reply is read as, exactly as it
+    does for the exec transport -- an HTTP friend judges in a crossexam round
+    like any other."""
     endpoint = adapter.endpoint
     model = spec.model or ""
     argv = ["POST", endpoint, model or "<default-model>"]
@@ -197,7 +204,12 @@ def run_request(
     except json.JSONDecodeError:
         pass
 
-    result = normalize(text, envelope=adapter.envelope, structured_output=adapter.structured_output)
+    result = normalize(
+        text,
+        envelope=adapter.envelope,
+        structured_output=adapter.structured_output,
+        contract=contract,
+    )
     return SpawnResult(
         argv=argv,
         exit_code=status,
