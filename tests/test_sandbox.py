@@ -282,6 +282,45 @@ def test_the_real_ssh_directory_is_not_readable(tmp_path):
 # --- Dispatch integration --------------------------------------------------
 
 
+def _unconfinable_adapter(binary="sh"):
+    """An adapter with no readonly mode and a binary that certainly exists.
+
+    Hand-built rather than taken from the registry: the registry's only
+    unconfinable adapter is `opencode`, and whether opencode is INSTALLED
+    differs between a developer machine and CI. A test that silently changes
+    branch depending on that is worse than no test -- these two first passed
+    locally and failed on CI for exactly that reason.
+    """
+    from adversarial_friends import adapters
+
+    return adapters.Adapter(
+        name="unconfinable",
+        binary=binary,
+        base_argv=[],
+        prompt_mode="stdin",
+        prompt_flag="",
+        readonly_argv=[],
+        schema_flag="",
+        model_flag="",
+        internal_timeout_flag="",
+        effort_kind="none",
+    )
+
+
+def _spec_for(name="unconfinable"):
+    from adversarial_friends.adapters import FriendSpec
+
+    return FriendSpec(
+        name="unconfinable-ops-0",
+        cli=name,
+        lens="ops",
+        model=None,
+        effort=None,
+        scope="doc",
+        timeout=5,
+    )
+
+
 def test_only_adapters_without_a_readonly_mode_are_confined():
     """The narrowing that keeps this shippable.
 
@@ -319,24 +358,13 @@ def test_a_friend_with_no_readonly_mode_is_refused_without_a_mechanism(monkeypat
     property is identical either way -- the process is never started.
     """
     from adversarial_friends import dispatch
-    from adversarial_friends.adapters import FriendSpec, load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
 
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: None)
-    registry = load_adapters(ADAPTER_DIR)
-    spec = FriendSpec(
-        name="opencode-ops-0",
-        cli="opencode",
-        lens="ops",
-        model=None,
-        effort=None,
-        scope="doc",
-        timeout=900,
-    )
+    registry = {"unconfinable": _unconfinable_adapter()}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
     _spec, _cap, outcome = dispatch._dispatch(
-        spec, tmp_path, registry, None, prompt, tmp_path / "s.json"
+        _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.failure_reason is not None
     assert "refused" in outcome.failure_reason
@@ -344,28 +372,16 @@ def test_a_friend_with_no_readonly_mode_is_refused_without_a_mechanism(monkeypat
 
 
 def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
-    """--allow-unsandboxed-friend accepts the risk explicitly. The friend
-    then fails for the ordinary reason (no opencode binary here), not for
-    the refusal."""
+    """--allow-unsandboxed-friend accepts the risk explicitly, and the
+    friend then actually runs."""
     from adversarial_friends import dispatch
-    from adversarial_friends.adapters import FriendSpec, load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
 
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: None)
-    registry = load_adapters(ADAPTER_DIR)
-    spec = FriendSpec(
-        name="opencode-ops-0",
-        cli="opencode",
-        lens="ops",
-        model=None,
-        effort=None,
-        scope="doc",
-        timeout=900,
-    )
+    registry = {"unconfinable": _unconfinable_adapter(binary="true")}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
     _spec, _cap, outcome = dispatch._dispatch(
-        spec,
+        _spec_for(),
         tmp_path,
         registry,
         None,
@@ -374,6 +390,24 @@ def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
         allow_unsandboxed=True,
     )
     assert "refused" not in (outcome.failure_reason or "")
+    assert outcome.argv[0] == "true", "it should have run unwrapped"
+
+
+def test_a_friend_whose_binary_is_missing_is_not_sandboxed(tmp_path):
+    """Wrapping a command that does not exist confines nothing, and it
+    destroys the diagnosis: once argv starts with the wrapper, Popen
+    succeeds and "binary not found" becomes an opaque exit code from
+    sandbox-exec. A missing agent CLI is this tool's most common setup
+    problem."""
+    from adversarial_friends import dispatch
+
+    registry = {"unconfinable": _unconfinable_adapter(binary="af-nonexistent-xyz")}
+    prompt = tmp_path / "p.prompt"
+    prompt.write_text("hi")
+    _spec, _cap, outcome = dispatch._dispatch(
+        _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
+    )
+    assert outcome.failure_reason == "binary not found: af-nonexistent-xyz"
 
 
 @_REAL
@@ -382,23 +416,12 @@ def test_a_confined_friend_gets_the_sandbox_prefix(tmp_path):
     and the profile it ran under is written next to its prompt for a human
     to read."""
     from adversarial_friends import dispatch
-    from adversarial_friends.adapters import FriendSpec, load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
 
-    registry = load_adapters(ADAPTER_DIR)
-    spec = FriendSpec(
-        name="opencode-ops-0",
-        cli="opencode",
-        lens="ops",
-        model=None,
-        effort=None,
-        scope="doc",
-        timeout=5,
-    )
+    registry = {"unconfinable": _unconfinable_adapter(binary="true")}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
     _spec, _cap, outcome = dispatch._dispatch(
-        spec, tmp_path, registry, None, prompt, tmp_path / "s.json"
+        _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.argv[0] in (sandbox.SANDBOX_EXEC, sandbox.BWRAP)
     if outcome.argv[0] == sandbox.SANDBOX_EXEC:
