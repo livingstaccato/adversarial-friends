@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import sys
 import threading
 import time
 from types import FrameType
@@ -28,7 +27,7 @@ from ..failures import RepeatTracker
 from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
 from ..orchestrator import (
-    NEEDS_ORCHESTRATOR_EXIT,
+    NeedsOrchestrator,
     write_request,
 )
 from ..paths import ADAPTER_DIR
@@ -264,157 +263,168 @@ def cmd_run(args: argparse.Namespace) -> int:
         streak = 0
         iterations_run = 0
 
-        for iteration in range(1, max_iterations + 1):
-            if abort_event.is_set():
-                break
-            # Each iteration owns a distinct block of round numbers, so a
-            # loop's rounds never collide in the run directory or the ledger:
-            # iteration 1 critiques in round 1 and judges in 2..max_rounds,
-            # iteration 2 critiques in round max_rounds+1, and so on.
-            base_round = (iteration - 1) * args.max_rounds + 1
-            if budget.would_exceed_calls(len(specs)):
-                budget.exhaust(
-                    f"--max-calls={budget.max_calls} reached before iteration "
-                    f"{iteration}'s critique round"
-                )
-                break
-            if budget.out_of_time(time.monotonic()):
-                budget.exhaust(f"--max-wall-clock reached before iteration {iteration}")
-                break
+        # Any halt for the orchestrator must leave a resumable run behind.
+        # A resumed run rebuilds its whole configuration from run.json, so
+        # raising before writing one produces a directory that can never be
+        # continued -- which is how the extraction halt first shipped, and
+        # why this is caught here rather than at each raise site.
+        try:
+            for iteration in range(1, max_iterations + 1):
+                if abort_event.is_set():
+                    break
+                # Each iteration owns a distinct block of round numbers, so a
+                # loop's rounds never collide in the run directory or the ledger:
+                # iteration 1 critiques in round 1 and judges in 2..max_rounds,
+                # iteration 2 critiques in round max_rounds+1, and so on.
+                base_round = (iteration - 1) * args.max_rounds + 1
+                if budget.would_exceed_calls(len(specs)):
+                    budget.exhaust(
+                        f"--max-calls={budget.max_calls} reached before iteration "
+                        f"{iteration}'s critique round"
+                    )
+                    break
+                if budget.out_of_time(time.monotonic()):
+                    budget.exhaust(f"--max-wall-clock reached before iteration {iteration}")
+                    break
 
-            # Re-read on every iteration. The runner never edits an artifact
-            # (§7.5), so a `loop` picks up a revision only if something else
-            # made one between iterations; when nothing did, the identical
-            # artifact produces identical claims, they all alias, and the
-            # dry-round streak is what ends the loop.
-            artifact_text = artifact.read_text(encoding="utf-8")
+                # Re-read on every iteration. The runner never edits an artifact
+                # (§7.5), so a `loop` picks up a revision only if something else
+                # made one between iterations; when nothing did, the identical
+                # artifact produces identical claims, they all alias, and the
+                # dry-round streak is what ends the loop.
+                artifact_text = artifact.read_text(encoding="utf-8")
 
-            if resume_dir is not None and iteration == 1:
-                resumed = resume_round_one(
-                    args,
-                    store,
+                if resume_dir is not None and iteration == 1:
+                    resumed = resume_round_one(
+                        args,
+                        store,
+                        specs,
+                        registry,
+                        fake_cmd,
+                        artifact,
+                        artifact_text,
+                        repo_root,
+                        snapshot_sha,
+                        abort_event,
+                        budget,
+                        base_round,
+                        _track_pool,
+                    )
+                    all_claims = resumed.claims
+                    all_aliases.extend(resumed.aliases)
+                    friends_meta.extend(resumed.friends_meta)
+                    downgrades.extend(resumed.downgrades)
+                    cross = resumed.cross
+                    counter = len(all_claims)
+                    any_success = True
+                    iterations_run = 1
+                    break
+
+                critique, all_claims, counter = run_critique(
                     specs,
-                    registry,
-                    fake_cmd,
-                    artifact,
-                    artifact_text,
-                    repo_root,
-                    snapshot_sha,
-                    abort_event,
-                    budget,
                     base_round,
-                    _track_pool,
-                )
-                all_claims = resumed.claims
-                all_aliases.extend(resumed.aliases)
-                friends_meta.extend(resumed.friends_meta)
-                downgrades.extend(resumed.downgrades)
-                cross = resumed.cross
-                counter = len(all_claims)
-                any_success = True
-                iterations_run = 1
-                break
-
-            critique, all_claims, counter = run_critique(
-                specs,
-                base_round,
-                all_claims,
-                counter,
-                artifact_text,
-                store,
-                registry,
-                fake_cmd,
-                schema_file,
-                artifact,
-                repo_root,
-                snapshot_sha,
-                abort_event,
-                on_pool=_track_pool,
-                allow_unsandboxed=args.allow_unsandboxed_friend,
-                tracker=tracker,
-                keep=args.keep,
-                extra_args=extra_args,
-            )
-            budget.spend(critique.calls)
-            iterations_run = iteration
-            friends_meta.extend(critique.friends_meta)
-            downgrades.extend(critique.downgrades)
-            all_aliases.extend(critique.aliases)
-            any_success = any_success or critique.any_success
-
-            if args.merge == "orchestrator" and all_claims:
-                # §4.2. Stop and ask for judgment the runner cannot make.
-                # run.json is written first: a resumed run rebuilds its whole
-                # configuration from it, so halting without it would leave a
-                # run directory that can never be resumed.
-                halt_meta = _base_meta(
-                    args,
-                    artifact,
-                    digest,
-                    friends_meta,
-                    downgrades,
-                    specs,
-                    repo_root,
-                    snapshot_sha,
-                    preset=resolved.preset,
-                    roster_source=resolved.source,
-                )
-                store.write_run_json(halt_meta)
-                request = write_request(store.round_dir(base_round), run_id, base_round, all_claims)
-                store.write_report(render(all_claims, all_aliases, halt_meta))
-                print(store.run_dir)
-                print(
-                    f"afriend: waiting for merge adjudication. Fill in "
-                    f"{request}, save it as RESPONSE.json beside it, then run:\n"
-                    f"  afriend run --resume {run_id} --out {store.root}",
-                    file=sys.stderr,
-                )
-                return NEEDS_ORCHESTRATOR_EXIT
-
-            if args.mode in JUDGING_MODES and all_claims:
-                # Only worth entering with claims in hand: with none there is
-                # nothing to judge, and a judging round would cost a full
-                # fan-out to decide nothing. A critique report is the honest
-                # result.
-                cross = run_rounds(
-                    specs,
                     all_claims,
+                    counter,
+                    artifact_text,
                     store,
                     registry,
                     fake_cmd,
-                    verdict_schema_path(store.run_dir),
+                    schema_file,
                     artifact,
-                    artifact_text,
                     repo_root,
                     snapshot_sha,
                     abort_event,
-                    budget,
-                    base_round + args.max_rounds - 1,
-                    attributed=args.attributed,
                     on_pool=_track_pool,
-                    first_round=base_round + 1,
                     allow_unsandboxed=args.allow_unsandboxed_friend,
                     tracker=tracker,
                     keep=args.keep,
                     extra_args=extra_args,
+                    merge=args.merge,
+                    run_id=run_id,
                 )
-                all_claims = cross.claims
-                friends_meta.extend(cross.friends_meta)
-                downgrades.extend(cross.downgrades)
+                budget.spend(critique.calls)
+                iterations_run = iteration
+                friends_meta.extend(critique.friends_meta)
+                downgrades.extend(critique.downgrades)
+                all_aliases.extend(critique.aliases)
+                any_success = any_success or critique.any_success
 
-            if args.mode != "loop":
-                break
+                if args.merge == "orchestrator" and all_claims:
+                    # §4.2. Stop and ask for judgment the runner cannot make.
+                    # Raised rather than returned so it takes the same path
+                    # §14.2's extraction halt does -- one place writes the
+                    # run.json a resume needs, so neither halt can ship a
+                    # directory that cannot be continued.
+                    request = write_request(
+                        store.round_dir(base_round), run_id, base_round, all_claims
+                    )
+                    raise NeedsOrchestrator(
+                        f"waiting for merge adjudication. Fill in {request}, save "
+                        "it as RESPONSE.json beside it, then re-run with --resume."
+                    )
 
-            # §7.3's streak arithmetic. A failed round resets rather than
-            # counting: a round that did not complete is not evidence of
-            # convergence.
-            dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
-            streak = next_streak(streak, failed=critique.any_failed, dry=dry)
-            states = list(cross.states.values()) if cross else []
-            if loop_should_terminate(streak, states):
-                break
-            if budget.exhausted_by:
-                break
+                if args.mode in JUDGING_MODES and all_claims:
+                    # Only worth entering with claims in hand: with none there is
+                    # nothing to judge, and a judging round would cost a full
+                    # fan-out to decide nothing. A critique report is the honest
+                    # result.
+                    cross = run_rounds(
+                        specs,
+                        all_claims,
+                        store,
+                        registry,
+                        fake_cmd,
+                        verdict_schema_path(store.run_dir),
+                        artifact,
+                        artifact_text,
+                        repo_root,
+                        snapshot_sha,
+                        abort_event,
+                        budget,
+                        base_round + args.max_rounds - 1,
+                        attributed=args.attributed,
+                        on_pool=_track_pool,
+                        first_round=base_round + 1,
+                        allow_unsandboxed=args.allow_unsandboxed_friend,
+                        tracker=tracker,
+                        keep=args.keep,
+                        extra_args=extra_args,
+                    )
+                    all_claims = cross.claims
+                    friends_meta.extend(cross.friends_meta)
+                    downgrades.extend(cross.downgrades)
+
+                if args.mode != "loop":
+                    break
+
+                # §7.3's streak arithmetic. A failed round resets rather than
+                # counting: a round that did not complete is not evidence of
+                # convergence.
+                dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
+                streak = next_streak(streak, failed=critique.any_failed, dry=dry)
+                states = list(cross.states.values()) if cross else []
+                if loop_should_terminate(streak, states):
+                    break
+                if budget.exhausted_by:
+                    break
+
+        except NeedsOrchestrator:
+            halt_meta = _base_meta(
+                args,
+                artifact,
+                digest,
+                friends_meta,
+                downgrades,
+                specs,
+                repo_root,
+                snapshot_sha,
+                preset=resolved.preset,
+                roster_source=resolved.source,
+            )
+            store.write_run_json(halt_meta)
+            store.write_report(render(all_claims, all_aliases, halt_meta))
+            print(store.run_dir)
+            raise
 
         # §7.5's gate. Evaluated against the run's own (empty) resolution
         # set, so a fresh gate run always reports what needs attention rather

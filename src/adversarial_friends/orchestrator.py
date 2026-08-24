@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .claimschema import validate_payload
 from .errors import AfError, UsageError
 from .ledger import Alias, Claim
 
@@ -43,6 +44,12 @@ SCHEMA_VERSION = 1
 # handshake and would arrive as a second question kind rather than a second
 # mechanism.
 QUESTION_MERGE = "merge"
+# §14.2's other use of this same handshake: a friend whose output could not
+# be repaired by pure transformation. Repair is deliberately not a model call
+# (re-prompting reaches a fresh process that never produced the broken
+# output), so when it fails the only thing left that can read the raw text is
+# something with judgment.
+QUESTION_EXTRACT = "extract"
 
 _INSTRUCTIONS = (
     "Two of these claims may describe the same defect in different words. "
@@ -234,3 +241,84 @@ def apply_merges(
         if c.id not in removed
     ]
     return kept, aliases
+
+
+_EXTRACT_INSTRUCTIONS = (
+    "This friend produced output that could not be parsed into claims, and "
+    "repair is a pure transformation with no model call (§14.2) -- so it "
+    "stopped here rather than guessing. Read `raw` and fill in `findings` "
+    "with what the friend actually claimed, using the same shape a friend "
+    "returns: severity, claim, location, evidence, failure_scenario, "
+    "suggested_fix. Extract only what is there; an empty list is the right "
+    "answer if the output contains no real findings."
+)
+
+
+def write_extract_request(
+    round_dir: Path, run_id: str, round_no: int, unparseable: list[dict[str, Any]]
+) -> Path:
+    """Ask for claims to be read out of unparseable friend output.
+
+    Covers every friend in the round that could not be parsed, not one at a
+    time: the whole round has already been dispatched by the time this is
+    written, and halting per-friend would ask the same question repeatedly
+    for output that is already sitting on disk.
+    """
+    path = request_path(round_dir)
+    payload = {
+        "version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "round": round_no,
+        "question": QUESTION_EXTRACT,
+        "instructions": _EXTRACT_INSTRUCTIONS,
+        "unparseable": [
+            {"friend": e["friend"], "parse_errors": e["errors"], "raw": e["raw"], "findings": []}
+            for e in unparseable
+        ],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def read_extract_response(round_dir: Path) -> list[dict[str, Any]]:
+    """Parse RESPONSE.json's `findings` and validate them as claims.
+
+    Validated with the SAME contract a friend's own output goes through, not
+    a looser one. An orchestrator is trusted to read, not to bypass the
+    schema -- a hand-extracted claim missing `failure_scenario` is
+    unsubstantiated for exactly the reasons §6.1 gives, whoever wrote it.
+    """
+    path = response_path(round_dir)
+    if not path.is_file():
+        raise UsageError(
+            f"no {RESPONSE_NAME} in {round_dir}. This run halted for claim "
+            f"extraction; fill in `findings` in {REQUEST_NAME}, save it as "
+            f"{RESPONSE_NAME}, and re-run with --resume."
+        )
+    data = _load(path)
+    if data.get("version") != SCHEMA_VERSION:
+        raise UsageError(
+            f"{path}: unsupported version {data.get('version')!r} "
+            f"(this build understands {SCHEMA_VERSION})"
+        )
+    entries = data.get("unparseable")
+    if not isinstance(entries, list):
+        raise UsageError(f"{path}: 'unparseable' must be an array")
+    extracted: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise UsageError(f"{path}: unparseable[{index}] is not an object")
+        findings = entry.get("findings")
+        if not isinstance(findings, list):
+            raise UsageError(
+                f"{path}: unparseable[{index}].findings must be an array "
+                "(use [] if this output contains no real findings)"
+            )
+        errors = validate_payload({"findings": findings} if findings else {"no_findings": True})
+        if errors:
+            raise UsageError(
+                f"{path}: unparseable[{index}] findings are not valid claims: {'; '.join(errors)}"
+            )
+        for finding in findings:
+            extracted.append({"friend": entry.get("friend", "orchestrator"), **finding})
+    return extracted

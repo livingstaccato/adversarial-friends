@@ -16,20 +16,44 @@ import argparse
 from collections.abc import Callable
 import concurrent.futures
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec
 from ..ceilings import Budget
+from ..ids import format_claim_id
 from ..ledger import Alias, Claim
 from ..merge import canonical_claims
-from ..orchestrator import apply_merges, read_response
+from ..orchestrator import (
+    QUESTION_EXTRACT,
+    apply_merges,
+    read_extract_response,
+    read_response,
+    request_path,
+)
 from ..runstore import RunStore
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
 
 JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+
+
+def _question_asked(round_dir: Path) -> str:
+    """Which question this round's REQUEST.json posed.
+
+    Read from the request rather than inferred from the response: the
+    response is the file a human just edited, and guessing its shape would
+    turn a typo into a confusing schema error rather than a clear one.
+    """
+    path = request_path(round_dir)
+    if not path.is_file():
+        return ""
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("question", ""))
+    except json.JSONDecodeError:
+        return ""
 
 
 @dataclass
@@ -59,17 +83,53 @@ def resume_round_one(
     """Apply the orchestrator's merges, then carry on into judging."""
     resumed = ResumedRun()
     claims = canonical_claims(list(store.ledger.records()))
-    decisions = read_response(store.round_dir(base_round), {c.id for c in claims})
-    claims, adjudicated = apply_merges(claims, decisions, base_round)
-    for alias in adjudicated:
-        store.ledger.append(alias)
+    round_dir = store.round_dir(base_round)
+
+    # The same handshake serves two questions (§4.2, §14.2), so the answer is
+    # read according to what was actually asked rather than assumed.
+    question = _question_asked(round_dir)
+    adjudicated: list[Alias] = []
+    if question == QUESTION_EXTRACT:
+        extracted = read_extract_response(round_dir)
+        counter = len(claims)
+        for finding in extracted:
+            counter += 1
+            claims.append(
+                Claim(
+                    id=format_claim_id(counter),
+                    supersedes=None,
+                    # The friend that produced the unparseable output keeps
+                    # authorship: an orchestrator read its words, it did not
+                    # invent them, and judging is decided by origin (§7.1).
+                    origin=[finding.get("friend", "orchestrator")],
+                    lens="extracted",
+                    round=base_round,
+                    advisory=False,
+                    severity=finding["severity"],
+                    claim=finding["claim"],
+                    location=finding.get("location"),
+                    evidence=finding["evidence"],
+                    failure_scenario=finding["failure_scenario"],
+                    suggested_fix=finding["suggested_fix"],
+                )
+            )
+            store.ledger.append(claims[-1])
+        resumed.downgrades.append(
+            f"resumed from {store.run_id} after claim extraction: "
+            f"{len(extracted)} claim(s) read out of unparseable output by hand."
+        )
+    else:
+        decisions = read_response(round_dir, {c.id for c in claims})
+        claims, adjudicated = apply_merges(claims, decisions, base_round)
+        for alias in adjudicated:
+            store.ledger.append(alias)
+        resumed.downgrades.append(
+            f"resumed from {store.run_id} after orchestrator merge adjudication: "
+            f"{len(adjudicated)} merge(s) applied."
+        )
     resumed.claims = claims
     resumed.aliases = adjudicated
     resumed.friends_meta = list(getattr(args, "_resume_meta", {}).get("friends", []))
-    resumed.downgrades.append(
-        f"resumed from {store.run_id} after orchestrator merge adjudication: "
-        f"{len(adjudicated)} merge(s) applied."
-    )
     # The halted process already paid for round 1; charge it here so a
     # resumed run cannot spend the whole budget a second time.
     budget.spend(len(specs))

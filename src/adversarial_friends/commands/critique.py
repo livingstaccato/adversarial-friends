@@ -23,6 +23,7 @@ from ..failures import RepeatTracker
 from ..ids import format_claim_id
 from ..ledger import Alias, Claim
 from ..merge import exact_merge
+from ..orchestrator import NeedsOrchestrator, write_extract_request
 from ..prompt import _build_friend_prompt
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
@@ -115,6 +116,8 @@ def run_critique(
     tracker: RepeatTracker | None = None,
     keep: bool = False,
     extra_args: list[str] | None = None,
+    merge: str = "exact",
+    run_id: str = "",
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -152,9 +155,28 @@ def run_critique(
 
     all_claims = list(known_claims)
     counter = claim_counter
+    unparseable: list[dict[str, Any]] = []
     for spec, capability, result in results:
         outcome.friends_meta.append(persist_result(store, round_no, spec, capability, result))
         if result.failure_reason is not None:
+            # §14.2: repair is a pure transformation, so when it fails the
+            # only thing left that can read the raw text is something with
+            # judgment. Under --merge=orchestrator this halts for extraction
+            # rather than discarding whatever the friend actually found;
+            # under --merge=exact the friend is simply failed, which is what
+            # keeps the default usable from a plain shell.
+            if merge == "orchestrator" and result.result.payload is None and result.stdout.strip():
+                # Collected, not raised here: every friend in this round has
+                # already been dispatched, and halting mid-loop would strand
+                # the claims of friends processed after this one -- their
+                # results exist only in memory and would be gone on resume.
+                unparseable.append(
+                    {
+                        "friend": spec.name,
+                        "raw": result.stdout,
+                        "errors": result.result.errors,
+                    }
+                )
             outcome.any_failed = True
             continue
         outcome.any_success = True
@@ -205,4 +227,12 @@ def run_critique(
         all_claims.extend(kept)
         outcome.aliases.extend(aliases)
         outcome.claims.extend(kept)
+    if unparseable:
+        path = write_extract_request(store.round_dir(round_no), run_id, round_no, unparseable)
+        names = ", ".join(e["friend"] for e in unparseable)
+        raise NeedsOrchestrator(
+            f"{names} produced output that could not be parsed into claims. "
+            f"Fill in `findings` for each in {path}, save it as RESPONSE.json "
+            "beside it, then re-run with --resume."
+        )
     return outcome, all_claims, counter

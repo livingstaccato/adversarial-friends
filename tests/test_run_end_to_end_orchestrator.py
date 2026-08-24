@@ -215,3 +215,94 @@ def test_loop_with_orchestrator_merge_is_refused(tmp_path):
     result = _halt(tmp_path, "judge_uphold_a", mode="loop")
     assert result.returncode == 2
     assert "not supported with --mode loop" in result.stderr
+
+
+# --- §14.2 parse-halt extraction -------------------------------------------
+
+
+def test_unparseable_output_halts_for_extraction(tmp_path):
+    """§14.2: repair is a pure transformation with no model call, so when it
+    fails the only thing left that can read the raw text is something with
+    judgment. Under --merge=orchestrator that is a halt, not a discard."""
+    result = _halt(tmp_path, "offtopic", "judge_uphold_a")
+    assert result.returncode == 10, result.stderr
+    assert "could not be parsed" in result.stderr
+    request = json.loads((_run_dir(tmp_path) / "round-1" / "REQUEST.json").read_text())
+    assert request["question"] == "extract"
+    assert request["unparseable"][0]["raw"]
+
+
+def test_a_parseable_friend_in_the_same_round_is_not_lost(tmp_path):
+    """The halt is collected and raised AFTER the loop: halting mid-loop
+    would strand the claims of friends processed later, whose results exist
+    only in memory and would be gone on resume."""
+    _halt(tmp_path, "offtopic", "judge_uphold_a")
+    claims = [r for r in _ledger(tmp_path) if r["type"] == "claim"]
+    assert claims, "the friend that parsed cleanly should already be in the ledger"
+
+
+def test_extracted_claims_reach_the_ledger_on_resume(tmp_path):
+    _halt(tmp_path, "offtopic", "judge_uphold_a")
+    request_path = _run_dir(tmp_path) / "round-1" / "REQUEST.json"
+    data = json.loads(request_path.read_text())
+    data["unparseable"][0]["findings"] = [
+        {
+            "severity": "high",
+            "claim": "read out of prose by hand",
+            "location": "spec.md:1",
+            "evidence": "spec.md:1",
+            "failure_scenario": "the design does not say what happens",
+            "suggested_fix": "say what happens",
+        }
+    ]
+    (request_path.parent / "RESPONSE.json").write_text(json.dumps(data))
+
+    result = _resume(tmp_path)
+    assert result.returncode in (0, 1), result.stderr
+    texts = [r["claim"] for r in _ledger(tmp_path) if r["type"] == "claim"]
+    assert "read out of prose by hand" in texts
+
+
+def test_an_extracted_claim_keeps_the_friend_as_its_author(tmp_path):
+    """An orchestrator read the friend's words, it did not invent them --
+    and judging is decided by origin (§7.1), so authorship has to survive."""
+    _halt(tmp_path, "offtopic", "judge_uphold_a")
+    request_path = _run_dir(tmp_path) / "round-1" / "REQUEST.json"
+    data = json.loads(request_path.read_text())
+    friend = data["unparseable"][0]["friend"]
+    data["unparseable"][0]["findings"] = [
+        {
+            "severity": "low",
+            "claim": "extracted",
+            "location": None,
+            "evidence": "spec.md:1",
+            "failure_scenario": "x",
+            "suggested_fix": "y",
+        }
+    ]
+    (request_path.parent / "RESPONSE.json").write_text(json.dumps(data))
+    _resume(tmp_path)
+    extracted = [r for r in _ledger(tmp_path) if r["type"] == "claim" and r["claim"] == "extracted"]
+    assert extracted[0]["origin"] == [friend]
+
+
+def test_extracted_findings_are_held_to_the_claim_schema(tmp_path):
+    """An orchestrator is trusted to read, not to bypass the schema: a
+    hand-extracted claim missing failure_scenario is unsubstantiated for
+    exactly the reasons §6.1 gives, whoever wrote it."""
+    _halt(tmp_path, "offtopic", "judge_uphold_a")
+    request_path = _run_dir(tmp_path) / "round-1" / "REQUEST.json"
+    data = json.loads(request_path.read_text())
+    data["unparseable"][0]["findings"] = [{"severity": "high", "claim": "no evidence given"}]
+    (request_path.parent / "RESPONSE.json").write_text(json.dumps(data))
+    result = _resume(tmp_path)
+    assert result.returncode == 2
+    assert "not valid claims" in result.stderr
+
+
+def test_exact_merge_never_halts_for_extraction(tmp_path):
+    """Under the default the friend is simply failed, which is what keeps
+    the documented CLI usable from a plain shell (§4.2)."""
+    result = run_af(tmp_path, _artifact(tmp_path), "--friend", "fake:offtopic")
+    assert result.returncode == 1, result.stderr
+    assert not (_run_dir(tmp_path) / "round-1" / "REQUEST.json").exists()
