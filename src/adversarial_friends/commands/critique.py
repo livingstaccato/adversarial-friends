@@ -181,7 +181,11 @@ def run_critique(
             continue
         outcome.any_success = True
         incoming = []
-        for finding in (result.result.payload or {}).get("findings", []):
+        # `or []`, not a .get default: `findings` is nullable in the schema
+        # (strict mode requires every property in `required`, so a friend
+        # reporting nothing sends `findings: null`), and .get returns that
+        # None rather than the default when the key is present.
+        for finding in (result.result.payload or {}).get("findings") or []:
             counter += 1
             incoming.append(
                 Claim(

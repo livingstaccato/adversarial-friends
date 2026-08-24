@@ -20,14 +20,36 @@ REQUIRED_FIELDS = (
     "suggested_fix",
 )
 
+# Every object carries `additionalProperties: false` and lists EVERY property
+# in `required`, with genuinely optional fields typed nullable instead.
+#
+# That is not stylistic. codex enforces OpenAI's strict structured-output
+# subset and rejects anything else outright:
+#
+#   Invalid schema for response_format 'codex_output_schema':
+#   'additionalProperties' is required to be supplied and to be false.
+#   'required' ... must include every key in properties. Missing 'a'.
+#
+# Found by running this tool on its own source. codex had never once
+# produced output under a schema; it failed at the API before the model saw
+# anything. Nothing caught it because every test used the fake friend (no
+# schema) or ollama (schema=False) -- see test_claim_schema_is_strict_mode_safe.
 CLAIM_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
+    "additionalProperties": False,
+    # Alternatives, so both are nullable and both are required: a friend
+    # reporting findings sends `no_findings: null`, and one reporting
+    # nothing sends `findings: null`. validate_payload already treats a
+    # missing or null value on either as "not given".
+    "required": ["no_findings", "findings"],
     "properties": {
-        "no_findings": {"type": "boolean"},
+        "no_findings": {"type": ["boolean", "null"]},
         "findings": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {
                 "type": "object",
+                "additionalProperties": False,
+                "required": [*REQUIRED_FIELDS, "location"],
                 "properties": {
                     "severity": {"type": "string", "enum": list(SEVERITIES)},
                     "claim": {"type": "string"},
@@ -36,7 +58,6 @@ CLAIM_OUTPUT_SCHEMA: dict[str, Any] = {
                     "failure_scenario": {"type": "string"},
                     "suggested_fix": {"type": "string"},
                 },
-                "required": list(REQUIRED_FIELDS),
             },
         },
     },
@@ -116,7 +137,11 @@ def claim_tier(parsed: dict[str, Any], errors: list[str]) -> int:
     findings = parsed.get("findings")
     if not errors and isinstance(findings, list) and findings:
         return 0
-    if "findings" in parsed:
+    if parsed.get("findings") is not None:
+        # `is not None` rather than `in`: strict mode makes a friend send
+        # `findings: null` when it found nothing, and a null container is
+        # not a substantive attempt -- it is the explicit empty marker,
+        # which tier 2 already covers.
         return 1
     if not errors and parsed.get("no_findings") is True:
         return 2

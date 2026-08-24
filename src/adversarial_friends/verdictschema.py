@@ -40,30 +40,47 @@ EVIDENCE_ASSESSMENTS = ("confirmed", "disputed", "unverifiable")
 
 REQUIRED_FIELDS = ("claim_id", "verdict", "confidence", "reasoning")
 
+# See claimschema's note on strict mode: every object needs
+# `additionalProperties: false` and a `required` naming every property, or
+# codex rejects the schema at the API before the model sees anything.
 VERDICT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
+    "additionalProperties": False,
+    "required": ["verdicts"],
     "properties": {
         "verdicts": {
             "type": "array",
             "items": {
                 "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    *REQUIRED_FIELDS,
+                    "evidence_assessment",
+                    "counter_evidence",
+                    "amended_claim",
+                ],
                 "properties": {
                     "claim_id": {"type": "string"},
                     "verdict": {"type": "string", "enum": sorted(VALID_VERDICTS)},
                     "confidence": {"type": "string", "enum": list(CONFIDENCES)},
+                    # Nullable, but `null` is deliberately NOT in the enum.
+                    # A schema-enforcing CLI rejects an enum containing null
+                    # outright: agy returns "Agent execution terminated due
+                    # to error" and produces nothing, which made every
+                    # judging round fail for it. Verified by bisecting three
+                    # schema variants against the real CLI -- a nullable
+                    # type is accepted, an enum with null is not.
                     "evidence_assessment": {
                         "type": ["string", "null"],
-                        "enum": [*EVIDENCE_ASSESSMENTS, None],
+                        "enum": list(EVIDENCE_ASSESSMENTS),
                     },
                     "reasoning": {"type": "string"},
                     "counter_evidence": {"type": ["string", "null"]},
                     "amended_claim": {"type": ["string", "null"]},
                 },
-                "required": list(REQUIRED_FIELDS),
             },
         },
     },
-    "required": ["verdicts"],
 }
 
 
@@ -184,7 +201,7 @@ def verdict_tier(parsed: dict[str, Any], errors: list[str]) -> int:
     entries = parsed.get("verdicts")
     if not errors and isinstance(entries, list) and entries:
         return 0
-    if "verdicts" in parsed:
+    if parsed.get("verdicts") is not None:
         return 1
     return 2
 

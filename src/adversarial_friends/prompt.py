@@ -11,12 +11,23 @@ diversity).
 from .adapters import FriendSpec
 from .paths import LENS_DIR
 
+# Both keys appear in every reply, one of them null. That is not stylistic:
+# strict structured output (codex) requires `required` to name every property,
+# so a schema-enforcing friend must emit both -- and a prompt telling it to
+# return only one contradicts the schema it was handed. Found when agy
+# rejected its own model's output with "at '/no_findings': got object".
+#
+# The two-key shape also keeps §7.3's distinction intact: "found nothing" is
+# an explicit marker, not an empty array, because a friend that returns
+# nothing and does not say so is failed rather than clean.
 PROMPT_HEADER = (
     "You are an adversarial reviewer. Read the artifact below and challenge it.\n"
-    "Return ONLY a JSON object matching this shape:\n"
-    '{"findings":[{"severity":"high|medium|low","claim":"...","location":"...",'
-    '"evidence":"...","failure_scenario":"...","suggested_fix":"..."}]}\n'
-    'If you find nothing, return exactly {"no_findings": true}.\n'
+    "Return ONLY a JSON object with BOTH of these keys, exactly one of them null:\n"
+    '{"no_findings": null, "findings":[{"severity":"high|medium|low",'
+    '"claim":"...","location":"...","evidence":"...",'
+    '"failure_scenario":"...","suggested_fix":"..."}]}\n'
+    'If you find nothing, return exactly {"no_findings": true, "findings": null}.\n'
+    "Never omit either key.\n"
 )
 
 

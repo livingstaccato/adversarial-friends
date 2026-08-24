@@ -18,11 +18,24 @@ CLI genuinely needs. If neither mechanism exists, the friend is refused;
 be the same shape the design rejected for flags (§13): it is direction-blind,
 and every path nobody thought of is permitted by default.
 
-**What it does not do**, per §12.3: a friend needs network access to reach
-its model, and its own credentials to authenticate, so both are inside the
-sandbox. A successfully injected friend can still exfiltrate the artifact and
-its own credentials. What the sandbox removes is everything else -- other
-repositories, SSH and cloud keys, the rest of the home directory.
+**What it does not do.** §12.3 states the network and credential limits; two
+more were found by running this tool against this file, and are recorded here
+rather than implied away:
+
+* **The environment is not sanitized.** The friend inherits the runner's
+  environment, so any secret already in it -- another service's token, a
+  cloud key -- is readable without touching the filesystem at all. Not fixed
+  because the friend's own credentials usually arrive the same way, and an
+  allowlist that guessed wrong would break authentication with no useful
+  error. Do not run a friend in a shell holding secrets you would not give it.
+* **Networking is shared, not brokered.** `allow network*` and an unshared
+  network namespace reach host-local and link-local services too -- other
+  dev servers, databases, a cloud metadata endpoint -- not just the model
+  API. Confining this properly needs an authenticated egress proxy, which is
+  a larger design than a filesystem policy.
+
+What the sandbox does remove is the rest of the filesystem: other
+repositories, SSH and cloud keys, and the rest of the home directory.
 
 The macOS profile below is built from measurement rather than documentation:
 each allowance was added because removing it stopped a process from starting
@@ -256,21 +269,52 @@ def wrap(
 def policy_for(workdir: Path, binary: str | None, adapter_read: tuple[str, ...]) -> SandboxPolicy:
     """Build a policy for one friend.
 
-    The binary's own directory is included because a CLI cannot run without
-    reading itself, and an agent installed under Homebrew, `~/.local/bin`, or
-    a node_modules tree is nowhere in the system allowlist. The resolved
-    parent is used rather than the file: a wrapper script's interpreter and
-    a binary's sibling libraries live beside it.
+    Three paths are granted for the binary, not one, and each covers a case
+    the tool actually hit when it was run against its own source:
+
+    * **The unresolved path's parent** -- what `which` returned. The process
+      executes that path, and resolving a symlink requires reading the
+      directory it lives in. `claude` and `codex` are both symlinks here.
+    * **The resolved path's parent** -- where the real executable is.
+    * **The installation root when the executable sits in `bin/`** -- a
+      CLI's libraries are its siblings' siblings, not its own. `opencode`
+      keeps a 61MB `node_modules/` beside `bin/`, so granting only `bin/`
+      leaves the one adapter this sandbox applies to unable to read itself.
+
+    The earlier version granted the resolved parent alone, on the assumption
+    that "a binary's sibling libraries live beside it". That assumption was
+    the finding: it is false for every package-manager layout.
 
     `~` in an adapter's declared paths is expanded here rather than in the
     TOML, so an adapter file stays portable between machines and users.
     """
     reads: list[Path] = []
     if binary:
-        resolved = shutil.which(binary)
-        if resolved:
-            real = Path(resolved).resolve()
-            reads.append(real.parent)
+        found = shutil.which(binary)
+        if found:
+            unresolved = Path(found).parent
+            resolved = Path(found).resolve().parent
+            for candidate in (unresolved, resolved):
+                if candidate not in reads:
+                    reads.append(candidate)
+            # The install root is one level above a `bin/` -- but only for the
+            # RESOLVED path. The unresolved one is usually a general-purpose
+            # bin directory (`~/.local/bin`, `/usr/local/bin`), and treating
+            # its parent as an install root would grant the whole of `~/.local`
+            # to confine one CLI. The resolved path is inside the real
+            # installation, where `bin/` does mean what it looks like.
+            if resolved.name == "bin":
+                root = resolved.parent
+                # NEVER the filesystem root, and never a directory the system
+                # allowlist already covers. `cat` lives in `/bin`, so without
+                # this the rule grants `/` -- the whole filesystem -- and the
+                # sandbox stops confining anything. Caught by the containment
+                # tests within a minute of the rule being added, which is the
+                # entire reason those tests run a real process instead of
+                # asserting about a profile string.
+                system = set(_DARWIN_SYSTEM_READ) | set(_LINUX_SYSTEM_READ)
+                if root != root.parent and str(root) not in system and root not in reads:
+                    reads.append(root)
     for raw in adapter_read:
         reads.append(Path(raw).expanduser())
     return SandboxPolicy(workdir=workdir, read_paths=tuple(reads))

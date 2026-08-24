@@ -92,7 +92,8 @@ def _parse_verdicts(payload: dict[str, Any], judge: str, round_no: int) -> list[
     friend does not get to say who it is.
     """
     out = []
-    for entry in payload.get("verdicts", []):
+    # See critique.run_critique: nullable container, so `or []`.
+    for entry in payload.get("verdicts") or []:
         out.append(
             Verdict(
                 claim_id=entry["claim_id"],

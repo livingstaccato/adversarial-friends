@@ -168,3 +168,80 @@ def test_a_substantive_but_broken_payload_outranks_a_well_formed_scrap():
 
 def test_a_clean_payload_with_verdicts_is_tier_zero():
     assert verdictschema.verdict_tier(payload(entry()), []) == 0
+
+
+def test_no_enum_anywhere_contains_null():
+    """A schema-enforcing CLI rejects an enum containing `null` outright.
+
+    Found by running the tool on its own source: agy returned "Agent
+    execution terminated due to error" and produced nothing for every
+    judging round, while round 1 (the claim schema) worked fine. Bisected
+    against the real CLI with three variants -- a nullable TYPE is accepted,
+    a top-level `required` is accepted, an enum containing null is not.
+
+    Checked structurally rather than by calling agy, so it holds in CI and
+    covers any schema added later. Applies to both schemas: crossexam was
+    unusable with every schema-enforcing friend and no test noticed, because
+    they all used fakes (no schema) or ollama (schema=False).
+    """
+    from adversarial_friends.claimschema import CLAIM_OUTPUT_SCHEMA
+
+    def walk(node, path="$"):
+        if isinstance(node, dict):
+            if "enum" in node and isinstance(node["enum"], list):
+                assert None not in node["enum"], f"{path}.enum contains null"
+            for key, value in node.items():
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]")
+
+    walk(verdictschema.VERDICT_OUTPUT_SCHEMA, "verdict")
+    walk(CLAIM_OUTPUT_SCHEMA, "claim")
+
+
+def test_a_nullable_field_is_still_nullable():
+    """The fix must not make evidence_assessment required-by-type: §6.5 only
+    requires it for dispositive verdicts, and validate_payload enforces
+    that. Dropping null from the ENUM is the whole change."""
+    field = verdictschema.VERDICT_OUTPUT_SCHEMA["properties"]["verdicts"]["items"]["properties"][
+        "evidence_assessment"
+    ]
+    assert "null" in field["type"]
+    assert None not in field["enum"]
+
+
+def test_both_schemas_are_strict_mode_safe():
+    """codex enforces OpenAI's strict structured-output subset and rejects
+    anything else at the API, before the model sees the prompt:
+
+        'additionalProperties' is required to be supplied and to be false.
+        'required' ... must include every key in properties.
+
+    Found by running this tool on its own source. codex had NEVER produced
+    output under a schema -- not once, in either schema -- and no test
+    noticed, because every test used the fake friend (no schema) or ollama
+    (schema=False). Verified by bisecting variants against the real CLI.
+    """
+    from adversarial_friends.claimschema import CLAIM_OUTPUT_SCHEMA
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object" or "properties" in node:
+            assert node.get("additionalProperties") is False, (
+                f"{path}: every object needs additionalProperties: false"
+            )
+            properties = set(node.get("properties", {}))
+            required = set(node.get("required", []))
+            assert properties == required, (
+                f"{path}: required must name every property; "
+                f"missing {sorted(properties - required)}. Make genuinely "
+                "optional fields nullable instead."
+            )
+        for key, value in node.items():
+            if isinstance(value, dict):
+                walk(value, f"{path}.{key}")
+
+    walk(verdictschema.VERDICT_OUTPUT_SCHEMA, "verdict")
+    walk(CLAIM_OUTPUT_SCHEMA, "claim")
