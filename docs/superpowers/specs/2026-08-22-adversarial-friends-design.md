@@ -945,6 +945,8 @@ listed here with which side is authoritative.
 | §11.1 | Capability is "computed from the **final effective argv**" | Capability is computed from the flags `build_argv` decides to emit, and the finished argv is never scanned | **Code** |
 | §18 risk 1 | "A stub adapter remains that errors with the migration URL" | No `gemini` adapter ships in any form | **Code** |
 | §12.2 | Confinement keys on "friends **without** a `readonly` capability" | Confinement keys on adapters that declare no `readonly_argv` at all | **Code**, with a stated residual gap |
+| §7.4, §17 | `--max-spend-usd`, "native where supported, estimated elsewhere" | Not implemented at all | **Code** |
+| §17 | `af run ... [--rounds N]` | `--max-rounds N` | **Code** — §7.4 of the same spec already says `--max-rounds` |
 
 ### §11.1 — capability must not be derived by reading argv
 
@@ -995,6 +997,33 @@ is narrower than the spec intends and is recorded rather than hidden.
 Closing it needs verified credential-path declarations for `claude`, `codex`
 and `agy`, which this project does not have; guessing them would produce
 friends that fail to authenticate for reasons no error message explains.
+
+### §7.4 — `--max-spend-usd` is absent, deliberately
+
+The flag is not implemented and is not stubbed. Half of what the spec asks
+for is honest and half is not:
+
+- **"Native where supported"** would require knowing which CLIs report token
+  usage or cost in their structured output, and where. That is a capture
+  exercise like the envelope work, and nobody has run it. No adapter can
+  declare cost reporting it has never been observed to do.
+- **"Estimated elsewhere"** would mean inventing a number and presenting it
+  as a budget.
+
+The deciding argument is what a *stub* would do. An inert `--max-spend-usd 5`
+that silently never fires is worse than no flag at all: an operator who sets
+it believes they have a spend cap and behaves accordingly. Absent, they
+reach for `--max-calls`, which is derived, enforced, and actually bounds
+cost proportionally.
+
+Ship it when someone has captured cost reporting from a real CLI run —
+adapter-declared, the same way auth markers and envelopes are.
+
+### §17 — `--rounds` vs `--max-rounds`
+
+The spec contradicts itself: §17's usage line says `--rounds N`, while §7.4's
+ceilings table says `--max-rounds`. The implementation follows §7.4, since
+that is the section that defines the ceiling's semantics and default.
 
 ### §18 risk 1 — no gemini stub ships
 

@@ -267,8 +267,62 @@ Precedence, strongest last: adapter default → `--preset` → roster entry →
 `--friend`. Each layer fills only what the one above left unset, so you can
 keep a roster and still override a single run from the command line.
 
-Not in this build: §14.2's parse-halt extraction (the other user of the
-halt/resume handshake). Run `afriend run --help` for the full flag list.
+### When a friend's output cannot be parsed
+
+Repair is a pure transformation — fenced-block extraction, brace balancing,
+trailing-comma stripping. **Never a model call**: re-prompting reaches a
+fresh process that never produced the broken output and would silently redo
+the whole critique at full cost.
+
+So when repair fails, `--merge orchestrator` halts and asks you to read the
+raw output instead of discarding it:
+
+```bash
+afriend run docs/design.md --merge orchestrator
+# afriend: codex-ops produced output that could not be parsed into claims.
+#   Fill in `findings` for each in .../round-1/REQUEST.json ...
+```
+
+Extracted findings go through the same schema a friend's own output does —
+severity, claim, evidence, failure_scenario, suggested_fix all required. An
+orchestrator is trusted to read, not to bypass the contract. The friend keeps
+authorship, so it still cannot judge its own claims.
+
+Under `--merge exact` the friend is simply marked failed, which is what keeps
+the default usable with no harness attached.
+
+## Everything else
+
+| Flag | Effect |
+|---|---|
+| `--model NAME`, `--effort LEVEL` | Override every friend; §10.1's strongest layer |
+| `--lens NAME` (repeatable) | Restrict which lenses discovery assigns |
+| `--max-friends N` | Cap the roster; reports what it dropped |
+| `--keep` | Leave friend worktrees under the run directory to inspect |
+| `--json` | Print run.json instead of the run directory path |
+| `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
+| `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
+| `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |
+
+`afriend doctor` takes `--json` and `--gc`. GC removes run directories with
+no `report.md` — every path out of a run writes one, so its absence means the
+process died. A run halted for the orchestrator keeps its report and survives.
+
+**`--unsafe-extra-args` is the only way arbitrary flags reach a friend**, and
+it is deliberately awkward. It is command-line only (never from a roster),
+requires `--i-accept-unsandboxed`, still refuses flags that disable approval
+outright, and forces `read-only: False` in the report for every friend —
+the runner cannot know what an unvalidated flag re-enabled. Use the `=` form:
+`--unsafe-extra-args='--foo'`.
+
+**There is no `--max-spend-usd`.** Bounding spend in dollars needs per-CLI
+cost reporting nobody has captured, and a flag that silently never fires is
+worse than none — you would set it and believe you were protected. Use
+`--max-calls`, which is derived from your roster and actually enforced.
+
+Not in this build: `afriend init` writes a roster but there is no interactive
+setup, and there is no `--resume` for anything except an orchestrator halt.
+Run `afriend run --help` for the full flag list.
 
 ## Exit codes
 

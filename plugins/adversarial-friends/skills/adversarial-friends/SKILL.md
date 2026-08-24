@@ -117,6 +117,11 @@ returning prose where JSON was asked for. The runner already treats these as
 failures (see `references/troubleshooting.md`); your job is to notice when
 the *pattern* suggests a misconfigured adapter rather than a quiet artifact.
 
+**A friend that stops being dispatched has been ruled broken, not skipped.**
+A downgrade saying a friend "will not be dispatched again this run" means it
+failed identically twice; the runner stopped spending calls on it. Report
+what it was doing wrong rather than treating the run as complete.
+
 **A refused friend is a security refusal, not a bug.** A friend reported as
 `refused: ... no OS sandbox ... available to confine it` was never started.
 Its CLI has no read-only mode, so nothing constrains what it reads, and an
