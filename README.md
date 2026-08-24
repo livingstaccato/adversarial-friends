@@ -262,7 +262,18 @@ location it cannot reconstruct is recorded as `unverifiable` rather than
 waved through. The one thing it refuses is `--disposition fixed` naming a
 location that did not change.
 
-Not in this build: `--merge=orchestrator`, `--resume`, and `af init`.
+Deduplication is judgment the runner declines to fake. `--merge exact`
+(the default) merges only identical claims and always finishes unaided;
+`--merge orchestrator` stops with exit `10`, writes the claims to
+`REQUEST.json`, and waits for you to say which are duplicates:
+
+```bash
+afriend run docs/design.md --merge orchestrator   # exit 10, writes REQUEST.json
+# ...fill in the merges, save as RESPONSE.json...
+afriend run --resume <run-id>                     # round 1 is not re-run
+```
+
+Not in this build: `af init`.
 
 | Friend | Status |
 |---|---|

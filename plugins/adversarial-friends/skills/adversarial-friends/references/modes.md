@@ -151,8 +151,63 @@ Each iteration owns its own block of round numbers, so `round-1/` and
 `round-4/` are iteration 1 and 2 rather than one overwriting the other. The
 call budget is a whole-run total, not per iteration.
 
-Not in this build: `--merge=orchestrator`, `--resume`, and `af init`. Run
-`afriend run --help` to see the flags this build accepts.
+## Merge adjudication
+
+Deduplication is judgment, and the runner does not pretend to have it.
+
+**`--merge exact` (the default)** merges two claims only when their text and
+location match exactly, ignoring whitespace and case. It under-merges on
+purpose: guessing at equivalence corrupts termination arithmetic, and an
+unmerged duplicate costs a round while a wrong merge silently deletes a
+finding. This is what lets a run always finish unaided.
+
+**`--merge orchestrator`** hands the judgment out. The runner stops after the
+critique round, writes the claims to `round-1/REQUEST.json`, and exits `10`:
+
+```bash
+afriend run docs/design.md --mode crossexam --merge orchestrator
+# afriend: waiting for merge adjudication. Fill in .../round-1/REQUEST.json,
+#   save it as RESPONSE.json beside it, then run:
+#     afriend run --resume run-20260824T081009-8e820bb6 --out ...
+```
+
+`REQUEST.json` ships an empty `merges` array to fill in — edit it and save as
+`RESPONSE.json`:
+
+```json
+{"version": 1,
+ "merges": [{"canonical": "c-0001@1", "duplicate": "c-0004@1",
+             "rationale": "same missing guard, different wording"}]}
+```
+
+Then resume. **The resuming command line carries no other flags** — mode,
+ceilings, roster and artifact all come from the run directory, because the
+same response has to produce the same run:
+
+```bash
+afriend run --resume <run-id>
+```
+
+Round 1 is not re-run. Its claims are read back from the ledger, so the
+adjudication applies to the ids you were actually shown.
+
+A response is checked before anything is written: an unknown claim id, a
+claim merged into itself, a chain (`A→B` and `B→C`), or the same duplicate
+named twice are all refused. Each would corrupt the alias graph in a way you
+would only notice much later, while wondering where a finding went.
+
+Corroboration survives an adjudicated merge — the merged-away claim's origin
+joins its canonical, so `*(corroborated by 2 friends)*` still appears. That
+matters most here: these are merges of *differently worded* claims, which is
+exactly where independent agreement is the strongest evidence.
+
+One combination is refused: `--merge orchestrator` with `--mode loop`. A loop
+halts once per iteration and would resume into mid-iteration budget and
+streak state this build does not reconstruct.
+
+Not in this build: `af init`, and §14.2's parse-halt extraction (the other
+user of this same halt/resume handshake). Run `afriend run --help` to see the
+flags this build accepts.
 
 ## Exit codes
 
@@ -165,7 +220,7 @@ every command in this build:
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
 | `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, `--preset` set to anything but `inherit`, or an `afriend resolve` naming no location / an unknown claim / a `fixed` at an unchanged location |
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
-| `10` | needs orchestrator | reserved for `--merge=orchestrator` and parse-halt recovery — not implemented in this build |
+| `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
 
 A ceiling outranks every outcome below it: a truncated run has not evaluated
