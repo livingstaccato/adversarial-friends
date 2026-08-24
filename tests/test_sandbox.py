@@ -108,17 +108,57 @@ def test_bwrap_binds_the_workdir_writable(policy):
     assert str(policy.workdir) in argv
 
 
-def test_bwrap_binds_system_paths_read_only(policy):
+def test_bwrap_binds_system_paths_read_only(policy, tmp_path):
+    fake_root = tmp_path / "root"
+    (fake_root / "usr").mkdir(parents=True)
+    (fake_root / "etc").mkdir()
+    argv = sandbox.linux_argv(policy, root=fake_root)
+    assert "--ro-bind" in argv
+    assert "/usr" in argv
+
+
+def test_a_merged_usr_layout_gets_symlinks_not_binds(tmp_path, policy):
+    """How this first failed in CI. On Ubuntu /bin is a symlink into /usr,
+    and binding it as a directory produces a namespace where /bin/true does
+    not resolve -- bwrap creates the namespace fine and then cannot execute
+    anything inside it."""
+    fake_root = tmp_path / "root"
+    (fake_root / "usr" / "bin").mkdir(parents=True)
+    (fake_root / "bin").symlink_to("usr/bin")
+    argv = sandbox.system_binds(fake_root)
+    assert "--symlink" in argv
+    assert argv[argv.index("--symlink") + 1] == "usr/bin"
+    assert argv[argv.index("--symlink") + 2] == "/bin"
+    # And /usr is bound BEFORE the symlink, or it points at nothing.
+    assert argv.index("/usr") < argv.index("--symlink")
+
+
+def test_a_real_directory_is_bound_not_symlinked(tmp_path, policy):
+    fake_root = tmp_path / "root"
+    (fake_root / "bin").mkdir(parents=True)
+    argv = sandbox.system_binds(fake_root)
+    assert "--ro-bind" in argv
+    assert "--symlink" not in argv
+
+
+def test_a_missing_system_path_is_skipped_entirely(tmp_path, policy):
+    """Nothing is bound for a path the host does not have. bwrap fails
+    outright on a bind whose source is missing."""
+    empty = tmp_path / "root"
+    empty.mkdir()
+    assert sandbox.system_binds(empty) == []
+
+
+def test_bwrap_tolerates_a_missing_declared_read_path(tmp_path):
+    """An adapter-declared config directory the operator never created must
+    not refuse a friend that would otherwise have worked. bwrap fails
+    outright on a plain --ro-bind whose source is missing; a missing path
+    grants no access either way."""
+    never_created = tmp_path / "no-such-config"
+    policy = sandbox.SandboxPolicy(workdir=tmp_path / "iso", read_paths=(never_created,))
     argv = sandbox.linux_argv(policy)
-    assert argv.count("--ro-bind-try") >= len(sandbox._LINUX_SYSTEM_READ)
-
-
-def test_bwrap_tolerates_a_missing_bind_source(policy):
-    """bwrap fails outright on a bind whose source does not exist, so a
-    policy naming a config directory the operator never created would refuse
-    a friend that would otherwise have worked. A missing path grants no
-    access either way."""
-    assert "--ro-bind" not in sandbox.linux_argv(policy)
+    index = argv.index(str(never_created))
+    assert argv[index - 1] == "--ro-bind-try"
 
 
 def test_bwrap_does_not_unshare_the_network(policy):

@@ -69,6 +69,37 @@ _LINUX_SYSTEM_READ = (
 )
 
 
+def system_binds(root: Path = Path("/")) -> list[str]:
+    """bwrap arguments exposing the host's system directories read-only.
+
+    **A merged-/usr distribution needs symlinks, not binds.** On Ubuntu and
+    most modern Linuxes `/bin`, `/sbin`, `/lib` and `/lib64` are symlinks
+    into `/usr`, not directories. Binding one as a directory produces a
+    namespace where `/bin/true` does not resolve -- which is exactly how this
+    first failed in CI: bwrap created the namespace fine and then could not
+    execute anything inside it.
+
+    So each path is bound if it is a real directory and recreated as a
+    symlink if that is what the host has. Real directories are bound first,
+    because bwrap applies operations in order and a symlink into `/usr` means
+    nothing until `/usr` itself exists in the namespace.
+
+    `root` is injected so a test can build a fake merged-/usr layout and
+    check the symlink branch on a machine that does not have one -- including
+    a Mac, where none of this can otherwise be exercised at all.
+    """
+    binds: list[str] = []
+    symlinks: list[str] = []
+    for name in _LINUX_SYSTEM_READ:
+        path = root / name.lstrip("/")
+        if path.is_symlink():
+            # --symlink SRC DEST creates DEST -> SRC inside the namespace.
+            symlinks += ["--symlink", str(path.readlink()), name]
+        elif path.is_dir():
+            binds += ["--ro-bind", name, name]
+    return binds + symlinks
+
+
 @dataclass(frozen=True)
 class SandboxPolicy:
     """What one friend is allowed to touch.
@@ -166,7 +197,7 @@ def darwin_profile(policy: SandboxPolicy) -> str:
     return "\n".join(lines) + "\n"
 
 
-def linux_argv(policy: SandboxPolicy) -> list[str]:
+def linux_argv(policy: SandboxPolicy, root: Path = Path("/")) -> list[str]:
     """The `bwrap` prefix implementing `policy`.
 
     `--ro-bind-try` rather than `--ro-bind` throughout: bwrap fails outright
@@ -189,8 +220,7 @@ def linux_argv(policy: SandboxPolicy) -> list[str]:
         "--tmpfs",
         "/tmp",
     ]
-    for system_path in _LINUX_SYSTEM_READ:
-        argv += ["--ro-bind-try", system_path, system_path]
+    argv += system_binds(root)
     for read_path in policy.read_paths:
         argv += ["--ro-bind-try", str(read_path), str(read_path)]
     argv += ["--bind", str(policy.workdir), str(policy.workdir)]

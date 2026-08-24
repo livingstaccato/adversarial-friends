@@ -8,7 +8,7 @@
 #
 # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor
 # (kernel 6.8+), which bwrap needs. The sysctl is relaxed here rather than
-# working around it, because the alternative is a silent skip that looks
+# worked around, because the alternative is a silent skip that looks
 # identical to a pass.
 set -euo pipefail
 
@@ -20,14 +20,29 @@ if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 fi
 
-# Prove it actually works here rather than assuming the install was enough.
-# A bwrap that installs but cannot create a namespace would otherwise turn
-# every containment test into a skip.
-echo "verifying bwrap can create a namespace..."
-if bwrap --ro-bind /usr /usr --ro-bind /bin /bin --dev /dev -- /bin/true; then
-  echo "bwrap works; §12.2 containment tests will run"
-else
-  echo "ERROR: bwrap installed but cannot create a namespace." >&2
-  echo "The §12.2 containment tests would silently skip. Failing instead." >&2
-  exit 1
-fi
+# Prove it works here rather than assuming the install was enough -- and
+# prove it using the runner's OWN bind layout, not a hand-written bwrap
+# invocation. The first version of this check used its own flags, passed a
+# layout the real code does not produce, and failed for a reason the real
+# code did not have (`--ro-bind /bin` on a merged-/usr distro, where /bin is
+# a symlink). Verifying anything other than the shipped code path is how you
+# get a green check for a sandbox that does not work.
+echo "verifying bwrap can create a namespace using the runner's own policy..."
+uv run python - <<'PY'
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from adversarial_friends import sandbox
+
+workdir = Path(tempfile.mkdtemp())
+policy = sandbox.policy_for(workdir, "true", ())
+argv = sandbox.wrap(["true"], sandbox.BWRAP, policy)
+result = subprocess.run(argv, capture_output=True, text=True)
+if result.returncode != 0:
+    print(f"bwrap failed: {result.stderr.strip()}", file=sys.stderr)
+    print(f"argv was: {argv}", file=sys.stderr)
+    sys.exit(1)
+print("bwrap works; §12.2 containment tests will run")
+PY
