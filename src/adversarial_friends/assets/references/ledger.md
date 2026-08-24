@@ -1,16 +1,21 @@
 # The claim ledger
 
 `claims.jsonl` is append-only. Each line is one JSON record with a `type`
-field. The schema defines four record types; **only `claim` and `alias` are
-ever written by this build.** `verdict` and `resolution` exist in the schema
-and can be read back, but nothing in `afriend run --mode report` produces them —
-they belong to `crossexam`, `gate`, and `af resolve`, none of which are
-implemented yet (see `modes.md`).
+field. The schema defines four record types; **`claim`, `alias`, and
+`verdict` are written by this build.** `resolution` exists in the schema and
+can be read back, but nothing produces one yet — resolutions belong to `gate`
+and `af resolve`, neither of which is implemented (see `modes.md`).
+
+`--mode report` writes only `claim` and `alias`; `--mode crossexam` also
+writes `verdict` records, and the successor `claim` records that a unanimous
+amendment produces.
 
 **claim** — an assertion about the artifact. `id` is versioned (`c-0007@2`);
-an amendment would create a new version rather than editing in place, so a
-verdict is never ambiguous about which wording it judged — versioning exists
-in the id format today even though nothing yet amends a claim. `origin` is a
+an amendment creates a new version rather than editing in place, so a
+verdict is never ambiguous about which wording it judged. A successor carries
+`supersedes` naming the exact version it replaces, and an `origin` that is the
+union of the original author and every amending judge — none of whom may then
+judge the rewrite. `origin` is a
 list of `cli/lens` strings identifying which friend(s) produced *that
 record* — not, in general, every friend who ever agreed with it. The ledger
 is append-only, so when a later friend's claim turns out to be an exact

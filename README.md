@@ -172,6 +172,14 @@ Dedup is **deliberately** exact-match — whitespace and case only. Two friends
 describing one defect in different words produce two claims, which costs a
 round. Guessing at equivalence would corrupt the ledger, which is worse.
 
+### Claim states in cross-examination
+
+Every claim `--mode crossexam` produces ends in one of eight states. Two of
+them — `deadlocked` and `settled-upheld` — deliberately need a human, and the
+report says so rather than quietly resolving them.
+
+![crossexam states](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/crossexam-states.png)
+
 ---
 
 ## 🔬 Lenses
@@ -220,13 +228,22 @@ comes back thin, that's what you read — not a guess.
 
 ## ✅ What's implemented
 
-**`report` is the only mode this build runs.** Every friend critiques the
-artifact once, in parallel, and the claims merge into one report.
+**`report` and `crossexam` both run.** `report` is one round: every friend
+critiques the artifact in parallel and the claims merge into one report.
+`crossexam` continues from there — each friend judges the claims it did not
+write, blind, until every claim settles, deadlocks, or a ceiling is hit.
 
-Cross-examination (friends judging each other's claims across rounds), gates,
-and revision loops are the design this is built *toward*, not something you
-can invoke today. `afriend run --mode crossexam` (or `gate`, or `loop`) exits
-`2` with a message saying so rather than pretending to run.
+```bash
+afriend run docs/design.md --mode crossexam
+```
+
+Disagreement is the output rather than a problem: two judges who still
+disagree at `--max-rounds` leave the claim `deadlocked`, and the report
+quotes both sides verbatim instead of resolving it by majority.
+
+Gates (`--mode gate`) and revision loops (`--mode loop`) are the design this
+is built *toward*, not something you can invoke today; both exit `2` with a
+message saying so rather than pretending to run.
 
 | Friend | Status |
 |---|---|

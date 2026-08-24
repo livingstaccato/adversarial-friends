@@ -1,0 +1,79 @@
+@startuml crossexam-states
+' What a claim's state can become in --mode crossexam.
+' Traced against src/adversarial_friends/verdicts.py (state_for,
+' should_discard, build_successor) and spec §7.1-§7.2.
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontSize 11
+skinparam TitleFontSize 18
+
+skinparam state {
+  BorderColor #546E7A
+  BackgroundColor #ECEFF1
+  FontSize 13
+  AttributeFontSize 12
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #F9A825
+  FontSize 12
+}
+
+title Claim states in cross-examination
+
+legend top right
+  |<#C8E6C9>    | terminal, clears a gate |
+  |<#FFCDD2>    | terminal, needs a human |
+  |<#ECEFF1>    | another round could change it |
+endlegend
+
+state "contested" as C
+state "settled-upheld" as SU #FFCDD2
+state "settled-refuted" as SR #C8E6C9
+state "superseded" as SUP #C8E6C9
+state "deadlocked" as DL #FFCDD2
+state "unproven" as UP
+state "incomplete" as IN
+state "discarded" as DIS #C8E6C9
+
+[*] --> C : round 1 raised it
+
+C --> SU : judges unanimously\n**upheld**
+C --> SR : judges unanimously\n**refuted**
+C --> SUP : judges unanimously\n**amended**
+C --> C : rounds remain
+C --> DL : judges disagree,\nno rounds left
+C --> UP : below quorum
+C --> IN : below quorum: a\nrequired judge is missing
+
+UP --> C : a judge changed its mind
+UP --> DIS : same verdict set\ntwo rounds running
+IN --> C : the missing judge reported
+
+SUP --> [*] : successor **c-NNNN@2**\nenters the next round as *contested*
+
+note bottom of SU
+  Not a pass. The judges agreed
+  the defect is real, so a gate
+  needs a Resolution, not silence.
+end note
+
+note bottom of DL
+  Never resolved by majority.
+  Both sides are quoted verbatim
+  and the call is the reader's.
+end note
+
+note right of UP
+  A dispositive verdict whose judge
+  could not locate the evidence is
+  downgraded to unproven first (§6.5),
+  so nobody settles a claim by not
+  having looked.
+end note
+
+@enduml

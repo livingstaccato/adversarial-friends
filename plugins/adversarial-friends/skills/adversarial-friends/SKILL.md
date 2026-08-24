@@ -26,7 +26,8 @@ does not produce the initial critique.
 ## Running it
 
 ```bash
-afriend run <artifact> --mode report
+afriend run <artifact> --mode report      # one round of parallel critique
+afriend run <artifact> --mode crossexam   # then friends judge each other
 ```
 
 This skill drives the `afriend` console script, which comes from the
@@ -36,24 +37,31 @@ skill cannot run — install it with
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
 
 `<artifact>` is a path to a file — a spec, a plan, a review someone else
-wrote, saved to disk. `report` is the only mode this build implements; see
-`references/modes.md` for the others and their status. This dispatches the
-artifact to every discovered friend in parallel and writes a run directory
-(under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`, or
-`--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
-`artifact/` copy, and per friend under `round-1/`: `<friend>.prompt` (exactly
+wrote, saved to disk. `report` and `crossexam` are the modes this build
+implements; `gate` and `loop` are not — see `references/modes.md`.
+
+Both dispatch the artifact to every discovered friend in parallel and write a
+run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
+or `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
+`artifact/` copy, and per friend under `round-N/`: `<friend>.prompt` (exactly
 what it was asked), `.raw` (its unmodified stdout), `.err` (its stderr —
 always written, even when empty), and `.meta` (argv, exit code, duration,
 timeout and orphan status). `afriend run` prints only the run directory path
 to stdout; read `report.md` from there and present the findings.
 
-Exit codes from `afriend run --mode report`: `0` at least one friend produced a
-usable critique; `1` every dispatched friend failed (the run mechanism still
-completed and wrote a report, but nothing in it is trustworthy); `2` a usage
-or config error — a missing artifact, an unrecognized `--friend` value, or a
-mode other than `report`; `3` no usable friend could be found at all (install
-a second agent CLI, or pass `--include-self` to let the host CLI review its
-own artifact).
+`crossexam` adds rounds 2 onward, where each friend judges the claims it did
+not write. Reach for it when the question is *which of these findings are
+real* rather than *what might be wrong* — it costs a fan-out per round, so
+`report` remains the right default for a first look at a document.
+
+Exit codes: `0` the run reached terminal states with nothing blocked; `1`
+every dispatched friend failed, or a `crossexam` left claims undecided or
+lost a required friend mid-round; `2` a usage or config error — a missing
+artifact, an unrecognized `--friend` value, or `--mode gate`/`loop`; `3` no
+usable friend could be found at all (install a second agent CLI, or pass
+`--include-self` to let the host CLI review its own artifact); `11` a
+`crossexam` stopped at a ceiling, having neither converged nor cleared
+anything.
 
 Check what is available first when a run comes back thin:
 
@@ -85,6 +93,36 @@ the *pattern* suggests a misconfigured adapter rather than a quiet artifact.
 claims with identical text and location, so two friends describing one defect
 in different words appear twice. Merge them in your presentation — that is
 judgment the runner deliberately declines to make.
+
+## Reading a cross-examination
+
+`--mode crossexam` adds a state per claim. The states are not a ranking, and
+flattening them into one would throw away the thing the mode exists to
+produce.
+
+**`deadlocked` is a result, not an error.** Judges looked and disagreed. The
+report quotes both sides verbatim because the runner is not entitled to pick
+one — and neither are you, by default. Present the disagreement: what each
+side actually argued, and what would settle it. A deadlock on a load-bearing
+claim is usually the single most valuable line in the report.
+
+**`settled-refuted` means the judges disagreed with the author, not that the
+claim was noise.** It is worth one line in your summary, not silence — a
+finding that two independent models rejected is still information about where
+the document reads as alarming.
+
+**`unproven` and `discarded` usually mean the evidence could not be found.**
+Often that is a claim citing a path or line that does not exist. Check the
+claim's `evidence` field before treating it as a real defect that nobody
+could confirm.
+
+**A claim with no judges is not a passed claim.** If every friend co-authored
+it, nobody independent was left to judge, and it lands `unproven`. The
+downgrade list in `run.json` says when this happened.
+
+**`budget-exhausted` invalidates the summary, not just the last round.** The
+run stopped early; claims still `contested` were mid-argument, not settled.
+Say the run was truncated before reporting anything as resolved.
 
 ## Choosing lenses
 

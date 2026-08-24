@@ -10,7 +10,7 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 | Document | What it covers |
 |---|---|
 | [SKILL.md](../src/adversarial_friends/assets/SKILL.md) | The skill itself — when it fires, how to run it, how to read its output |
-| [modes.md](../src/adversarial_friends/assets/references/modes.md) | `report`, `crossexam`, `gate`, `loop` — what each means and which are implemented |
+| [modes.md](../src/adversarial_friends/assets/references/modes.md) | `report` and `crossexam` (both implemented), `gate` and `loop` (planned); claim states, ceilings, exit codes |
 | [troubleshooting.md](../src/adversarial_friends/assets/references/troubleshooting.md) | Verified CLI traps, empty reports, timeouts, unauthenticated friends |
 
 > These three live under `src/adversarial_friends/assets/` because they ship
@@ -27,7 +27,7 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 | [ledger.md](../src/adversarial_friends/assets/references/ledger.md) | Claim, verdict, alias, and resolution records — and how to read `claims.jsonl` directly |
 | [architecture/](architecture/README.md) | Diagrams: module architecture, run flow, claim lifecycle |
 
-### The three diagrams
+### The diagrams
 
 - **[Module architecture](architecture/components.puml)** — which module owns
   what, and how a run threads through them.
@@ -36,6 +36,9 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 - **[Claim lifecycle](architecture/claim-lifecycle.puml)** — how two friends
   finding the same defect become one corroborated claim without losing either
   attribution.
+- **[Cross-examination states](architecture/crossexam-states.puml)** — the
+  eight states a claim can reach under `--mode crossexam`, which are terminal,
+  and which need a human.
 
 Rendered PNG and SVG are committed alongside each source. Regenerate with
 `make diagrams`.
