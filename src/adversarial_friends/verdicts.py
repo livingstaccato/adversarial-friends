@@ -80,6 +80,34 @@ def _dispositive(verdicts: Iterable[Verdict]) -> list[Verdict]:
     return [v for v in verdicts if v.verdict in DISPOSITIVE]
 
 
+def latest_per_judge(verdicts: Iterable[Verdict]) -> list[Verdict]:
+    """One verdict per judge -- the most recent round it spoke in.
+
+    **A judge gets one vote, however many times it is asked.** A claim that
+    stays non-terminal is re-judged next round, so a judge that answers in
+    round 2 and again in round 3 leaves two verdicts on the same claim
+    version. Counted naively, that judge alone satisfies a quorum of two:
+    unanimity with itself.
+
+    Seen in a real run before this existed. One friend failed its judging
+    round, leaving a claim below quorum and therefore non-terminal; the next
+    round asked the remaining judge again, and its second identical verdict
+    settled the claim as though two independent judges had agreed. The
+    ledger showed the same judge twice on the same claim id.
+
+    The newest verdict wins rather than the first: a judge that changed its
+    mind after seeing the other side's reasoning (which round 3 shows it)
+    has said something newer, and the discard rule in §7.2 already depends
+    on a verdict set that can change between rounds.
+    """
+    newest: dict[str, Verdict] = {}
+    for verdict in verdicts:
+        current = newest.get(verdict.judge)
+        if current is None or verdict.round >= current.round:
+            newest[verdict.judge] = verdict
+    return list(newest.values())
+
+
 def state_for(
     claim: Claim,
     verdicts: Iterable[Verdict],
@@ -97,7 +125,9 @@ def state_for(
     """
     judges = judges_for(claim, roster)
     quorum = quorum_for(judges)
-    cast = [v for v in verdicts if v.claim_id == claim.id and v.judge in set(judges)]
+    cast = latest_per_judge(
+        v for v in verdicts if v.claim_id == claim.id and v.judge in set(judges)
+    )
     dispositive = _dispositive(cast)
 
     if len(dispositive) < quorum:
@@ -133,8 +163,16 @@ def verdict_set_signature(verdicts: Iterable[Verdict], claim_id: str) -> _Signat
     §7.2's discard rule needs "unchanged verdict set across two consecutive
     rounds", which requires comparing rounds without caring about ordering
     or which round number each verdict carries.
+
+    Reduced to one verdict per judge for the same reason `state_for` is (see
+    latest_per_judge). Without that the signature simply grows every round --
+    round 3 holds round 2's verdicts plus its own -- so two consecutive
+    rounds could never compare equal and nothing would ever be discarded.
+    The rule exists precisely to stop a claim nobody can verify from costing
+    a full fan-out every round until max_rounds, so silently never firing
+    would have been an expensive kind of broken.
     """
-    relevant = [v for v in verdicts if v.claim_id == claim_id]
+    relevant = latest_per_judge(v for v in verdicts if v.claim_id == claim_id)
     return tuple(sorted((v.judge, v.verdict) for v in relevant))
 
 

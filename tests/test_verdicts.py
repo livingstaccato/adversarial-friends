@@ -1,54 +1,17 @@
-"""Tests for the claim state machine (spec §7.1, §7.2, §7.3).
+"""Tests for §7.1's decision table: who judges, quorum, and what settles.
 
-Weighted toward the two rules the design got wrong before, because those
-are the ones a plausible-looking rewrite would reintroduce:
+Weighted toward the rule the design got wrong before, because it is the one
+a plausible-looking rewrite would reintroduce: the originator must not be
+dispositive, or `settled-refuted` becomes unreachable for every claim in
+every roster.
 
-* the originator must not be dispositive, or `settled-refuted` becomes
-  unreachable for every claim in every roster;
-* `deadlocked` must count as terminal for loop termination, or a single
-  genuine disagreement disables termination permanently.
+The rest of the state machine -- §7.2's discard rule and downgrades, §6.1
+successors, §7.3 termination -- lives in test_verdicts_lifecycle.py.
 """
 
-import pytest
+from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
-from adversarial_friends.ledger import Claim, Verdict
-
-ROSTER = ["codex-ops", "claude-security", "agy-assumptions"]
-
-
-def claim(origin=("codex-ops",), cid="c-0001@1", advisory=False):
-    return Claim(
-        id=cid,
-        supersedes=None,
-        origin=list(origin),
-        lens="ops",
-        round=1,
-        advisory=advisory,
-        severity="high",
-        claim="the guard is missing",
-        location="src/auth.py:42",
-        evidence="src/auth.py:38",
-        failure_scenario="expired token reaches the handler",
-        suggested_fix="check exp before dispatch",
-    )
-
-
-def verdict(judge, kind, cid="c-0001@1", amended=None, reasoning="because", assessment="confirmed"):
-    return Verdict(
-        claim_id=cid,
-        judge=judge,
-        round=2,
-        verdict=kind,
-        confidence="high",
-        evidence_assessment=assessment,
-        reasoning=reasoning,
-        counter_evidence=None,
-        amended_claim=amended,
-    )
-
-
-# --- §7.1 judges and quorum ------------------------------------------------
 
 
 def test_originator_is_excluded_from_the_judges():
@@ -208,234 +171,54 @@ def test_single_judge_disagreeing_cannot_outvote_the_author():
     assert state == verdicts.DEADLOCKED
 
 
-# --- §7.2 discard rule -----------------------------------------------------
+# --- One judge, one vote, however many rounds ------------------------------
 
 
-def test_identical_verdict_sets_across_rounds_discard():
-    sig = verdicts.verdict_set_signature(
-        [verdict("claude-security", "unproven"), verdict("agy-assumptions", "unproven")],
-        "c-0001@1",
-    )
-    assert verdicts.should_discard(sig, sig) is True
+def test_one_judge_speaking_twice_cannot_reach_quorum_alone():
+    """Found in a real ollama run, not by inspection. A friend failed its
+    judging round, leaving the claim below quorum and so non-terminal; the
+    next round asked the surviving judge again, and its second identical
+    verdict settled the claim as though two independent judges had agreed.
+
+    The ledger showed `ollama/ops` twice on the same claim id, and the claim
+    reported `settled-refuted` on one judge's opinion."""
+    twice = [
+        in_round(verdict("claude-security", "refuted"), 2),
+        in_round(verdict("claude-security", "refuted"), 3),
+    ]
+    state = verdicts.state_for(claim(), twice, ROSTER, round_no=3, max_rounds=3)
+    assert state != verdicts.SETTLED_REFUTED
+    assert state == verdicts.UNPROVEN
 
 
-def test_a_changed_verdict_set_does_not_discard():
-    first = verdicts.verdict_set_signature([verdict("claude-security", "unproven")], "c-0001@1")
-    second = verdicts.verdict_set_signature([verdict("claude-security", "refuted")], "c-0001@1")
-    assert verdicts.should_discard(first, second) is False
-
-
-def test_the_first_round_never_discards():
-    sig = verdicts.verdict_set_signature([verdict("claude-security", "unproven")], "c-0001@1")
-    assert verdicts.should_discard(None, sig) is False
-
-
-def test_signature_ignores_ordering():
-    a = verdicts.verdict_set_signature(
-        [verdict("claude-security", "unproven"), verdict("agy-assumptions", "unproven")],
-        "c-0001@1",
-    )
-    b = verdicts.verdict_set_signature(
-        [verdict("agy-assumptions", "unproven"), verdict("claude-security", "unproven")],
-        "c-0001@1",
-    )
-    assert a == b
-
-
-# --- §7.2 late amendments --------------------------------------------------
-
-
-def test_late_amendment_is_downgraded_to_upheld():
-    """A successor produced in the final round has no round left to judge
-    it, which would leave both versions non-terminal forever."""
-    v = verdict("claude-security", "amended", amended="the guard is weak")
-    out = verdicts.downgrade_late_amendment(v, round_no=3, max_rounds=3)
-    assert out.verdict == "upheld"
-    assert "the guard is weak" in out.reasoning  # the proposal is preserved
-    assert "late amendment" in out.reasoning
-
-
-def test_amendment_before_the_final_round_is_untouched():
-    v = verdict("claude-security", "amended", amended="the guard is weak")
-    assert verdicts.downgrade_late_amendment(v, round_no=2, max_rounds=3) == v
-
-
-def test_a_non_amendment_is_never_rewritten():
-    v = verdict("claude-security", "refuted")
-    assert verdicts.downgrade_late_amendment(v, round_no=3, max_rounds=3) == v
-
-
-# --- §6.5 evidence symmetry ------------------------------------------------
-
-
-@pytest.mark.parametrize("kind", ["upheld", "refuted", "amended"])
-def test_an_unverifiable_dispositive_verdict_becomes_unproven(kind):
-    """A judge that says "refuted, but I could not find the evidence" has not
-    refuted anything -- it has reported that it could not check."""
-    v = verdict("claude-security", kind, assessment="unverifiable", amended="reworded")
-    assert verdicts.downgrade_unverifiable(v).verdict == verdicts.UNPROVEN
-
-
-def test_the_downgraded_verdict_records_what_it_would_have_been():
-    v = verdict("claude-security", "refuted", assessment="unverifiable")
-    out = verdicts.downgrade_unverifiable(v)
-    assert "refuted" in out.reasoning
-    assert "unverifiable" in out.reasoning
-
-
-def test_a_confirmed_verdict_is_untouched():
-    v = verdict("claude-security", "refuted", assessment="confirmed")
-    assert verdicts.downgrade_unverifiable(v) == v
-
-
-def test_an_already_non_dispositive_verdict_is_untouched():
-    v = verdict("claude-security", "out-of-scope", assessment="unverifiable")
-    assert verdicts.downgrade_unverifiable(v) == v
-
-
-def test_two_unverifiable_judges_cannot_settle_a_claim():
-    """The reason the rule exists: left dispositive, two judges would
-    unanimously settle a claim on the strength of not having looked."""
+def test_a_judge_that_changed_its_mind_is_counted_once_at_its_newest():
+    """Round 3 shows a judge the other side's reasoning, so it may vote
+    differently. The newer verdict replaces the older rather than joining
+    it -- two judges genuinely disagreeing must still register."""
     cast = [
-        verdicts.downgrade_unverifiable(verdict(j, "refuted", assessment="unverifiable"))
-        for j in ("claude-security", "agy-assumptions")
+        in_round(verdict("claude-security", "upheld"), 2),
+        in_round(verdict("claude-security", "refuted"), 3),
+        in_round(verdict("agy-assumptions", "refuted"), 3),
     ]
-    assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.UNPROVEN
+    state = verdicts.state_for(claim(), cast, ROSTER, round_no=3, max_rounds=3)
+    assert state == verdicts.SETTLED_REFUTED
 
 
-def test_both_rules_firing_at_once_still_ends_unproven():
-    """A final-round `amended` whose evidence was unverifiable triggers both
-    rewrites. Whichever runs first, a judge that could not verify the
-    evidence must not end up casting a dispositive vote."""
-    v = verdict("claude-security", "amended", amended="reworded", assessment="unverifiable")
-    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == verdicts.UNPROVEN
+def test_two_distinct_judges_still_reach_quorum():
+    """The guard must not break the normal case it is protecting."""
+    cast = [
+        in_round(verdict("claude-security", "refuted"), 2),
+        in_round(verdict("agy-assumptions", "refuted"), 2),
+    ]
+    assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.SETTLED_REFUTED
 
 
-def test_the_note_names_the_verdict_the_judge_actually_cast():
-    """This is what the rule order buys, and the only observable difference
-    between the two orders: running the evidence rule first means the
-    recorded reasoning says the judge cast `amended`, not the `upheld` that
-    an internal rewrite would otherwise have substituted for it first."""
-    v = verdict(
-        "claude-security", "amended", amended="reworded", assessment="unverifiable", reasoning=""
+def test_latest_per_judge_keeps_the_newest_round():
+    kept = verdicts.latest_per_judge(
+        [
+            in_round(verdict("claude-security", "upheld"), 2),
+            in_round(verdict("claude-security", "refuted"), 3),
+        ]
     )
-    note = verdicts.apply_downgrades(v, round_no=3, max_rounds=3).reasoning
-    assert "'amended' to 'unproven'" in note
-
-
-def test_apply_downgrades_still_performs_the_late_amendment_rewrite():
-    v = verdict("claude-security", "amended", amended="reworded", assessment="confirmed")
-    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == "upheld"
-
-
-def test_apply_downgrades_leaves_an_ordinary_verdict_alone():
-    v = verdict("claude-security", "refuted", assessment="confirmed")
-    assert verdicts.apply_downgrades(v, round_no=2, max_rounds=3) == v
-
-
-# --- §6.1 successors from a unanimous amendment ----------------------------
-
-
-def test_a_successor_bumps_the_version_and_records_what_it_supersedes():
-    amendments = [verdict("claude-security", "amended", amended="the guard is weak")]
-    successor, _note = verdicts.build_successor(claim(), amendments, round_no=2)
-    assert successor.id == "c-0001@2"
-    assert successor.supersedes == "c-0001@1"
-    assert successor.claim == "the guard is weak"
-
-
-def test_the_successor_origin_is_the_union_of_author_and_amenders():
-    """§6.1. Neither is independent of the successor's wording, so both are
-    excluded from judging it."""
-    amendments = [
-        verdict("claude-security", "amended", amended="reworded"),
-        verdict("agy-assumptions", "amended", amended="reworded"),
-    ]
-    successor, _ = verdicts.build_successor(claim(), amendments, round_no=2)
-    assert set(successor.origin) == {"codex-ops", "claude-security", "agy-assumptions"}
-    assert verdicts.judges_for(successor, ROSTER) == []
-
-
-def test_disagreeing_amenders_produce_a_note_naming_what_was_not_adopted():
-    """Judges can agree on `amended` without agreeing on a rewrite, and the
-    successor can only carry one. A discarded proposal is exactly the kind
-    of thing this tool exists to surface, so it must not vanish."""
-    amendments = [
-        verdict("agy-assumptions", "amended", amended="first wording"),
-        verdict("claude-security", "amended", amended="second wording"),
-    ]
-    successor, note = verdicts.build_successor(claim(), amendments, round_no=2)
-    # Sorted judge order, so a replay of the same ledger picks the same one.
-    assert successor.claim == "first wording"
-    assert note is not None
-    assert "second wording" in note
-
-
-def test_agreeing_amenders_produce_no_note():
-    amendments = [
-        verdict("agy-assumptions", "amended", amended="same"),
-        verdict("claude-security", "amended", amended="same"),
-    ]
-    _successor, note = verdicts.build_successor(claim(), amendments, round_no=2)
-    assert note is None
-
-
-def test_a_successor_keeps_the_advisory_flag_of_its_ancestor():
-    """Advisory-ness comes from the originating lens, which an amendment
-    does not change."""
-    amendments = [verdict("claude-security", "amended", amended="reworded")]
-    successor, _ = verdicts.build_successor(claim(advisory=True), amendments, round_no=2)
-    assert successor.advisory is True
-
-
-# --- §7.3 termination ------------------------------------------------------
-
-
-def test_dry_round_requires_both_conditions():
-    assert verdicts.round_is_dry(True, True) is True
-    assert verdicts.round_is_dry(True, False) is False  # a friend failed
-    assert verdicts.round_is_dry(False, True) is False  # new claims appeared
-
-
-def test_a_failed_round_resets_the_streak():
-    """A round that did not complete is not evidence of convergence."""
-    assert verdicts.next_streak(1, failed=True, dry=False) == 0
-
-
-def test_dry_rounds_accumulate_and_a_wet_round_resets():
-    assert verdicts.next_streak(1, failed=False, dry=True) == 2
-    assert verdicts.next_streak(1, failed=False, dry=False) == 0
-
-
-def test_deadlocked_counts_as_terminal_for_loop_termination():
-    """The other regression this module exists to prevent: excluding
-    deadlocked meant one genuine disagreement -- the outcome this tool is
-    for -- disabled termination permanently."""
-    assert verdicts.loop_should_terminate(2, [verdicts.DEADLOCKED]) is True
-
-
-def test_termination_needs_both_a_streak_and_terminal_claims():
-    assert verdicts.loop_should_terminate(1, [verdicts.SETTLED_REFUTED]) is False
-    assert verdicts.loop_should_terminate(2, [verdicts.CONTESTED]) is False
-
-
-# --- Gate ------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "state,blocks",
-    [
-        (verdicts.SETTLED_REFUTED, False),
-        (verdicts.SUPERSEDED, False),
-        (verdicts.DISCARDED, False),
-        (verdicts.SETTLED_UPHELD, True),
-        (verdicts.CONTESTED, True),
-        (verdicts.DEADLOCKED, True),
-        (verdicts.UNPROVEN, True),
-        (verdicts.INCOMPLETE, True),
-    ],
-)
-def test_gate_blocking_per_state(state, blocks):
-    """settled-upheld blocks: the judges agreed the defect is real, which
-    needs a Resolution rather than a pass."""
-    assert verdicts.gate_blocked([state]) is blocks
+    assert len(kept) == 1
+    assert kept[0].verdict == "refuted"
