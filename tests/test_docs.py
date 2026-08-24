@@ -7,6 +7,7 @@ outside the repository (PyPI, GitHub's raw viewer, a mirrored copy, etc).
 
 import json
 from pathlib import Path
+import re
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -189,6 +190,42 @@ def test_shipped_docs_never_invoke_a_bare_af_command():
             if pattern.search(line):
                 offenders.append(f"{path.relative_to(REPO)}:{number}: {line.strip()}")
     assert not offenders, "shipped docs invoke `af` instead of `afriend`:\n" + "\n".join(offenders)
+
+
+def test_shipped_docs_do_not_call_implemented_features_absent():
+    """Docs drift the moment a feature lands, and "not in this build" is the
+    sentence that ages worst -- it tells a reader not to try something that
+    works.
+
+    Caught the README claiming §14.2 extraction was absent two commits after
+    it shipped: modes.md had been updated and the README had not.
+    """
+    import subprocess
+    import sys
+
+    help_text = ""
+    for sub in ("run", "doctor", "resolve", "init"):
+        help_text += subprocess.run(
+            [sys.executable, "-m", "adversarial_friends", sub, "--help"],
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    shipped = [
+        REPO / "README.md",
+        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+    ]
+    # Anything a doc says is absent, that --help proves is present.
+    offenders = []
+    for path in shipped:
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            lowered = line.lower()
+            if "not in this build" not in lowered and "not implemented" not in lowered:
+                continue
+            for flag in re.findall(r"--[a-z][a-z-]+", line):
+                if flag in help_text:
+                    offenders.append(f"{path.relative_to(REPO)}:{number}: {flag} exists")
+    assert not offenders, "docs call an implemented feature absent:\n" + "\n".join(offenders)
 
 
 def test_docs_index_links_only_to_existing_files():

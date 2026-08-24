@@ -278,7 +278,14 @@ actually installed, and `~/.config/adversarial-friends/roster.toml` is picked
 up automatically. A repo-local roster never is — a cloned repo does not get
 to choose who reviews it (§13).
 
-Not in this build: §14.2's parse-halt extraction.
+The same halt serves unparseable output (§14.2): repair is a pure
+transformation with no model call, so when it fails the runner asks you to
+read the raw text rather than discarding whatever the friend found.
+
+**There is no `--max-spend-usd`.** A dollar cap needs per-CLI cost reporting
+nobody has captured, and a flag that silently never fires is worse than none
+— you would set it and believe you were protected. Use `--max-calls`, which
+is derived from your roster and actually enforced.
 
 | Friend | Status |
 |---|---|
