@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.1
+
+**Upgrade from 0.1.0 if you use `codex` or `agy`.** Both shipped schemas were
+rejected by every schema-enforcing CLI, so cross-examination could not work
+with either friend. Found by pointing the tool at its own source with a real
+roster — the first thing it did was fail two of its three friends.
+
+- **codex had never produced output under a schema.** OpenAI's strict
+  structured-output mode requires `additionalProperties: false` on every
+  object and `required` naming every property; neither schema had them, so
+  the API rejected the request before the model saw the prompt.
+- **agy failed every judging round.** The verdict schema's
+  `evidence_assessment` enum contained `null`, which it rejects outright.
+- The friend prompt contradicted the fixed schemas, telling friends to send
+  one of `findings`/`no_findings` when strict mode requires both.
+
+None of this was caught by 700 tests, because every test used the fake friend
+(no schema) or ollama (`schema=False`).
+
+### Confinement
+
+Two holes straight through the middle of the sandbox, from the same review:
+
+- **The environment was not filtered.** A confined friend inherited every
+  secret exported in the runner's shell — 61 variables on the machine this
+  was found on, four of them API tokens for unrelated services — readable
+  without touching a single forbidden path. It now receives an allowlist,
+  and the run records how many names were withheld (names only, never
+  values).
+- **Host-local networking is denied on macOS.** `127.0.0.1` was reachable, so
+  a local database or another dev server was one request away.
+
+Still open, and stated rather than implied: SBPL cannot filter numeric IPs, so
+cloud metadata stays reachable on macOS; `bwrap` has no selective filtering at
+all, so Linux keeps shared networking. Both need an egress proxy.
+
+- The binary allowlist assumed a CLI's libraries sit beside its executable.
+  They do not for any package-manager layout — `opencode` keeps a 61MB
+  `node_modules/` beside `bin/`.
+
 ## 0.1.0
 
 First release. Dispatches a spec, plan, or review to other agent CLIs as
