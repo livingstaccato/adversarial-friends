@@ -1,0 +1,93 @@
+"""What a confined friend is allowed to see in its environment -- §12.2.
+
+Found by running this tool against its own sandbox: the filesystem policy
+was careful and the environment was not filtered at all, so a friend
+inherited every secret already exported in the runner's shell. A
+prompt-injected friend could read another service's token without touching a
+single forbidden path -- the confinement boundary had a hole straight through
+the middle of it.
+
+**Applied only to friends that are already being confined.** A CLI with a
+real read-only mode is trusted to enforce its own limits (§11) and its
+environment is left exactly as the operator arranged it; changing that would
+break working setups for no gain. The friends this touches are the ones the
+OS is already confining because they cannot confine themselves.
+
+**An allowlist, like everything else here.** A denylist of "things that look
+like secrets" is direction-blind in the same way §13's rejected flag
+denylist was: it misses every variable nobody thought of, and those are
+exactly the ones worth protecting.
+
+The hard part is that a friend's OWN credentials usually arrive by
+environment too, so a filter that guesses wrong breaks authentication with no
+useful error. That is why the pass list is per-adapter and declared, never
+inferred -- and why `--pass-env` exists for the operator who knows something
+this project does not.
+"""
+
+from collections.abc import Mapping
+import os
+
+# Variables any process needs to start and behave sanely. None of these
+# carries a credential; each was included because dropping it changes
+# behaviour rather than exposure.
+BASE_PASS = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    # A CLI that respects XDG needs to find its own config, and those paths
+    # are already in the filesystem allowlist -- withholding the variable
+    # would only make it look in the wrong place.
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    # Node and Python runtimes: the CLIs here are mostly one or the other.
+    "NODE_PATH",
+    "NVM_DIR",
+    "PYTHONPATH",
+    "PYTHONHOME",
+)
+
+
+def build(
+    adapter_pass: tuple[str, ...] = (),
+    operator_pass: tuple[str, ...] = (),
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """The environment a confined friend receives.
+
+    Only variables that are BOTH allowed and actually set are returned:
+    exporting an empty value for an unset variable would tell a CLI that a
+    setting exists when it does not, which is its own source of confusing
+    failures.
+    """
+    source = os.environ if environ is None else environ
+    allowed = {*BASE_PASS, *adapter_pass, *operator_pass}
+    return {name: value for name, value in source.items() if name in allowed}
+
+
+def withheld(
+    adapter_pass: tuple[str, ...] = (),
+    operator_pass: tuple[str, ...] = (),
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Names dropped from the child's environment, for the run record.
+
+    Names only, never values: this list goes into run.json and report.md,
+    and writing a secret into the run directory to report that it was
+    protected would be its own leak.
+    """
+    source = os.environ if environ is None else environ
+    allowed = {*BASE_PASS, *adapter_pass, *operator_pass}
+    return sorted(name for name in source if name not in allowed)

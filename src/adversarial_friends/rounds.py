@@ -63,6 +63,7 @@ def dispatch_round(
     downgrades: list[str] | None = None,
     keep: bool = False,
     extra_args: list[str] | None = None,
+    pass_env: tuple[str, ...] = (),
 ) -> list[RoundResult]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -151,6 +152,7 @@ def dispatch_round(
                         contract,
                         allow_unsandboxed,
                         extra_args,
+                        pass_env,
                     )
                 except AfError:
                     raise

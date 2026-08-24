@@ -78,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
         "requires --i-accept-unsandboxed",
     )
     run_p.add_argument("--i-accept-unsandboxed", action="store_true")
+    # §12.2: a confined friend gets an allowlisted environment. This is for
+    # the operator who knows a variable their CLI needs that its adapter
+    # does not declare -- the alternative is a friend that fails to
+    # authenticate with no useful error.
+    run_p.add_argument(
+        "--pass-env",
+        action="append",
+        default=[],
+        metavar="VAR",
+        help="also pass VAR to confined friends (repeatable)",
+    )
     run_p.add_argument(
         "--resume",
         default=None,

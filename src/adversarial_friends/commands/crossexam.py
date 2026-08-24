@@ -150,6 +150,7 @@ def run_rounds(
     tracker: RepeatTracker | None = None,
     keep: bool = False,
     extra_args: list[str] | None = None,
+    pass_env: tuple[str, ...] = (),
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -238,6 +239,7 @@ def run_rounds(
             tracker=tracker,
             downgrades=outcome.downgrades,
             extra_args=extra_args,
+            pass_env=pass_env,
             keep=keep,
         )
         budget.spend(len(results))

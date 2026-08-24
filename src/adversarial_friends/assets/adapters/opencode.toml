@@ -48,3 +48,22 @@ read = [
   "~/.bun",
   "~/.config/node",
 ]
+
+# §12.2: opencode runs confined, so it receives an allowlisted environment
+# rather than the operator's whole shell. These are the variables it may
+# legitimately need -- its own provider credentials, which §12.3 already
+# accepts a friend can exfiltrate. Everything else is withheld, including
+# every OTHER service's token.
+#
+# Deliberately not exhaustive: guessing at a long list would re-open the hole
+# it exists to close. An operator whose setup needs one more can pass
+# --pass-env VAR, and the run records how many were withheld.
+[env]
+pass = [
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GROQ_API_KEY",
+]

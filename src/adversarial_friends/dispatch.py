@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 import threading
 
-from . import http_transport, sandbox
+from . import childenv, http_transport, sandbox
 from .adapters import Adapter, Capability, FriendSpec, build_argv
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
@@ -148,6 +148,7 @@ def _dispatch(
     contract: PayloadContract = CLAIM_CONTRACT,
     allow_unsandboxed: bool = False,
     extra_args: list[str] | None = None,
+    pass_env: tuple[str, ...] = (),
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -186,6 +187,10 @@ def _dispatch(
     cross-examination round passes the verdict contract, and the choice
     reaches both transports identically.
     """
+    # None means "inherit", which is what every friend gets unless it is
+    # being confined. Initialised before the branches because the fake and
+    # http paths never reach the exec branch that sets it.
+    child_env: dict[str, str] | None = None
     if spec.cli == "fake":
         # A spec with cli == "fake" only ever comes from
         # cliargs._specs_from_flags, which refuses to build one unless
@@ -263,6 +268,11 @@ def _dispatch(
             else:
                 policy = sandbox.policy_for(cwd, adapter.binary, adapter.sandbox_read)
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
+                # Confining the filesystem while handing over every exported
+                # secret would leave the boundary open straight through the
+                # middle: a friend could read another service's token
+                # without touching a forbidden path.
+                child_env = childenv.build(adapter.env_pass, pass_env)
     if extra_args and spec.cli != "fake":
         # §13: their presence forces readonly False in the header regardless
         # of what the argv appears to say. The runner cannot know what an
@@ -280,5 +290,6 @@ def _dispatch(
         envelope=envelope,
         structured_output=structured_output,
         contract=contract,
+        env=child_env,
     )
     return spec, capability, outcome

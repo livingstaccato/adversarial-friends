@@ -63,6 +63,7 @@ def _base_meta(
     snapshot_sha: str | None = None,
     preset: str = "inherit",
     roster_source: str | None = None,
+    env_withheld: list[str] | None = None,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -95,6 +96,10 @@ def _base_meta(
             **{name: getattr(args, name) for name in _RESUMABLE_ARGS},
         },
         "roster": [dataclasses.asdict(s) for s in specs],
+        # Names of environment variables withheld from confined friends.
+        # NAMES ONLY -- a run directory that recorded the values to prove
+        # they were protected would be the leak it exists to prevent.
+        "env_withheld": env_withheld or [],
     }
 
 
@@ -121,3 +126,54 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored._resume_dir = run_dir
     restored._resume_meta = meta
     return restored
+
+
+IMPLEMENTED_MODES = frozenset({"report", "crossexam", "gate", "loop"})
+JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+
+
+def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Path]:
+    """Everything that can be refused before a single friend is dispatched.
+
+    Grouped here so the refusals read as one list. Each exists because the
+    alternative is a run that looks like it worked: a crossexam with no
+    judging round, a loop that halts per iteration into state this build
+    cannot reconstruct, a mode nothing implements.
+    """
+    if args.resume:
+        # A resumed run takes its whole configuration from the run directory
+        # rather than from this invocation. §4.2 requires that the same
+        # response produce the same run, and re-reading flags from a second
+        # command line is exactly how that stops being true.
+        args = _restore_args(args)
+    if not args.artifact:
+        raise UsageError("an artifact path is required (or --resume RUN_ID)")
+    artifact = Path(args.artifact)
+    if not artifact.is_file():
+        raise UsageError(f"artifact not found: {artifact}")
+    if args.merge == "orchestrator" and args.mode == "loop":
+        # A loop halts once per iteration and would have to resume into the
+        # middle of one, restoring a budget, a dry-round streak and a claim
+        # set mid-flight. That state is reconstructible in principle and is
+        # not reconstructed here; refusing is better than resuming into a
+        # state this build has not verified.
+        raise UsageError(
+            "--merge orchestrator is not supported with --mode loop in this "
+            "build: a loop would halt once per iteration and resume into "
+            "mid-iteration state that is not reconstructed. Use --mode "
+            "crossexam or gate, or --merge exact."
+        )
+    if args.mode not in IMPLEMENTED_MODES:
+        raise UsageError(
+            f"mode {args.mode!r} is not implemented yet; "
+            f"available: {', '.join(sorted(IMPLEMENTED_MODES))}"
+        )
+    if args.max_rounds < 2 and args.mode in JUDGING_MODES:
+        # Round 1 is the critique round; judging starts at round 2. A
+        # crossexam capped at one round is a report with a misleading name.
+        raise UsageError(
+            f"--max-rounds={args.max_rounds} leaves no judging round for "
+            f"--mode {args.mode} (round 1 is the critique round; judging "
+            "starts at round 2). Use --mode report, or --max-rounds 2 or more."
+        )
+    return args, artifact

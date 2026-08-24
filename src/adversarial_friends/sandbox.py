@@ -18,24 +18,38 @@ CLI genuinely needs. If neither mechanism exists, the friend is refused;
 be the same shape the design rejected for flags (§13): it is direction-blind,
 and every path nobody thought of is permitted by default.
 
-**What it does not do.** §12.3 states the network and credential limits; two
-more were found by running this tool against this file, and are recorded here
-rather than implied away:
+**Confinement is not only the filesystem.** Two holes straight through the
+middle of it were found by running this tool against this file, and both are
+now closed:
 
-* **The environment is not sanitized.** The friend inherits the runner's
-  environment, so any secret already in it -- another service's token, a
-  cloud key -- is readable without touching the filesystem at all. Not fixed
-  because the friend's own credentials usually arrive the same way, and an
-  allowlist that guessed wrong would break authentication with no useful
-  error. Do not run a friend in a shell holding secrets you would not give it.
-* **Networking is shared, not brokered.** `allow network*` and an unshared
-  network namespace reach host-local and link-local services too -- other
-  dev servers, databases, a cloud metadata endpoint -- not just the model
-  API. Confining this properly needs an authenticated egress proxy, which is
-  a larger design than a filesystem policy.
+* **The environment is filtered** (see childenv). A friend used to inherit
+  every secret exported in the runner's shell -- 61 variables on the machine
+  where this was found, four of them API tokens for unrelated services --
+  and could read them without touching a single forbidden path. A confined
+  friend now receives an allowlist: the basics, plus what its adapter
+  declares it needs, plus whatever `--pass-env` adds.
+* **Host-local networking is denied on macOS.** `allow network*` reached
+  127.0.0.1 too, so a database, another dev server, or anything else bound
+  locally was one request away. SBPL takes the last matching rule, so a
+  `deny network-outbound (remote ip "localhost:*")` after the blanket allow
+  closes it while leaving the model API reachable. Verified: localhost gets
+  connection refused, example.com gets 200.
 
-What the sandbox does remove is the rest of the filesystem: other
-repositories, SSH and cloud keys, and the rest of the home directory.
+**What remains open, stated rather than implied:**
+
+* SBPL cannot filter by numeric IP -- `remote ip "169.254.169.254:*"` is
+  rejected outright, and only `localhost` and wildcard forms parse. So a
+  cloud metadata endpoint is still reachable on macOS.
+* bwrap has no selective network filtering at all: `--unshare-net` blocks
+  everything including the model, so Linux keeps shared networking entirely.
+  Closing either properly needs an authenticated egress proxy, which is a
+  larger design than a filesystem policy.
+* §12.3's original limit stands: a friend needs its own credentials to
+  authenticate, so it can always exfiltrate those and the artifact.
+
+What the sandbox removes is the rest of the filesystem -- other repositories,
+SSH and cloud keys, the rest of the home directory -- the rest of the
+environment, and host-local services on macOS.
 
 The macOS profile below is built from measurement rather than documentation:
 each allowance was added because removing it stopped a process from starting
@@ -194,8 +208,14 @@ def darwin_profile(policy: SandboxPolicy) -> str:
         "(allow signal (target self))",
         "(allow file-read-metadata)",
         "",
-        "; The friend must reach its model (§12.3).",
+        "; The friend must reach its model (§12.3) -- but only outward.",
         "(allow network*)",
+        "; Host-local and link-local services are not 'its model'. Reaching",
+        "; a database on 127.0.0.1, another dev server, or a cloud metadata",
+        "; endpoint is exfiltration with extra steps, and none of it is",
+        "; needed to talk to an API. SBPL takes the last matching rule, so",
+        "; these deny AFTER the blanket allow above.",
+        '(deny network-outbound (remote ip "localhost:*"))',
         "",
         "; Read-only: system paths, plus this CLI's own config and binary.",
         "(allow file-read* " + " ".join(reads) + ")",

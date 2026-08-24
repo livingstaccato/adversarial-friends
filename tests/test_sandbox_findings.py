@@ -79,3 +79,41 @@ def test_a_system_bin_never_grants_the_filesystem_root():
     assert Path("/") not in policy.read_paths
     for granted in policy.read_paths:
         assert str(granted) != "/", "the sandbox must never grant the filesystem root"
+
+
+def test_a_confined_process_really_cannot_see_withheld_secrets(tmp_path):
+    """The end-to-end proof, not an assertion about a dict.
+
+    Runs `env` under the real sandbox with the filtered environment and
+    checks the secret is absent from what the process itself reports. A unit
+    test on childenv.build proves the filter computes the right set; only
+    this proves the filtered set is what the child actually receives.
+    """
+    import os
+    import shutil
+    import subprocess
+
+    mechanism = sandbox.detect()
+    if mechanism is None:
+        import pytest
+
+        pytest.skip("no OS sandbox mechanism on this machine")
+
+    from adversarial_friends import childenv
+
+    workdir = tmp_path / "iso"
+    workdir.mkdir()
+    parent = {**os.environ, "AF_TEST_FAKE_SECRET": "leaked-value-should-not-appear"}
+    child = childenv.build(environ=parent)
+
+    policy = sandbox.policy_for(workdir, "env", ())
+    argv = sandbox.wrap(
+        [shutil.which("env") or "/usr/bin/env"], mechanism, policy, tmp_path / "p.sb"
+    )
+    result = subprocess.run(argv, capture_output=True, text=True, env=child)
+
+    assert result.returncode == 0, result.stderr
+    assert "leaked-value-should-not-appear" not in result.stdout
+    assert "AF_TEST_FAKE_SECRET" not in result.stdout
+    # And it is still a usable environment, not an empty one.
+    assert "PATH=" in result.stdout

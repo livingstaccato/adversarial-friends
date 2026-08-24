@@ -22,7 +22,6 @@ from .. import isolation
 from ..adapters import load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
-from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
@@ -37,19 +36,18 @@ from ..runstore import RunStore, default_root
 from ..trust import parse_unsafe_extra_args
 from ..verdicts import loop_should_terminate, next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
+from .confinement import confinement_downgrades
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import _resolve_repo_root, install_abort_handlers
 from .exits import decide_exit
 from .friends import resolve_friends
 from .resume import resume_round_one
-from .runmeta import _base_meta, _restore_args
+from .runmeta import JUDGING_MODES, _base_meta, validate_run_args
 
 # Every mode that judges claims after critiquing them. `report` stops at the
 # critique round; the rest all run cross-examination and differ only in what
 # they do with its result.
-JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
-IMPLEMENTED_MODES = frozenset({"report", *JUDGING_MODES})
 
 # The type signal.signal() both accepts and returns, per typeshed: a
 # handler callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
@@ -57,42 +55,7 @@ _SignalHandler = Callable[[int, FrameType | None], Any] | int | None
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    if args.resume:
-        # A resumed run takes its whole configuration from the run directory
-        # rather than from this invocation. §4.2 requires that the same
-        # response produce the same run, and re-reading flags from a second
-        # command line is exactly how that stops being true.
-        args = _restore_args(args)
-    if not args.artifact:
-        raise UsageError("an artifact path is required (or --resume RUN_ID)")
-    artifact = Path(args.artifact)
-    if not artifact.is_file():
-        raise UsageError(f"artifact not found: {artifact}")
-    if args.merge == "orchestrator" and args.mode == "loop":
-        # A loop halts once per iteration and would have to resume into the
-        # middle of one, restoring a budget, a dry-round streak and a claim
-        # set mid-flight. That state is reconstructible in principle and is
-        # not reconstructed here; refusing is better than resuming into a
-        # state this build has not verified.
-        raise UsageError(
-            "--merge orchestrator is not supported with --mode loop in this "
-            "build: a loop would halt once per iteration and resume into "
-            "mid-iteration state that is not reconstructed. Use --mode "
-            "crossexam or gate, or --merge exact."
-        )
-    if args.mode not in IMPLEMENTED_MODES:
-        raise UsageError(
-            f"mode {args.mode!r} is not implemented yet; "
-            f"available: {', '.join(sorted(IMPLEMENTED_MODES))}"
-        )
-    if args.max_rounds < 2 and args.mode in JUDGING_MODES:
-        # Round 1 is the critique round; judging starts at round 2. A
-        # crossexam capped at one round is a report with a misleading name.
-        raise UsageError(
-            f"--max-rounds={args.max_rounds} leaves no judging round for "
-            f"--mode {args.mode} (round 1 is the critique round; judging "
-            "starts at round 2). Use --mode report, or --max-rounds 2 or more."
-        )
+    args, artifact = validate_run_args(args)
     # Deliberately NOT resolved here: resolving would follow a symlinked
     # artifact to its target's own name, so a review of `link_spec.md ->
     # real_spec.md` would report and store the artifact as "real_spec.md"
@@ -114,6 +77,59 @@ def cmd_run(args: argparse.Namespace) -> int:
     # dispatch, and recorded as a downgrade because a run carrying
     # unvalidated flags has weaker guarantees than its friend table implies.
     extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
+    if extra_args:
+        downgrades.append(
+            f"--unsafe-extra-args passed {extra_args} to every friend. These "
+            "flags are not validated, so read-only is reported as False for "
+            "every friend regardless of what its adapter emitted."
+        )
+
+    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+    specs = resolved.specs
+
+    for spec in specs:
+        validate_friend_name(spec.name)
+
+    # §13's escape hatch. Parsed early so a bad value fails before any
+    # dispatch, and recorded as a downgrade because a run carrying
+    # unvalidated flags has weaker guarantees than its friend table implies.
+    extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
+    if extra_args:
+        downgrades.append(
+            f"--unsafe-extra-args passed {extra_args} to every friend. These "
+            "flags are not validated, so read-only is reported as False for "
+            "every friend regardless of what its adapter emitted."
+        )
+
+    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+    specs = resolved.specs
+
+    for spec in specs:
+        validate_friend_name(spec.name)
+
+    if len(specs) == 1:
+        # --friend REPLACES the roster rather than augmenting discovery (see
+        # cliargs._specs_from_flags above), so a single --friend flag -- or,
+        # per design doc §8.3, discovery itself resolving to just one friend
+        # -- produces a run that cannot cross-examine anything: it is one
+        # reviewer's opinion, not disagreement between several. That
+        # reduced guarantee must be visible in run.json/report.md rather
+        # than a single-reviewer report quietly looking like the real
+        # thing -- the same rule already applied to every other downgrade
+        # this function records.
+        downgrades.append(
+            f"only one friend ({specs[0].name}) resolved for this run; "
+            "cross-examination needs at least two independent friends, so "
+            "this report reflects a single reviewer's opinion, not "
+            "disagreement between several."
+        )
+    # §12.2: every friend that will run without OS confinement is named in
+    # the report, whether that is because the operator overrode the refusal
+    # or because the CLI has no read-only mode and one was available. A
+    # weakened guarantee has to be visible in the artifact a human reads,
+    # not only in the code that decided it.
+    env_withheld = confinement_downgrades(args, specs, registry, downgrades)
+
     if extra_args:
         downgrades.append(
             f"--unsafe-extra-args passed {extra_args} to every friend. These "
@@ -166,16 +182,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     # or because the CLI has no read-only mode and one was available. A
     # weakened guarantee has to be visible in the artifact a human reads,
     # not only in the code that decided it.
-    unconfined = [s for s in specs if s.cli in registry and not registry[s.cli].readonly_argv]
-    if unconfined and args.allow_unsandboxed_friend:
-        downgrades.append(
-            "--allow-unsandboxed-friend was passed: "
-            + ", ".join(s.name for s in unconfined)
-            + " may run with no OS confinement at all. The artifact under "
-            "review is untrusted text; a friend that follows an instruction "
-            "inside it can read anything this user can."
-        )
-
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
@@ -339,6 +345,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     tracker=tracker,
                     keep=args.keep,
                     extra_args=extra_args,
+                    pass_env=tuple(args.pass_env),
                     merge=args.merge,
                     run_id=run_id,
                 )
@@ -389,6 +396,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         tracker=tracker,
                         keep=args.keep,
                         extra_args=extra_args,
+                        pass_env=tuple(args.pass_env),
                     )
                     all_claims = cross.claims
                     friends_meta.extend(cross.friends_meta)
@@ -420,6 +428,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 snapshot_sha,
                 preset=resolved.preset,
                 roster_source=resolved.source,
+                env_withheld=env_withheld,
             )
             store.write_run_json(halt_meta)
             store.write_report(render(all_claims, all_aliases, halt_meta))
@@ -445,6 +454,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             snapshot_sha,
             preset=resolved.preset,
             roster_source=resolved.source,
+            env_withheld=env_withheld,
         )
         if args.mode == "loop":
             meta["iterations_run"] = iterations_run

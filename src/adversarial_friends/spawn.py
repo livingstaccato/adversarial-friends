@@ -265,6 +265,7 @@ def run_process(
     envelope: Envelope | None = None,
     structured_output: bool = False,
     contract: PayloadContract = CLAIM_CONTRACT,
+    env: dict[str, str] | None = None,
 ) -> SpawnResult:
     """Run one friend; see the module docstring for the process-group and
     pump-thread hazards this guards against.
@@ -306,6 +307,10 @@ def run_process(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            # None inherits, which is what an unconfined friend gets. A
+            # confined one is handed an allowlisted environment instead --
+            # see childenv, and dispatch._dispatch for who gets which.
+            env=env,
         )
     except FileNotFoundError:
         return _early_failure(argv, time.monotonic() - started, f"binary not found: {argv[0]}")

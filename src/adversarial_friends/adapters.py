@@ -89,6 +89,10 @@ class Adapter:
     # captures a real auth failure -- guessing at stderr substrings is what
     # §14 explicitly rejects.
     auth: "AuthMarkers" = field(default_factory=lambda: AuthMarkers())
+    # §12.2: environment variables this CLI genuinely needs when it runs
+    # confined. Its own credentials, essentially -- §12.3 already accepts
+    # that a friend can exfiltrate those. Everything else is withheld.
+    env_pass: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             endpoint=data.get("endpoint", ""),
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
             auth=parse_auth(data.get("auth")),
+            env_pass=tuple(data.get("env", {}).get("pass", [])),
             structured_output=bool(data.get("structured_output", False)),
             envelope=parse_envelope(data.get("envelope")),
         )

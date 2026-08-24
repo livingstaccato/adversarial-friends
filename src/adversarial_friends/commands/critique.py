@@ -116,6 +116,7 @@ def run_critique(
     tracker: RepeatTracker | None = None,
     keep: bool = False,
     extra_args: list[str] | None = None,
+    pass_env: tuple[str, ...] = (),
     merge: str = "exact",
     run_id: str = "",
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
@@ -149,6 +150,7 @@ def run_critique(
         tracker=tracker,
         downgrades=outcome.downgrades,
         extra_args=extra_args,
+        pass_env=pass_env,
         keep=keep,
     )
     outcome.calls = len(results)
