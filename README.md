@@ -180,6 +180,13 @@ report says so rather than quietly resolving them.
 
 ![crossexam states](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/crossexam-states.png)
 
+### The gate loop
+
+`--mode gate` is the one that fails a build, and clearing it is a
+back-and-forth rather than a single command:
+
+![gate workflow](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/gate-workflow.png)
+
 ---
 
 ## 🔬 Lenses
@@ -228,22 +235,34 @@ comes back thin, that's what you read — not a guess.
 
 ## ✅ What's implemented
 
-**`report` and `crossexam` both run.** `report` is one round: every friend
-critiques the artifact in parallel and the claims merge into one report.
-`crossexam` continues from there — each friend judges the claims it did not
-write, blind, until every claim settles, deadlocks, or a ceiling is hit.
+**All four modes run.**
+
+| Mode | What it does |
+|---|---|
+| `report` | One round. Every friend critiques in parallel; claims merge into one ranked report. |
+| `crossexam` | Then friends judge the claims they did not write, blind, until each settles or deadlocks. |
+| `gate` | Then every non-advisory claim that did not clear needs an explicit resolution — this is the one that fails a build. |
+| `loop` | Repeats until two consecutive rounds surface nothing new. |
 
 ```bash
 afriend run docs/design.md --mode crossexam
+afriend run docs/design.md --mode gate       # exit 1 while anything blocks
+afriend resolve <run-id> --claim c-0001@1 \
+    --disposition fixed --evidence src/auth.py:38
 ```
 
 Disagreement is the output rather than a problem: two judges who still
 disagree at `--max-rounds` leave the claim `deadlocked`, and the report
 quotes both sides verbatim instead of resolving it by majority.
 
-Gates (`--mode gate`) and revision loops (`--mode loop`) are the design this
-is built *toward*, not something you can invoke today; both exit `2` with a
-message saying so rather than pretending to run.
+A resolution is an **attestation**, and the tool says so. It cannot know a
+defect is gone — only whether the location you named actually changed since
+the run started. A fix that landed outside the reviewed artifact is fine; a
+location it cannot reconstruct is recorded as `unverifiable` rather than
+waved through. The one thing it refuses is `--disposition fixed` naming a
+location that did not change.
+
+Not in this build: `--merge=orchestrator`, `--resume`, and `af init`.
 
 | Friend | Status |
 |---|---|

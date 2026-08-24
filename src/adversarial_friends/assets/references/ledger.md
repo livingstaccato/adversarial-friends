@@ -1,14 +1,11 @@
 # The claim ledger
 
 `claims.jsonl` is append-only. Each line is one JSON record with a `type`
-field. The schema defines four record types; **`claim`, `alias`, and
-`verdict` are written by this build.** `resolution` exists in the schema and
-can be read back, but nothing produces one yet — resolutions belong to `gate`
-and `af resolve`, neither of which is implemented (see `modes.md`).
-
-`--mode report` writes only `claim` and `alias`; `--mode crossexam` also
-writes `verdict` records, and the successor `claim` records that a unanimous
-amendment produces.
+field. **All four record types are written by this build**, by different
+modes: `--mode report` writes `claim` and `alias`; `--mode crossexam` (and
+`gate`, and `loop`) also write `verdict` records plus the successor `claim`
+records a unanimous amendment produces; `afriend resolve` writes
+`resolution`.
 
 **claim** — an assertion about the artifact. `id` is versioned (`c-0007@2`);
 an amendment creates a new version rather than editing in place, so a
@@ -61,9 +58,13 @@ judgment-call merge that has no implementation to produce it yet.
  "round":1,"source":"exact","rationale":"identical claim text and location"}
 ```
 
-**resolution** *(schema only — not produced by this build)* — how a claim
-would be disposed of: `fixed`, `rejected`, or `accepted-risk`. There is no
-`af resolve` command in this build to create one.
+**resolution** — how a claim was disposed of: `fixed`, `rejected`, or
+`accepted-risk`, written by `afriend resolve`. `verified` records what the
+runner could actually check about the `evidence` location:
+`location-changed`, `location-unchanged`, or `unverifiable`. Read it as an
+attestation rather than proof — the runner cannot know a defect is gone, only
+whether the named location moved. `unverifiable` means it could not even
+check that much. See `modes.md` under **Gate** for the full rule.
 
 ## Reading it directly
 

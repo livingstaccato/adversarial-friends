@@ -10,7 +10,7 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 | Document | What it covers |
 |---|---|
 | [SKILL.md](../src/adversarial_friends/assets/SKILL.md) | The skill itself — when it fires, how to run it, how to read its output |
-| [modes.md](../src/adversarial_friends/assets/references/modes.md) | `report` and `crossexam` (both implemented), `gate` and `loop` (planned); claim states, ceilings, exit codes |
+| [modes.md](../src/adversarial_friends/assets/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus `afriend resolve`, claim states, ceilings, and exit codes |
 | [troubleshooting.md](../src/adversarial_friends/assets/references/troubleshooting.md) | Verified CLI traps, empty reports, timeouts, unauthenticated friends |
 
 > These three live under `src/adversarial_friends/assets/` because they ship
@@ -39,6 +39,9 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 - **[Cross-examination states](architecture/crossexam-states.puml)** — the
   eight states a claim can reach under `--mode crossexam`, which are terminal,
   and which need a human.
+- **[The gate loop](architecture/gate-workflow.puml)** — how `--mode gate` and
+  `afriend resolve` fit together, and the two things a resolution can be
+  refused for.
 
 Rendered PNG and SVG are committed alongside each source. Regenerate with
 `make diagrams`.

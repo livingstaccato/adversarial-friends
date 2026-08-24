@@ -136,6 +136,27 @@ def test_rendered_diagrams_do_not_leak_markup_into_labels():
         assert "<size:" not in visible, svg.name
 
 
+def test_rendered_diagrams_contain_no_accidental_strikethrough():
+    """PlantUML reads two `--` sequences on one line as strikethrough.
+
+    A label like `afriend resolve RUN --claim ID --disposition fixed` renders
+    with everything between the markers struck out, which looks deliberate --
+    as though the flag were deprecated. Hit twice now: once on a `--mode /
+    --preset` label, once on a resolve command. Wrapping the flags in quotes
+    fixes the first case; a label with three or more flags has to drop the
+    spellings entirely.
+
+    Verified against a deliberately broken render: PlantUML emits
+    `text-decoration="line-through"` on the affected <text> element, and
+    nothing in these diagrams ever wants that.
+    """
+    for svg in sorted((REPO / "docs" / "architecture").glob("*.svg")):
+        assert "line-through" not in svg.read_text(), (
+            f"{svg.name} has struck-through text -- check for a label carrying "
+            "two '--' sequences (see this test's docstring)"
+        )
+
+
 def test_docs_index_links_only_to_existing_files():
     index = REPO / "docs" / "README.md"
     import re

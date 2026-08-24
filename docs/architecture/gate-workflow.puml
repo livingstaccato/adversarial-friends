@@ -1,0 +1,75 @@
+@startuml gate-workflow
+' The gate loop: run, resolve, re-check. Traced against
+' src/adversarial_friends/commands/run.py (cmd_run's gate branch),
+' commands/resolve.py, and resolutions.py.
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName "Helvetica"
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam ArrowFontSize 11
+skinparam TitleFontSize 18
+
+skinparam activity {
+  BorderColor #546E7A
+  BackgroundColor #ECEFF1
+  DiamondBorderColor #546E7A
+  DiamondBackgroundColor #ECEFF1
+  FontSize 13
+  DiamondFontSize 12
+}
+skinparam note {
+  BackgroundColor #FFF8E1
+  BorderColor #F9A825
+  FontSize 12
+}
+
+title The gate loop
+
+start
+
+:afriend run spec.md "--mode gate";<<#E3F2FD>>
+:critique, then cross-examine;
+
+if (any non-advisory claim\nnot cleared by its state?) then (no)
+  :exit 0 — gate clear;<<#C8E6C9>>
+  stop
+else (yes)
+endif
+
+:exit 1 — names each blocking claim;<<#FFCDD2>>
+
+note right
+  Only settled-refuted, superseded
+  and discarded clear on their own.
+  settled-upheld does not: the judges
+  agreeing a defect is real is the
+  opposite of a pass.
+end note
+
+repeat
+  :a human changes something;
+  :afriend resolve RUN_ID\nclaim = c-0001@1\ndisposition = fixed\nevidence = src/auth.py:38;<<#E3F2FD>>
+
+  if (evidence names a location?) then (no)
+    :exit 2 — refused;<<#FFCDD2>>
+    stop
+  else (yes)
+  endif
+
+  :compare that location against\nthe run's frozen copy or snapshot;
+
+  if (fixed, but nothing changed there?) then (yes)
+    :exit 2 — refused;<<#FFCDD2>>
+    stop
+  else (no)
+  endif
+
+  :append resolution\nverified = changed | unchanged | unverifiable;
+repeat while (claims still blocking?) is (yes) not (no)
+
+:exit 0 — gate clear;<<#C8E6C9>>
+stop
+
+@enduml

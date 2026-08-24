@@ -4,15 +4,8 @@
 |---|---|---|
 | `report` | **implemented** | One round. Every friend critiques in parallel; claims are merged (exact-match only) and ranked by severity in `report.md`. |
 | `crossexam` | **implemented** | `report`, then friends judge each other's claims across rounds until every claim settles, deadlocks, or a ceiling is hit. |
-| `gate` | planned | Cross-examination, then every surviving non-advisory claim needs an explicit resolution. |
-| `loop` | planned | Cross-examination, artifact revised, repeated until two rounds surface nothing new. |
-
-`afriend run` rejects `--mode gate` and `--mode loop` with a usage error (exit 2)
-rather than pretending to support them:
-
-```
-afriend: mode 'gate' is not implemented yet; 'report' and 'crossexam' are available
-```
+| `gate` | **implemented** | Cross-examination, then every surviving non-advisory claim needs an explicit resolution before the gate clears. |
+| `loop` | **implemented** | Cross-examination, repeated until two consecutive rounds surface nothing new. |
 
 ## Cross-examination
 
@@ -74,16 +67,92 @@ amenders.
 | Flag | Default |
 |---|---|
 | `--max-rounds` | `3` |
-| `--max-calls` | derived: `ceil(friends × max-rounds × 1.5)` |
+| `--max-calls` | derived: `ceil(friends × max-rounds × iterations × 1.5)` |
 | `--max-wall-clock` | `7200` (seconds) |
+| `--max-loop-iterations` | `5` (`loop` only) |
 
 `--max-calls` is derived from your roster rather than fixed, so adding a
 friend does not make the default configuration trip its own ceiling. Hitting
 any ceiling is `budget-exhausted`: the run stops, says so in the report, and
 exits `11` — it has neither converged nor cleared anything.
 
-Not in this build: `--merge=orchestrator`, `--resume`, `af resolve`, and
-`af init`. Run `afriend run --help` to see the flags this build accepts.
+## Gate
+
+`gate` is cross-examination plus one rule: every non-advisory claim that did
+not clear on its own needs an explicit resolution. Only `settled-refuted`,
+`superseded` and `discarded` clear unaided — `settled-upheld` does not,
+because the judges agreeing a defect is real is the opposite of a pass.
+
+```bash
+afriend run docs/design.md --mode gate
+# exit 1: gate blocked -- 2 claim(s) need a resolution: c-0001@1, c-0004@1
+```
+
+Resolve each one, and the gate re-evaluates as you go:
+
+```bash
+afriend resolve <run-id> --claim c-0001@1 \
+    --disposition fixed --evidence src/auth.py:38
+# c-0001@1 fixed (location-changed)
+# afriend: gate blocked -- 1 claim(s) still need a resolution: c-0004@1
+
+afriend resolve <run-id> --claim c-0004@1 \
+    --disposition accepted-risk --evidence docs/design.md:12
+# gate clear
+```
+
+`--disposition` is `fixed`, `rejected`, or `accepted-risk`. Advisory claims
+never appear here: their lens deliberately does not demand a failure
+scenario, and gating on "this is more than you need" would silence it.
+
+### What a resolution actually proves
+
+**Less than it looks like, and the tool says so.** A resolution is an
+attestation. The runner cannot know a defect is gone; it can only check
+whether the location your `--evidence` names has changed since the run
+started, and it reports which of three things it found:
+
+| `verified` | Meaning |
+|---|---|
+| `location-changed` | The named location differs from the run's snapshot |
+| `location-unchanged` | It does not |
+| `unverifiable` | The runner could not reconstruct that location at all |
+
+Three consequences worth knowing:
+
+* **A fix that landed somewhere else is fine.** A valid fix for a claim about
+  `docs/design.md` frequently lands in `src/auth.py`. Name the location that
+  actually changed; requiring the reviewed artifact to change would force
+  dummy edits to clear a gate.
+* **`unverifiable` is recorded, not refused.** You are told the runner
+  checked nothing, so silence is never mistaken for confirmation.
+* **One thing is refused:** `--disposition fixed` naming a location that did
+  not change. That is the single case the runner can positively contradict.
+
+`--evidence` must name a location. Prose alone leaves nothing to check, and
+recording it would make every resolution look equally well-supported.
+
+## Loop
+
+`loop` repeats the whole cross-examination and stops when two consecutive
+rounds surface nothing new *and* every non-advisory claim is terminal.
+
+```bash
+afriend run docs/design.md --mode loop --max-loop-iterations 5
+```
+
+**The runner never edits your artifact.** So a loop buys two things:
+convergence detection — evidence that the roster keeps finding the same
+things and nothing more, which is the difference between "one round found 3
+issues" and "three rounds keep finding those same 3 issues" — and picking up
+a revision if something outside the run makes one between iterations.
+
+Each iteration owns its own block of round numbers, so `round-1/` and
+`round-4/` are iteration 1 and 2 rather than one overwriting the other. The
+call budget is a whole-run total, not per iteration.
+
+Not in this build: `--merge=orchestrator`, `--resume`, and `af init`. Run
+`afriend run --help` to see the flags this build accepts.
 
 ## Exit codes
 
@@ -93,19 +162,19 @@ every command in this build:
 | Code | Meaning | Reachable today via |
 |---|---|---|
 | `0` | success | a run that reached terminal states with nothing blocked, `afriend doctor` (at least one friend found) |
-| `1` | gate blocked, or run incomplete | every dispatched friend failed; or a `crossexam` that left claims undecided or lost a required friend mid-round |
-| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--mode gate`/`loop`, `--max-rounds 1` with `--mode crossexam`, or `--preset` set to anything but `inherit` |
+| `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
+| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, `--preset` set to anything but `inherit`, or an `afriend resolve` naming no location / an unknown claim / a `fixed` at an unchanged location |
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
 | `10` | needs orchestrator | reserved for `--merge=orchestrator` and parse-halt recovery — not implemented in this build |
-| `11` | ceiling hit | `crossexam` hitting `--max-calls`, `--max-rounds` budget, or `--max-wall-clock` |
+| `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
 
 A ceiling outranks every outcome below it: a truncated run has not evaluated
 anything, so a CI wrapper can treat `11` as "retry" and `1` as "block"
 without ambiguity.
 
-A deadlock exits `0`. It is a completed run whose answer happens to be "the
-friends disagree" — blocking on that is `gate` mode's job, and `gate` is not
-in this build. Read the report.
+A deadlock exits `0` under `crossexam`: it is a completed run whose answer
+happens to be "the friends disagree". Under `gate` it blocks, because that is
+exactly what a gate is for.
 
 A run cancelled by `SIGINT`/`SIGTERM` exits `128 + signal number` instead of
 any of the above, and `afriend` prints `aborted by signal N` to stderr.

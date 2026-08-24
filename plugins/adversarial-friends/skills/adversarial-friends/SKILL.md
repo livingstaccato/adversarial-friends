@@ -28,6 +28,8 @@ does not produce the initial critique.
 ```bash
 afriend run <artifact> --mode report      # one round of parallel critique
 afriend run <artifact> --mode crossexam   # then friends judge each other
+afriend run <artifact> --mode gate        # then every claim needs a resolution
+afriend run <artifact> --mode loop        # repeat until nothing new appears
 ```
 
 This skill drives the `afriend` console script, which comes from the
@@ -37,8 +39,8 @@ skill cannot run — install it with
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
 
 `<artifact>` is a path to a file — a spec, a plan, a review someone else
-wrote, saved to disk. `report` and `crossexam` are the modes this build
-implements; `gate` and `loop` are not — see `references/modes.md`.
+wrote, saved to disk. All four modes run; see `references/modes.md` for the
+full rules.
 
 Both dispatch the artifact to every discovered friend in parallel and write a
 run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
@@ -49,10 +51,21 @@ always written, even when empty), and `.meta` (argv, exit code, duration,
 timeout and orphan status). `afriend run` prints only the run directory path
 to stdout; read `report.md` from there and present the findings.
 
-`crossexam` adds rounds 2 onward, where each friend judges the claims it did
-not write. Reach for it when the question is *which of these findings are
-real* rather than *what might be wrong* — it costs a fan-out per round, so
-`report` remains the right default for a first look at a document.
+Which mode to reach for:
+
+* **`report`** — a first look at a document. One fan-out, no judging.
+* **`crossexam`** — when the question is *which of these findings are real*
+  rather than *what might be wrong*. Costs a fan-out per round.
+* **`gate`** — when something downstream should stop until a human has
+  answered each finding. This is the mode that fails a build.
+* **`loop`** — when the question is *did we find everything*. It repeats
+  until two consecutive rounds surface nothing new, which is the difference
+  between "one round found 3 issues" and "three rounds keep finding those
+  same 3 issues".
+
+Do not reach for `gate` or `loop` on a user's behalf without saying so: both
+cost several times what `report` does, and `gate` deliberately exits
+non-zero until every claim is answered.
 
 Exit codes: `0` the run reached terminal states with nothing blocked; `1`
 every dispatched friend failed, or a `crossexam` left claims undecided or
@@ -60,8 +73,23 @@ lost a required friend mid-round; `2` a usage or config error — a missing
 artifact, an unrecognized `--friend` value, or `--mode gate`/`loop`; `3` no
 usable friend could be found at all (install a second agent CLI, or pass
 `--include-self` to let the host CLI review its own artifact); `11` a
-`crossexam` stopped at a ceiling, having neither converged nor cleared
+a judging mode stopped at a ceiling, having neither converged nor cleared
 anything.
+
+A `gate` run exits `1` while any claim still needs an answer. Resolve them
+one at a time; each call re-reports what is left:
+
+```bash
+afriend resolve <run-id> --claim c-0001@1 \
+    --disposition fixed|rejected|accepted-risk --evidence src/auth.py:38
+```
+
+`--evidence` must name a location, not prose. A resolution is an
+attestation: the runner checks only whether that location changed since the
+run started, and records `location-changed`, `location-unchanged`, or
+`unverifiable`. Never present a recorded resolution to the user as proof the
+defect is gone — say what was actually verified. The one case the runner
+refuses outright is `fixed` naming a location that did not change.
 
 Check what is available first when a run comes back thin:
 
