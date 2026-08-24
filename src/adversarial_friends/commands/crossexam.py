@@ -143,8 +143,15 @@ def run_rounds(
     attributed: bool = False,
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _pool: None,
     now: Callable[[], float] = time.monotonic,
+    first_round: int = 2,
 ) -> CrossexamOutcome:
-    """Judge `claims` over rounds 2..max_rounds and return what happened."""
+    """Judge `claims` over rounds `first_round`..`max_rounds`.
+
+    `first_round` is 2 for a plain crossexam -- round 1 is the critique. A
+    `loop` iteration passes a higher number: each iteration owns a distinct
+    block of round numbers so its rounds never collide with an earlier
+    iteration's in the run directory or the ledger.
+    """
     outcome = CrossexamOutcome(claims=list(claims))
     duplicate_note = _duplicate_key_downgrade(specs)
     if duplicate_note:
@@ -155,7 +162,7 @@ def run_rounds(
     outcome.states = {claim.id: vd.CONTESTED for claim in outcome.claims}
     signatures: dict[str, vd._Signature] = {}
 
-    round_no = 2
+    round_no = first_round
     while round_no <= max_rounds:
         if abort_event.is_set():
             break

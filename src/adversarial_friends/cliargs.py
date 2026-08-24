@@ -8,9 +8,14 @@ import argparse
 
 from . import __version__
 from .adapters import Adapter, FriendSpec
-from .ceilings import DEFAULT_MAX_ROUNDS, DEFAULT_MAX_WALL_CLOCK_S
+from .ceilings import (
+    DEFAULT_MAX_LOOP_ITERATIONS,
+    DEFAULT_MAX_ROUNDS,
+    DEFAULT_MAX_WALL_CLOCK_S,
+)
 from .errors import UsageError
 from .ids import validate_friend_name
+from .resolutions import DISPOSITIONS
 from .trust import MODEL_RE
 
 
@@ -44,6 +49,22 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS)
     run_p.add_argument("--max-calls", type=int, default=None)
     run_p.add_argument("--max-wall-clock", type=int, default=DEFAULT_MAX_WALL_CLOCK_S)
+    run_p.add_argument("--max-loop-iterations", type=int, default=DEFAULT_MAX_LOOP_ITERATIONS)
+
+    # §7.5. Appends a Resolution to a finished run's ledger and re-reports
+    # the gate. Separate from `run` because resolving happens after a human
+    # has gone and changed something, which may be days later.
+    resolve_p = sub.add_parser("resolve")
+    resolve_p.add_argument("run_id", help="run directory name, or a path to one")
+    resolve_p.add_argument("--claim", required=True, help="claim id, e.g. c-0007@2")
+    resolve_p.add_argument("--disposition", required=True, choices=list(DISPOSITIONS))
+    resolve_p.add_argument(
+        "--evidence",
+        required=True,
+        help="a location the fix touched, e.g. src/auth.py:38 -- §6.4 requires one",
+    )
+    resolve_p.add_argument("--author", default=None, help="defaults to $USER")
+    resolve_p.add_argument("--out", default=None, help="run root, if not the default")
 
     sub.add_parser("doctor")
     return parser

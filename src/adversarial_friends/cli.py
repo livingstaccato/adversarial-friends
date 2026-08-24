@@ -1,7 +1,8 @@
 """Command line entry point.
 
-Wires the modules under this package into two working subcommands:
-`afriend run --mode report` and `afriend doctor`. The actual work lives in
+Wires the modules under this package into three working subcommands:
+`afriend run` (modes report/crossexam/gate/loop), `afriend resolve`, and
+`afriend doctor`. The actual work lives in
 cliargs.py (parsing), dispatch.py (running one friend), prompt.py (building
 one friend's prompt), and commands/run.py + commands/doctor.py (the two
 subcommands); this file is the thin entry point that ties them together.
@@ -17,6 +18,7 @@ import sys
 
 from .cliargs import _specs_from_flags, build_parser
 from .commands.doctor import cmd_doctor
+from .commands.resolve import cmd_resolve
 from .commands.run import _resolve_repo_root, cmd_run
 from .dispatch import (
     _FAKE_CAPABILITY,
@@ -46,6 +48,7 @@ __all__ = [
     "available_lenses",
     "build_parser",
     "cmd_doctor",
+    "cmd_resolve",
     "cmd_run",
     "main",
 ]
@@ -57,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             return cmd_run(args)
+        if args.command == "resolve":
+            return cmd_resolve(args)
         if args.command == "doctor":
             return cmd_doctor(args)
         parser.print_help()

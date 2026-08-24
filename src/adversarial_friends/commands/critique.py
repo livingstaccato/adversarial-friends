@@ -1,0 +1,198 @@
+"""One critique round: build each friend's prompt, dispatch, merge claims.
+
+Extracted from commands/run.py when `--mode loop` arrived. A loop iteration
+is a whole critique round followed by a whole cross-examination, so the
+round-1 body had to become callable more than once per run rather than
+inlined in cmd_run.
+
+Round numbering is passed in rather than fixed at 1 for the same reason:
+iteration 2's critique is round `max_rounds + 1`, so every round in a run
+gets a distinct directory and a distinct number in the ledger.
+"""
+
+from collections.abc import Callable
+import concurrent.futures
+from dataclasses import dataclass, field
+from pathlib import Path
+import threading
+from typing import Any
+
+from ..adapters import Adapter, FriendSpec
+from ..dispatch import PROMPT_ARGV_WARN_BYTES
+from ..ids import format_claim_id
+from ..ledger import Alias, Claim
+from ..merge import exact_merge
+from ..prompt import _build_friend_prompt
+from ..rounds import dispatch_round, persist_result
+from ..runstore import RunStore
+
+
+@dataclass
+class CritiqueOutcome:
+    """What one critique round produced."""
+
+    claims: list[Claim] = field(default_factory=list)
+    aliases: list[Alias] = field(default_factory=list)
+    friends_meta: list[dict[str, Any]] = field(default_factory=list)
+    downgrades: list[str] = field(default_factory=list)
+    calls: int = 0
+    any_success: bool = False
+    any_failed: bool = False
+    # §7.3: a round is dry when every required friend completed successfully
+    # AND every claim it produced was an alias of one already known -- i.e.
+    # the round cost a full fan-out and learned nothing new.
+    produced_only_aliases: bool = True
+
+
+def build_prompts(
+    specs: list[FriendSpec],
+    artifact_text: str,
+    store: RunStore,
+    registry: dict[str, Adapter],
+    round_no: int,
+) -> tuple[dict[str, Path], dict[str, bool], list[str]]:
+    """Return (prompt path per friend, advisory flag per friend, downgrades).
+
+    Every friend gets its OWN prompt, built from its own lens -- not a single
+    prompt shared byte-for-byte across every friend regardless of
+    `--friend cli:lens`. That was a real bug: the lens name was recorded for
+    bookkeeping but its prose never reached the friend, so the only diversity
+    in a run was model diversity. Each prompt is written next to that
+    friend's `.raw`/`.meta` so a human can see exactly what it was asked.
+    """
+    prompt_for: dict[str, Path] = {}
+    advisory_for: dict[str, bool] = {}
+    downgrades: list[str] = []
+    for spec in specs:
+        prompt_text, advisory, lens_downgrade = _build_friend_prompt(spec, artifact_text)
+        if lens_downgrade:
+            downgrades.append(lens_downgrade)
+        # claude, opencode, and agy all place the WHOLE prompt in one argv
+        # element (prompt_mode "trailing-arg"/"flag-value"); Linux commonly
+        # caps a single argument near 128KB (the limit varies by OS -- this
+        # runner is not always run on Linux), so a large artifact can make
+        # Popen() fail with E2BIG ("Argument list too long"). This is
+        # detected, not solved -- switching prompt modes is a design change.
+        # Recording the risk up front means an E2BIG failure is already
+        # explained by the time it is read, not a surprise raw exit code.
+        if spec.cli != "fake":
+            adapter = registry[spec.cli]
+            if adapter.prompt_mode != "stdin":
+                prompt_bytes = len(prompt_text.encode("utf-8"))
+                if prompt_bytes > PROMPT_ARGV_WARN_BYTES:
+                    downgrades.append(
+                        f"{spec.name}: prompt is {prompt_bytes} bytes and "
+                        f"{adapter.name} passes it as a single argv element "
+                        f"(prompt_mode={adapter.prompt_mode!r}); Linux commonly "
+                        "caps a single argument near 128KB (the limit varies by "
+                        "OS), so this friend's dispatch may fail with 'Argument "
+                        "list too long' (E2BIG)."
+                    )
+        prompt_path = store.friend_prompt_path(round_no, spec.name)
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+        prompt_for[spec.name] = prompt_path
+        advisory_for[spec.name] = advisory
+    return prompt_for, advisory_for, downgrades
+
+
+def run_critique(
+    specs: list[FriendSpec],
+    round_no: int,
+    known_claims: list[Claim],
+    claim_counter: int,
+    artifact_text: str,
+    store: RunStore,
+    registry: dict[str, Adapter],
+    fake_cmd: list[str] | None,
+    schema_file: Path,
+    artifact: Path,
+    repo_root: Path | None,
+    snapshot_sha: str | None,
+    abort_event: threading.Event,
+    on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _p: None,
+) -> tuple[CritiqueOutcome, list[Claim], int]:
+    """Dispatch one critique round and merge its claims into `known_claims`.
+
+    Returns (outcome, the updated full claim list, the updated claim
+    counter). `known_claims` is not mutated; the caller takes the returned
+    list, which is what makes a second iteration's dedup work against
+    everything seen so far rather than only against its own round.
+    """
+    outcome = CritiqueOutcome()
+    prompt_for, advisory_for, prompt_downgrades = build_prompts(
+        specs, artifact_text, store, registry, round_no
+    )
+    outcome.downgrades.extend(prompt_downgrades)
+
+    results = dispatch_round(
+        specs,
+        round_no,
+        prompt_for,
+        store,
+        registry,
+        fake_cmd,
+        schema_file,
+        artifact,
+        repo_root,
+        snapshot_sha,
+        abort_event,
+        on_pool=on_pool,
+    )
+    outcome.calls = len(results)
+
+    all_claims = list(known_claims)
+    counter = claim_counter
+    for spec, capability, result in results:
+        outcome.friends_meta.append(persist_result(store, round_no, spec, capability, result))
+        if result.failure_reason is not None:
+            outcome.any_failed = True
+            continue
+        outcome.any_success = True
+        incoming = []
+        for finding in (result.result.payload or {}).get("findings", []):
+            counter += 1
+            incoming.append(
+                Claim(
+                    id=format_claim_id(counter),
+                    supersedes=None,
+                    origin=[f"{spec.cli}/{spec.lens}"],
+                    lens=spec.lens,
+                    round=round_no,
+                    advisory=advisory_for[spec.name],
+                    severity=finding["severity"],
+                    claim=finding["claim"],
+                    location=finding.get("location"),
+                    evidence=finding["evidence"],
+                    failure_scenario=finding["failure_scenario"],
+                    suggested_fix=finding["suggested_fix"],
+                )
+            )
+        kept, aliases, updated_existing = exact_merge(all_claims, incoming, round_no=round_no)
+        if kept:
+            # Something survived dedup, so this round taught the run
+            # something. §7.3's dry-round test is exactly this, inverted.
+            outcome.produced_only_aliases = False
+        # Every incoming claim is written to the ledger, not just the ones
+        # exact_merge kept: an Alias record's `duplicate` id must resolve to
+        # a real `claim` record, or claims.jsonl has a dangling reference --
+        # a reader following canonical<-duplicate links (the only way to
+        # recover full corroboration from the ledger alone) hits a dead end.
+        for record in incoming:
+            store.ledger.append(record)
+        for alias in aliases:
+            store.ledger.append(alias)
+        if updated_existing:
+            # A canonical claim from an EARLIER friend just gained this
+            # friend's origin too. The ledger keeps its original, immutable
+            # record as first written -- Alias plus the duplicate's own claim
+            # record already let a reader reconstruct the same corroboration
+            # -- but the in-memory list this run still uses (for the NEXT
+            # friend's dedup pass, and for the final report) must reflect the
+            # grown origin, or report.md would undercount how many friends
+            # actually agreed.
+            updated_by_id = {c.id: c for c in updated_existing}
+            all_claims = [updated_by_id.get(c.id, c) for c in all_claims]
+        all_claims.extend(kept)
+        outcome.aliases.extend(aliases)
+        outcome.claims.extend(kept)
+    return outcome, all_claims, counter

@@ -26,19 +26,25 @@ from ..adapters import load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
 from ..cliargs import _specs_from_flags
-from ..dispatch import PROMPT_ARGV_WARN_BYTES
 from ..errors import CeilingError, NoFriendsError, UsageError
-from ..ids import format_claim_id, validate_friend_name
-from ..ledger import Claim
-from ..merge import exact_merge
+from ..ids import validate_friend_name
+from ..ledger import Alias, Claim
 from ..paths import ADAPTER_DIR
-from ..prompt import _build_friend_prompt, available_lenses
+from ..prompt import available_lenses
 from ..report import render
+from ..resolutions import blocking_claims
 from ..roster import resolve
-from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore, default_root
+from ..verdicts import loop_should_terminate, next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
+from .critique import run_critique
 from .crossexam import run_rounds
+
+# Every mode that judges claims after critiquing them. `report` stops at the
+# critique round; the rest all run cross-examination and differ only in what
+# they do with its result.
+JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+IMPLEMENTED_MODES = frozenset({"report", *JUDGING_MODES})
 
 # The type signal.signal() both accepts and returns, per typeshed: a
 # handler callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
@@ -71,17 +77,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     artifact = Path(args.artifact)
     if not artifact.is_file():
         raise UsageError(f"artifact not found: {artifact}")
-    if args.mode not in ("report", "crossexam"):
+    if args.mode not in IMPLEMENTED_MODES:
         raise UsageError(
-            f"mode {args.mode!r} is not implemented yet; 'report' and 'crossexam' are available"
+            f"mode {args.mode!r} is not implemented yet; "
+            f"available: {', '.join(sorted(IMPLEMENTED_MODES))}"
         )
-    if args.max_rounds < 2 and args.mode == "crossexam":
+    if args.max_rounds < 2 and args.mode in JUDGING_MODES:
         # Round 1 is the critique round; judging starts at round 2. A
         # crossexam capped at one round is a report with a misleading name.
         raise UsageError(
             f"--max-rounds={args.max_rounds} leaves no judging round for "
-            "--mode crossexam (round 1 is the critique round; judging starts "
-            "at round 2). Use --mode report, or --max-rounds 2 or more."
+            f"--mode {args.mode} (round 1 is the critique round; judging "
+            "starts at round 2). Use --mode report, or --max-rounds 2 or more."
         )
     if args.preset != "inherit":
         # --preset is accepted and printed in the report header, but nothing
@@ -221,67 +228,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
 
-        # Every friend gets its OWN prompt, built from its own lens -- not a
-        # single prompt.txt shared byte-for-byte across every friend
-        # regardless of --friend cli:lens (that was the bug: the lens name
-        # was recorded for bookkeeping but its prose never reached the
-        # friend, so the only diversity in a run was model diversity).
-        # Written to round-1/<name>.prompt next to that friend's .raw/.meta
-        # so a human can see exactly what each friend was asked. A missing
-        # lens file downgrades that one friend to the generic prompt rather
-        # than failing the run -- see prompt._build_friend_prompt.
-        prompt_for: dict[str, Path] = {}
-        advisory_for: dict[str, bool] = {}
-        for spec in specs:
-            prompt_text, advisory, lens_downgrade = _build_friend_prompt(spec, artifact_text)
-            if lens_downgrade:
-                downgrades.append(lens_downgrade)
-            # claude, opencode, and agy all place the WHOLE prompt in one
-            # argv element (prompt_mode "trailing-arg"/"flag-value"); Linux
-            # commonly caps a single argument near 128KB (the limit varies
-            # by OS -- this runner is not always run on Linux), so a large
-            # artifact can make Popen() fail with E2BIG ("Argument list too
-            # long"). This is detected, not solved -- switching prompt
-            # modes is a design change, out of scope here (see
-            # spawn.run_process's OSError handling for what happens if it
-            # fires anyway). Recording the risk up front means an E2BIG
-            # failure is already explained by the time it's read, not a
-            # surprise raw exit code.
-            if spec.cli != "fake":
-                adapter = registry[spec.cli]
-                if adapter.prompt_mode != "stdin":
-                    prompt_bytes = len(prompt_text.encode("utf-8"))
-                    if prompt_bytes > PROMPT_ARGV_WARN_BYTES:
-                        downgrades.append(
-                            f"{spec.name}: prompt is {prompt_bytes} bytes and "
-                            f"{adapter.name} passes it as a single argv element "
-                            f"(prompt_mode={adapter.prompt_mode!r}); Linux commonly "
-                            "caps a single argument near 128KB (the limit varies by "
-                            "OS), so this friend's dispatch may fail with 'Argument "
-                            "list too long' (E2BIG)."
-                        )
-            prompt_path = store.friend_prompt_path(1, spec.name)
-            prompt_path.write_text(prompt_text, encoding="utf-8")
-            prompt_for[spec.name] = prompt_path
-            advisory_for[spec.name] = advisory
-
-        # Isolation: every friend gets its own private working directory, torn
-        # down at the end regardless of how dispatch finishes (including on a
-        # raised exception, or an abort mid-setup -- see the `if
-        # abort_event.is_set(): break` below). Repo-scope friends -- those
-        # whose adapter declared readonly_argv and were not downgraded above
-        # -- run inside their own git worktree checked out from one shared
-        # snapshot commit; every other friend runs inside its own bare
-        # doc_scope_dir holding only a copy of the artifact. Giving every
-        # friend (not just non-readonly ones) a private worktree is a
-        # deliberately stricter simplification of "every friend that lacks a
-        # readonly capability gets its own private worktree": it trivially
-        # satisfies that bar and removes any question of whether two friends
-        # sharing one worktree could race each other, at the cost of one
-        # `git worktree add` per repo-scope friend instead of one shared
-        # checkout. The run directory itself (`store.run_dir`) is never
-        # nested inside any of these -- it always lives under `--out` or
-        # default_root(), never under the isolation tempdir below.
         snapshot_sha = None
         if repo_root is not None and any(s.scope == "repo" for s in specs):
             snapshot_sha = isolation.snapshot_commit(repo_root)
@@ -289,128 +235,149 @@ def cmd_run(args: argparse.Namespace) -> int:
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
             active_pool[0] = pool
 
-        results = dispatch_round(
-            specs,
-            1,
-            prompt_for,
-            store,
-            registry,
-            fake_cmd,
-            schema_file,
-            artifact,
-            repo_root,
-            snapshot_sha,
-            abort_event,
-            on_pool=_track_pool,
+        # §7.4's ceilings, shared across every iteration of a `loop`: the
+        # budget is what a run may spend in total, not per iteration.
+        max_iterations = args.max_loop_iterations if args.mode == "loop" else 1
+        budget = Budget(
+            max_calls=(
+                args.max_calls
+                if args.max_calls is not None
+                else derive_max_calls(len(specs), args.max_rounds, max_iterations)
+            ),
+            max_rounds=args.max_rounds,
+            max_wall_clock_s=args.max_wall_clock,
+            started=run_started,
         )
+        unreachable = warn_if_unreachable(len(specs), args.max_rounds, budget.max_calls)
+        if unreachable:
+            downgrades.append(unreachable)
 
-        counter = 0
         all_claims: list[Claim] = []
-        all_aliases = []
-        friends_meta = []
+        all_aliases: list[Alias] = []
+        friends_meta: list[dict[str, Any]] = []
+        counter = 0
         any_success = False
-        for spec, capability, outcome in results:
-            friends_meta.append(persist_result(store, 1, spec, capability, outcome))
-            if outcome.failure_reason is not None:
-                continue
-            any_success = True
-            incoming = []
-            for finding in (outcome.result.payload or {}).get("findings", []):
-                counter += 1
-                incoming.append(
-                    Claim(
-                        id=format_claim_id(counter),
-                        supersedes=None,
-                        origin=[f"{spec.cli}/{spec.lens}"],
-                        lens=spec.lens,
-                        round=1,
-                        advisory=advisory_for[spec.name],
-                        severity=finding["severity"],
-                        claim=finding["claim"],
-                        location=finding.get("location"),
-                        evidence=finding["evidence"],
-                        failure_scenario=finding["failure_scenario"],
-                        suggested_fix=finding["suggested_fix"],
-                    )
-                )
-            kept, aliases, updated_existing = exact_merge(all_claims, incoming, round_no=1)
-            # Every incoming claim is written to the ledger, not just the
-            # ones exact_merge kept: an Alias record's `duplicate` id must
-            # resolve to a real `claim` record, or claims.jsonl has a
-            # dangling reference -- a reader following canonical<-duplicate
-            # links (the only way to recover full corroboration from the
-            # ledger alone; see merge.exact_merge's docstring) hits a dead
-            # end. `incoming` already IS the superset of `kept` plus every
-            # claim that became an alias, so writing it once here replaces
-            # writing `kept` alone.
-            for record in incoming:
-                store.ledger.append(record)
-            for alias in aliases:
-                store.ledger.append(alias)
-            if updated_existing:
-                # A canonical claim from an EARLIER friend just gained this
-                # friend's origin too (it aliased one of that friend's
-                # claims). The ledger keeps its original, immutable record
-                # as first written -- Alias + the duplicate's own claim
-                # record (written above) already let a reader reconstruct
-                # the same corroboration from claims.jsonl alone -- but the
-                # in-memory `all_claims` this run still uses (for the NEXT
-                # friend's dedup pass, and for the final report) must
-                # reflect the grown origin, or report.md would undercount
-                # how many friends actually agreed.
-                updated_by_id = {c.id: c for c in updated_existing}
-                all_claims = [updated_by_id.get(c.id, c) for c in all_claims]
-            all_claims.extend(kept)
-            all_aliases.extend(aliases)
-
         cross = None
-        if args.mode == "crossexam" and all_claims:
-            # Only worth entering with claims in hand: with none there is
-            # nothing to judge, and a judging round would cost a full fan-out
-            # to decide nothing. A round-1 report is the honest result.
-            budget = Budget(
-                max_calls=(
-                    args.max_calls
-                    if args.max_calls is not None
-                    else derive_max_calls(len(specs), args.max_rounds, max_loop_iterations=1)
-                ),
-                max_rounds=args.max_rounds,
-                max_wall_clock_s=args.max_wall_clock,
-                started=run_started,
-            )
-            budget.spend(len(results))
-            unreachable = warn_if_unreachable(len(specs), args.max_rounds, budget.max_calls)
-            if unreachable:
-                downgrades.append(unreachable)
-            cross = run_rounds(
+        streak = 0
+        iterations_run = 0
+
+        for iteration in range(1, max_iterations + 1):
+            if abort_event.is_set():
+                break
+            # Each iteration owns a distinct block of round numbers, so a
+            # loop's rounds never collide in the run directory or the ledger:
+            # iteration 1 critiques in round 1 and judges in 2..max_rounds,
+            # iteration 2 critiques in round max_rounds+1, and so on.
+            base_round = (iteration - 1) * args.max_rounds + 1
+            if budget.would_exceed_calls(len(specs)):
+                budget.exhaust(
+                    f"--max-calls={budget.max_calls} reached before iteration "
+                    f"{iteration}'s critique round"
+                )
+                break
+            if budget.out_of_time(time.monotonic()):
+                budget.exhaust(f"--max-wall-clock reached before iteration {iteration}")
+                break
+
+            # Re-read on every iteration. The runner never edits an artifact
+            # (§7.5), so a `loop` picks up a revision only if something else
+            # made one between iterations; when nothing did, the identical
+            # artifact produces identical claims, they all alias, and the
+            # dry-round streak is what ends the loop.
+            artifact_text = artifact.read_text(encoding="utf-8")
+
+            critique, all_claims, counter = run_critique(
                 specs,
+                base_round,
                 all_claims,
+                counter,
+                artifact_text,
                 store,
                 registry,
                 fake_cmd,
-                verdict_schema_path(store.run_dir),
+                schema_file,
                 artifact,
-                artifact_text,
                 repo_root,
                 snapshot_sha,
                 abort_event,
-                budget,
-                args.max_rounds,
-                attributed=args.attributed,
                 on_pool=_track_pool,
             )
-            all_claims = cross.claims
-            friends_meta.extend(cross.friends_meta)
-            downgrades.extend(cross.downgrades)
+            budget.spend(critique.calls)
+            iterations_run = iteration
+            friends_meta.extend(critique.friends_meta)
+            downgrades.extend(critique.downgrades)
+            all_aliases.extend(critique.aliases)
+            any_success = any_success or critique.any_success
+
+            if args.mode in JUDGING_MODES and all_claims:
+                # Only worth entering with claims in hand: with none there is
+                # nothing to judge, and a judging round would cost a full
+                # fan-out to decide nothing. A critique report is the honest
+                # result.
+                cross = run_rounds(
+                    specs,
+                    all_claims,
+                    store,
+                    registry,
+                    fake_cmd,
+                    verdict_schema_path(store.run_dir),
+                    artifact,
+                    artifact_text,
+                    repo_root,
+                    snapshot_sha,
+                    abort_event,
+                    budget,
+                    base_round + args.max_rounds - 1,
+                    attributed=args.attributed,
+                    on_pool=_track_pool,
+                    first_round=base_round + 1,
+                )
+                all_claims = cross.claims
+                friends_meta.extend(cross.friends_meta)
+                downgrades.extend(cross.downgrades)
+
+            if args.mode != "loop":
+                break
+
+            # §7.3's streak arithmetic. A failed round resets rather than
+            # counting: a round that did not complete is not evidence of
+            # convergence.
+            dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
+            streak = next_streak(streak, failed=critique.any_failed, dry=dry)
+            states = list(cross.states.values()) if cross else []
+            if loop_should_terminate(streak, states):
+                break
+            if budget.exhausted_by:
+                break
+
+        # §7.5's gate. Evaluated against the run's own (empty) resolution
+        # set, so a fresh gate run always reports what needs attention rather
+        # than passing: resolutions are recorded afterwards, by `afriend
+        # resolve`, which re-evaluates this same rule.
+        blocking: list[Claim] = []
+        if args.mode == "gate":
+            blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
 
         meta: dict[str, Any] = {
             "mode": args.mode,
             "preset": args.preset,
             "artifact": artifact.name,
             "artifact_hash": digest,
+            # Persisted so `afriend resolve` can verify a location against
+            # how this run first saw it (§6.4). Without them a resolution
+            # could only ever be `unverifiable`, since the snapshot commit
+            # exists but nothing would remember which one it was.
+            "repo_root": str(repo_root) if repo_root else None,
+            "snapshot_sha": snapshot_sha,
             "friends": friends_meta,
             "downgrades": downgrades,
         }
+        if args.mode == "loop":
+            meta["iterations_run"] = iterations_run
+            meta["dry_streak"] = streak
+        if args.mode == "gate":
+            meta["gate_blocked"] = bool(blocking)
+            meta["gate_blocking_claims"] = [c.id for c in blocking]
         if cross is not None:
             meta["rounds_run"] = cross.rounds_run
             meta["claim_states"] = cross.states
@@ -452,6 +419,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         # NoFriendsError's exit 3, which fires before any friend is even
         # dispatched.
         if not any_success:
+            return 1
+        if args.mode == "gate" and blocking:
+            print(
+                f"afriend: gate blocked -- {len(blocking)} claim(s) need a resolution: "
+                + ", ".join(c.id for c in blocking),
+                file=sys.stderr,
+            )
             return 1
         if cross is not None:
             # A crossexam run that left claims undecided, or that lost a

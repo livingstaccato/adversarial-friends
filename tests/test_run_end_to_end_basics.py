@@ -52,7 +52,10 @@ def test_missing_artifact_exits_2(tmp_path):
 # --- Adversarial break-it attempts beyond the brief's four required tests -
 
 
-def test_mode_other_than_report_exits_2(tmp_path):
+def test_a_single_friend_gate_blocks_rather_than_passing(tmp_path):
+    """This test used to assert `--mode gate` exited 2 as unimplemented.
+    Gate now runs, and the interesting property is that it does not pass:
+    one friend's unjudged claim is not a cleared gate."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
     result = subprocess.run(
@@ -72,8 +75,8 @@ def test_mode_other_than_report_exits_2(tmp_path):
         text=True,
         env=_env(),
     )
-    assert result.returncode == 2
-    assert "gate" in result.stderr.lower() or "not implemented" in result.stderr.lower()
+    assert result.returncode == 1
+    assert "gate blocked" in result.stderr
 
 
 def test_unknown_cli_in_friend_flag_exits_2_not_3(tmp_path):
