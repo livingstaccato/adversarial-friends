@@ -157,6 +157,40 @@ def test_rendered_diagrams_contain_no_accidental_strikethrough():
         )
 
 
+def test_shipped_docs_never_invoke_a_bare_af_command():
+    """The console script is `afriend`. `af` was the pre-packaging name and
+    does not exist on anyone's PATH.
+
+    The spec and the plan under docs/superpowers/ are signed-off historical
+    documents and still say `af` throughout -- that is deliberate (see the
+    spec's own divergences section, which records departures rather than
+    rewriting the body). Only the docs a *user* follows are checked here, so
+    a copied usage line from the spec cannot quietly ship a command that
+    fails with "command not found".
+    """
+    import re
+
+    shipped = [
+        REPO / "README.md",
+        REPO / "docs" / "README.md",
+        REPO / "AGENTS.md",
+        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+        *(REPO / "plugins").rglob("*.md"),
+    ]
+    # A bare `af` followed by one of this tool's subcommands. `bin/af` is
+    # excluded by requiring a boundary that is not a path separator: two
+    # shipped lines mention `bin/af` on purpose, to say it no longer exists.
+    pattern = re.compile(r"(?:^|[\s`$(])af\s+(?:run|resolve|init|doctor)\b")
+    offenders = []
+    for path in shipped:
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if pattern.search(line):
+                offenders.append(f"{path.relative_to(REPO)}:{number}: {line.strip()}")
+    assert not offenders, "shipped docs invoke `af` instead of `afriend`:\n" + "\n".join(offenders)
+
+
 def test_docs_index_links_only_to_existing_files():
     index = REPO / "docs" / "README.md"
     import re

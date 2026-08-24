@@ -273,7 +273,7 @@ afriend run docs/design.md --merge orchestrator   # exit 10, writes REQUEST.json
 afriend run --resume <run-id>                     # round 1 is not re-run
 ```
 
-Not in this build: `af init`.
+Not in this build: `afriend init`.
 
 | Friend | Status |
 |---|---|

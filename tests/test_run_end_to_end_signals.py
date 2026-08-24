@@ -177,7 +177,9 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
             proc.wait()
 
     stderr = proc.stderr.read()
-    assert elapsed < 15, f"af took {elapsed:.1f}s to exit after signal {sig} -- teardown blocked"
+    assert elapsed < 15, (
+        f"afriend took {elapsed:.1f}s to exit after signal {sig} -- teardown blocked"
+    )
     assert proc.returncode == 128 + sig, (proc.returncode, stderr)
     assert f"aborted by signal {sig}" in stderr, stderr
 

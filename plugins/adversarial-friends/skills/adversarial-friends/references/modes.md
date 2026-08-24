@@ -205,7 +205,7 @@ One combination is refused: `--merge orchestrator` with `--mode loop`. A loop
 halts once per iteration and would resume into mid-iteration budget and
 streak state this build does not reconstruct.
 
-Not in this build: `af init`, and §14.2's parse-halt extraction (the other
+Not in this build: `afriend init`, and §14.2's parse-halt extraction (the other
 user of this same halt/resume handshake). Run `afriend run --help` to see the
 flags this build accepts.
 
