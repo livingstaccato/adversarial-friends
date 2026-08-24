@@ -144,7 +144,7 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 |---|---|
 | 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
-| 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot; everyone else gets a bare directory holding only the artifact |
+| 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot. A CLI with no read-only mode is confined by the OS instead (`sandbox-exec` / `bwrap`) — or refused |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
 | 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
 | 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |

@@ -117,6 +117,14 @@ returning prose where JSON was asked for. The runner already treats these as
 failures (see `references/troubleshooting.md`); your job is to notice when
 the *pattern* suggests a misconfigured adapter rather than a quiet artifact.
 
+**A refused friend is a security refusal, not a bug.** A friend reported as
+`refused: ... no OS sandbox ... available to confine it` was never started.
+Its CLI has no read-only mode, so nothing constrains what it reads, and an
+artifact under review is untrusted text that could tell it to read anything
+the user can. Do not suggest `--allow-unsandboxed-friend` as the fix without
+saying what it gives up; installing `bubblewrap`, or using a friend that
+confines itself, is the better answer for an artifact the user did not write.
+
 **Duplicates are under-merged on purpose.** The default merge only combines
 claims with identical text and location, so two friends describing one defect
 in different words appear twice. Merge them in your presentation — that is

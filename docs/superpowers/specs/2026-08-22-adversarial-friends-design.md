@@ -944,6 +944,7 @@ listed here with which side is authoritative.
 |---|---|---|---|
 | §11.1 | Capability is "computed from the **final effective argv**" | Capability is computed from the flags `build_argv` decides to emit, and the finished argv is never scanned | **Code** |
 | §18 risk 1 | "A stub adapter remains that errors with the migration URL" | No `gemini` adapter ships in any form | **Code** |
+| §12.2 | Confinement keys on "friends **without** a `readonly` capability" | Confinement keys on adapters that declare no `readonly_argv` at all | **Code**, with a stated residual gap |
 
 ### §11.1 — capability must not be derived by reading argv
 
@@ -967,6 +968,33 @@ even when repo scope was requested.
 
 Read §11.1 as "capability reflects what the friend was actually given, computed
 at the point of construction — never recovered by parsing argv afterwards."
+
+### §12.2 — confinement keys on the adapter, not the capability
+
+The spec says a friend "without a `readonly` capability" runs under OS-level
+isolation. Read literally against the implementation, that is broader than it
+sounds and unshippable.
+
+`build_argv` emits a read-only flag only for `scope = "repo"`, so
+`capability.readonly` is `False` for a **doc-scope** `claude` too — and every
+friend is downgraded to doc scope whenever the artifact is not inside a git
+repository (see `commands/run.py`). Keying confinement on the capability
+would therefore refuse every friend for any artifact outside a repo, and
+would place CLIs whose credential paths this project has not verified under a
+sandbox that breaks their authentication silently rather than loudly.
+
+The shipped rule is narrower: a friend is confined when its adapter declares
+no `readonly_argv` at all — the CLI has no read-only mode in any
+configuration. That is exactly the case §12.2's own example is about, and the
+only shipped adapter it covers is `opencode`.
+
+**The residual gap, stated plainly.** A doc-scope friend of a
+readonly-capable CLI is not OS-confined. It was asked for read-only
+behaviour by scope alone, which §12.2 correctly says is not containment. This
+is narrower than the spec intends and is recorded rather than hidden.
+Closing it needs verified credential-path declarations for `claude`, `codex`
+and `agy`, which this project does not have; guessing them would produce
+friends that fail to authenticate for reasons no error message explains.
 
 ### §18 risk 1 — no gemini stub ships
 
