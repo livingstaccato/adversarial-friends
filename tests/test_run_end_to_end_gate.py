@@ -122,6 +122,38 @@ def test_the_run_records_what_a_resolution_will_need(tmp_path):
     assert meta["repo_root"]
 
 
+def test_a_doc_scope_roster_still_gets_a_snapshot_under_gate(tmp_path):
+    """Found running a real gate against ollama, whose friends are all
+    doc-scope because an HTTP friend has no filesystem to constrain.
+
+    The snapshot used to be taken only when some friend needed repo scope --
+    but a resolution is verified against that same snapshot, and those two
+    needs do not coincide. Every resolution came back `unverifiable` for a
+    file sitting in the repository, which silently downgraded the one check
+    the runner can make: `fixed` at an unchanged location was accepted
+    instead of refused.
+    """
+    repo = _repo(tmp_path)
+    result = run_af(
+        tmp_path,
+        repo / "spec.md",
+        "--friend",
+        "fake:judge_uphold_a",  # no :repo suffix -- doc scope
+        "--friend",
+        "fake:judge_uphold_b",
+        mode="gate",
+    )
+    assert result.returncode == 1, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["snapshot_sha"], "a gate run must snapshot even with no repo-scope friend"
+
+    # And the consequence that actually matters: the refusal works.
+    cid = meta["gate_blocking_claims"][0]
+    refused = _resolve(tmp_path, repo, cid, "fixed", "auth.py")
+    assert refused.returncode == 2
+    assert "has not changed" in refused.stderr
+
+
 # --- afriend resolve -------------------------------------------------------
 
 

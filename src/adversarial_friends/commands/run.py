@@ -228,8 +228,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
 
+        # The snapshot serves two independent purposes, and taking it only
+        # for the first one was a bug: repo-scope friends are checked out
+        # from it, AND `afriend resolve` compares a resolution's location
+        # against it (§6.4). Those needs do not coincide -- an all-ollama
+        # roster is entirely doc-scope, so no friend needed a snapshot, and
+        # every later resolution came back `unverifiable` even for a file
+        # sitting in the repository. Worse, that silently downgraded the one
+        # check the runner can actually make: a `fixed` disposition naming an
+        # unchanged location was accepted rather than refused.
+        #
+        # Taken for `gate` regardless of scope, since that is the only mode
+        # whose resolutions need it. It is a commit object built from the
+        # index, with no worktree and no checkout, so the cost is small and
+        # confined to the mode that benefits.
         snapshot_sha = None
-        if repo_root is not None and any(s.scope == "repo" for s in specs):
+        needs_snapshot = any(s.scope == "repo" for s in specs) or args.mode == "gate"
+        if repo_root is not None and needs_snapshot:
             snapshot_sha = isolation.snapshot_commit(repo_root)
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
