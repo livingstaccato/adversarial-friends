@@ -8,9 +8,43 @@ speculation — see the spec's "verified invocation traps" section.
 from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
+from typing import Any
 
 from .errors import UsageError
 from .normalize import Envelope, parse_envelope
+
+
+@dataclass(frozen=True)
+class AuthMarkers:
+    """Where an adapter's structured output says "not authenticated".
+
+    `paths` are dotted paths into the parsed payload, each with the value
+    that means auth failure -- e.g. `("error.type", "authentication_error")`.
+    `exit_codes` are statuses this CLI uses exclusively for auth.
+
+    Both empty means "unclassifiable", which is the honest default until
+    someone captures a real auth failure from that CLI.
+    """
+
+    paths: tuple[tuple[str, str], ...] = ()
+    exit_codes: tuple[int, ...] = ()
+    remediation: str = ""
+
+    def declared(self) -> bool:
+        return bool(self.paths or self.exit_codes)
+
+
+def parse_auth(data: dict[str, Any] | None) -> AuthMarkers:
+    """Build AuthMarkers from an adapter TOML's `[auth]` table."""
+    if not data:
+        return AuthMarkers()
+    paths = tuple(
+        (str(rule["path"]), str(rule["equals"]))
+        for rule in data.get("markers", [])
+        if isinstance(rule, dict) and "path" in rule and "equals" in rule
+    )
+    codes = tuple(int(c) for c in data.get("exit_codes", []) if isinstance(c, int))
+    return AuthMarkers(paths=paths, exit_codes=codes, remediation=str(data.get("remediation", "")))
 
 
 @dataclass(frozen=True)
@@ -50,6 +84,11 @@ class Adapter:
     # Empty is meaningful: an adapter with a real readonly mode is trusted
     # to confine itself (§11) and never reaches the sandbox at all.
     sandbox_read: tuple[str, ...] = ()
+    # §14: where this CLI's own structured output says "not authenticated".
+    # Empty means unclassifiable, which is the honest default until someone
+    # captures a real auth failure -- guessing at stderr substrings is what
+    # §14 explicitly rejects.
+    auth: "AuthMarkers" = field(default_factory=lambda: AuthMarkers())
 
 
 @dataclass(frozen=True)
@@ -102,6 +141,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             transport=data.get("transport", "exec"),
             endpoint=data.get("endpoint", ""),
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
+            auth=parse_auth(data.get("auth")),
             structured_output=bool(data.get("structured_output", False)),
             envelope=parse_envelope(data.get("envelope")),
         )

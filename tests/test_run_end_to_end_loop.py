@@ -129,3 +129,34 @@ def test_report_mode_is_still_unaffected(tmp_path):
     assert "claim_states" not in meta
     report = (_run_dir(tmp_path) / "report.md").read_text()
     assert "the guard is missing" in report
+
+
+def test_a_deterministically_broken_friend_stops_being_dispatched(tmp_path):
+    """§7.2's cost argument, end to end. `crash` fails identically every
+    time; a loop at its defaults would otherwise redispatch it five
+    iterations x three rounds, every call guaranteed useless."""
+    result = _loop(
+        tmp_path,
+        "fake:judge_uphold_a",
+        "fake:crash",
+        extra=("--max-loop-iterations", "4"),
+    )
+    meta = _run_json(tmp_path)
+    downgrades = " ".join(meta["downgrades"])
+    assert "not be dispatched again" in downgrades, result.stderr
+
+    # And it genuinely stopped: the broken friend appears in fewer rounds
+    # than the working one.
+    rounds_per_friend: dict[str, int] = {}
+    for friend in meta["friends"]:
+        rounds_per_friend[friend["name"]] = rounds_per_friend.get(friend["name"], 0) + 1
+    assert rounds_per_friend["fake-crash-1"] < rounds_per_friend["fake-judge_uphold_a-0"]
+
+
+def test_a_friend_that_recovers_is_not_disabled(tmp_path):
+    """A friend that failed once and then worked told us the failure was
+    transient. Disabling it would throw away a working reviewer."""
+    result = _loop(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b")
+    assert result.returncode == 0, result.stderr
+    downgrades = " ".join(_run_json(tmp_path)["downgrades"])
+    assert "not be dispatched again" not in downgrades

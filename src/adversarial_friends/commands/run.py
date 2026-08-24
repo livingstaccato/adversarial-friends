@@ -8,6 +8,7 @@ import argparse
 from collections.abc import Callable
 import concurrent.futures
 import dataclasses
+import json
 import os
 from pathlib import Path
 import signal
@@ -18,11 +19,12 @@ from types import FrameType
 from typing import Any
 import uuid
 
-from .. import isolation, verdicts as vd
+from .. import isolation
 from ..adapters import load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
-from ..errors import CeilingError, UsageError
+from ..errors import UsageError
+from ..failures import RepeatTracker
 from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
 from ..orchestrator import (
@@ -33,11 +35,13 @@ from ..paths import ADAPTER_DIR
 from ..report import render
 from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
+from ..trust import parse_unsafe_extra_args
 from ..verdicts import loop_should_terminate, next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import _resolve_repo_root, install_abort_handlers
+from .exits import decide_exit
 from .friends import resolve_friends
 from .resume import resume_round_one
 from .runmeta import _base_meta, _restore_args
@@ -107,6 +111,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     fake_env = os.environ.get("AF_FAKE_FRIEND")
     fake_cmd = fake_env.split() if fake_env else None
     downgrades: list[str] = []
+    # §13's escape hatch. Parsed early so a bad value fails before any
+    # dispatch, and recorded as a downgrade because a run carrying
+    # unvalidated flags has weaker guarantees than its friend table implies.
+    extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
+    if extra_args:
+        downgrades.append(
+            f"--unsafe-extra-args passed {extra_args} to every friend. These "
+            "flags are not validated, so read-only is reported as False for "
+            "every friend regardless of what its adapter emitted."
+        )
 
     resolved = resolve_friends(args, registry, fake_cmd, downgrades)
     specs = resolved.specs
@@ -236,6 +250,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         if unreachable:
             downgrades.append(unreachable)
 
+        # One tracker for the whole run: a friend that failed identically in
+        # iteration 1 must stay disabled in iteration 2, or a loop would
+        # rediscover the same broken friend five times.
+        tracker = RepeatTracker()
+
         all_claims: list[Claim] = []
         all_aliases: list[Alias] = []
         friends_meta: list[dict[str, Any]] = []
@@ -312,6 +331,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 abort_event,
                 on_pool=_track_pool,
                 allow_unsandboxed=args.allow_unsandboxed_friend,
+                tracker=tracker,
+                keep=args.keep,
+                extra_args=extra_args,
             )
             budget.spend(critique.calls)
             iterations_run = iteration
@@ -372,6 +394,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                     on_pool=_track_pool,
                     first_round=base_round + 1,
                     allow_unsandboxed=args.allow_unsandboxed_friend,
+                    tracker=tracker,
+                    keep=args.keep,
+                    extra_args=extra_args,
                 )
                 all_claims = cross.claims
                 friends_meta.extend(cross.friends_meta)
@@ -433,48 +458,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 states=cross.states if cross else None,
             )
         )
-        print(store.run_dir)
+        if args.json:
+            # The path is still what a shell pipeline wants; --json is for a
+            # caller that would otherwise have to read run.json itself.
+            print(json.dumps(meta, indent=2, sort_keys=True))
+        else:
+            print(store.run_dir)
 
-        if abort_signum["value"] is not None:
-            # Distinct from both branches below: a run cancelled by signal
-            # is neither "succeeded" (0) nor merely "incomplete because
-            # every friend failed on its own" (1) -- it never got the
-            # chance to finish at all. 128+signum is the conventional
-            # shell convention for "killed by signal N" and does not
-            # collide with any of this tool's other exit codes (2, 3, 10,
-            # 11, 1, 0).
-            print(f"afriend: aborted by signal {abort_signum['value']}", file=sys.stderr)
-            return 128 + abort_signum["value"]
-        # §7.6's exit precedence. A ceiling outranks every outcome below it
-        # because a truncated run has not evaluated anything: a CI wrapper
-        # can then treat 11 as "retry" and 1 as "block" without ambiguity.
-        if cross is not None and cross.ceiling_hit is not None:
-            print(f"afriend: {cross.ceiling_hit}", file=sys.stderr)
-            return CeilingError.exit_code
-        # A run where not one friend produced a usable result (every round
-        # failed/timed out) is not a success -- exit 1 ("gate blocked or
-        # incomplete") rather than 0, so a caller cannot mistake "we ran the
-        # mechanism" for "we got a trustworthy critique". Distinct from
-        # NoFriendsError's exit 3, which fires before any friend is even
-        # dispatched.
-        if not any_success:
-            return 1
-        if args.mode == "gate" and blocking:
-            print(
-                f"afriend: gate blocked -- {len(blocking)} claim(s) need a resolution: "
-                + ", ".join(c.id for c in blocking),
-                file=sys.stderr,
-            )
-            return 1
-        if cross is not None:
-            # A crossexam run that left claims undecided, or that lost a
-            # required friend mid-round (§7.2's M12), is incomplete. Only a
-            # run that actually reached terminal states for everything
-            # reports success.
-            unresolved = [s for s in cross.states.values() if s not in vd.TERMINAL_STATES]
-            if cross.incomplete or unresolved:
-                return 1
-        return 0
+        return decide_exit(abort_signum["value"], any_success, args.mode, cross, blocking)
     finally:
         # A distinct loop variable name from the `for sig in (...)` loop
         # above: reusing `sig` here would bind it to a different type

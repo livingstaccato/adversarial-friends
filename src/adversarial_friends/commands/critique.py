@@ -19,6 +19,7 @@ from typing import Any
 
 from ..adapters import Adapter, FriendSpec
 from ..dispatch import PROMPT_ARGV_WARN_BYTES
+from ..failures import RepeatTracker
 from ..ids import format_claim_id
 from ..ledger import Alias, Claim
 from ..merge import exact_merge
@@ -111,6 +112,9 @@ def run_critique(
     abort_event: threading.Event,
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _p: None,
     allow_unsandboxed: bool = False,
+    tracker: RepeatTracker | None = None,
+    keep: bool = False,
+    extra_args: list[str] | None = None,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -139,6 +143,10 @@ def run_critique(
         abort_event,
         on_pool=on_pool,
         allow_unsandboxed=allow_unsandboxed,
+        tracker=tracker,
+        downgrades=outcome.downgrades,
+        extra_args=extra_args,
+        keep=keep,
     )
     outcome.calls = len(results)
 

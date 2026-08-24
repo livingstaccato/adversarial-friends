@@ -12,8 +12,9 @@ and returns a SpawnResult per friend; whether that prompt held a critique
 contract or a verdict contract is the caller's business.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import concurrent.futures
+import contextlib
 from pathlib import Path
 import tempfile
 import threading
@@ -25,10 +26,22 @@ from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .dispatch import _UNKNOWN_CAPABILITY, _dispatch, _exception_outcome, _stderr_tail
 from .errors import AfError
+from .failures import AUTH, RepeatTracker, auth_abort_message, classify
 from .runstore import RunStore
 from .spawn import SpawnResult
 
 RoundResult = tuple[FriendSpec, Capability, SpawnResult]
+
+
+@contextlib.contextmanager
+def _isolation_root(store: RunStore, round_no: int, keep: bool) -> Iterator[Path]:
+    if keep:
+        root = store.run_dir / "isolation" / f"round-{round_no}"
+        root.mkdir(parents=True, exist_ok=True)
+        yield root
+        return
+    with tempfile.TemporaryDirectory(prefix=f"af-isolation-r{round_no}-") as path:
+        yield Path(path)
 
 
 def dispatch_round(
@@ -46,6 +59,10 @@ def dispatch_round(
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _pool: None,
     contract: PayloadContract = CLAIM_CONTRACT,
     allow_unsandboxed: bool = False,
+    tracker: RepeatTracker | None = None,
+    downgrades: list[str] | None = None,
+    keep: bool = False,
+    extra_args: list[str] | None = None,
 ) -> list[RoundResult]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -71,9 +88,27 @@ def dispatch_round(
     `round_no` selects which round directory this round's isolation belongs
     to conceptually, but no file is written here -- see persist_result.
     """
+    # §14/§7.2. Both rules live here because this is the one place every
+    # round type dispatches through -- a critique round and a judging round
+    # would otherwise need separate, drifting copies.
+    if tracker is not None:
+        skipped = [s for s in specs if tracker.is_disabled(s.name)]
+        for spec in skipped:
+            note = tracker.note(spec.name)
+            if downgrades is not None and note not in downgrades:
+                downgrades.append(note)
+        specs = [s for s in specs if not tracker.is_disabled(s.name)]
+        if not specs:
+            return []
+
     results: list[RoundResult] = []
-    with tempfile.TemporaryDirectory(prefix=f"af-isolation-r{round_no}-") as iso_root_str:
-        iso_root = Path(iso_root_str)
+    # §12.4: isolation is torn down at run end unless --keep. A
+    # TemporaryDirectory would remove the tree regardless, leaving a "kept"
+    # worktree registered at a path that no longer exists -- worse than not
+    # keeping it. So --keep puts isolation inside the run directory, which
+    # persists, and leaves the git worktrees registered for `git worktree
+    # list` to find and `afriend doctor --gc` to clean up later.
+    with _isolation_root(store, round_no, keep) as iso_root:
         cwd_for: dict[str, Path] = {}
         try:
             for spec in specs:
@@ -115,6 +150,7 @@ def dispatch_round(
                         abort_event,
                         contract,
                         allow_unsandboxed,
+                        extra_args,
                     )
                 except AfError:
                     raise
@@ -134,13 +170,25 @@ def dispatch_round(
                 finally:
                     on_pool(None)
         finally:
-            for spec in specs:
-                if spec.scope == "repo" and spec.name in cwd_for:
-                    assert repo_root is not None
-                    isolation.remove_worktree(repo_root, cwd_for[spec.name])
+            if not keep:
+                for spec in specs:
+                    if spec.scope == "repo" and spec.name in cwd_for:
+                        assert repo_root is not None
+                        isolation.remove_worktree(repo_root, cwd_for[spec.name])
             # doc_scope_dir entries need no explicit cleanup: they all live
             # under iso_root, which the TemporaryDirectory context manager
             # removes on exit independent of whether dispatch raised.
+
+    if tracker is not None:
+        for spec, _capability, outcome in results:
+            tracker.record(spec.name, outcome)
+            # §7.2: an auth failure is deterministic, so every remaining
+            # round and iteration would fail identically. Stop now rather
+            # than spending them. Raised only on a DECLARED marker -- an
+            # unrecognised failure is never guessed into an abort, because
+            # a false auth classification ends the whole run.
+            if classify(outcome, registry.get(spec.cli)) == AUTH:
+                raise AfError(auth_abort_message(spec.name, registry.get(spec.cli)))
     return results
 
 

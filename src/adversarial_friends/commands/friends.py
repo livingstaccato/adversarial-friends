@@ -22,7 +22,7 @@ import shutil
 from .. import rosterfile
 from ..adapters import Adapter, FriendSpec
 from ..cliargs import _specs_from_flags
-from ..errors import NoFriendsError
+from ..errors import NoFriendsError, UsageError
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
 from ..roster import resolve
@@ -48,6 +48,17 @@ def resolve_friends(
     # override one run from the command line.
     preset = args.preset or default_preset(args.mode)
     roster_source: str | None = None
+
+    # §8.1: --lens restricts which lenses discovery assigns. Unknown names
+    # are refused rather than silently ignored -- a typo would otherwise
+    # quietly shrink the run to whichever lenses happened to match.
+    lenses = available_lenses()
+    if getattr(args, "lens", None):
+        known = set(lenses)
+        unknown = [name for name in args.lens if name not in known]
+        if unknown:
+            raise UsageError(f"unknown lens(es) {sorted(unknown)}; available: {sorted(known)}")
+        lenses = list(args.lens)
     if args.friend:
         specs = _specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
         if args.roster:
@@ -74,7 +85,7 @@ def resolve_friends(
         else:
             specs = resolve(
                 registry,
-                available_lenses(),
+                lenses,
                 os.environ,
                 shutil.which,
                 include_self=args.include_self,
@@ -101,4 +112,29 @@ def resolve_friends(
                     downgrades.append(note)
             filled.append(replace(spec, effort=effort_for(preset, adapter)))
         specs = filled
+    # §17's --max-friends. Applied after resolution so it caps whatever
+    # source produced the roster, and reported: a silently shortened roster
+    # is a run with fewer independent judges than the operator thinks.
+    limit = getattr(args, "max_friends", None)
+    if limit is not None and len(specs) > limit:
+        dropped = [s.name for s in specs[limit:]]
+        specs = specs[:limit]
+        downgrades.append(
+            f"--max-friends={limit} dropped {dropped}; this run has fewer "
+            "independent judges than the roster named."
+        )
+
+    # §10.1 layer 4: invocation flags outrank the roster and the preset.
+    model = getattr(args, "model", None)
+    effort = getattr(args, "effort", None)
+    if model or effort:
+        specs = [
+            replace(
+                s,
+                model=model or s.model,
+                effort=effort or s.effort,
+            )
+            for s in specs
+        ]
+
     return ResolvedRoster(specs=specs, preset=preset, source=roster_source)

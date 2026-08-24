@@ -11,6 +11,7 @@ start because someone asked for a *safer* sandbox would be its own bug.
 
 from pathlib import Path
 import re
+import shlex
 from typing import Any
 
 from .errors import UsageError
@@ -99,3 +100,43 @@ def contain_path(base: Path, candidate: Path) -> Path:
     if not candidate_resolved.is_relative_to(base_resolved):
         raise UsageError(f"path {candidate_resolved} escapes the run directory {base_resolved}")
     return candidate_resolved
+
+
+def parse_unsafe_extra_args(raw: str | None, accepted: bool) -> list[str]:
+    """§13's escape hatch: arbitrary flags, command line only.
+
+    Two gates, both deliberate. It is refused without
+    `--i-accept-unsandboxed`, because the flags this exists to pass are
+    precisely the ones the allowlist rejects -- `codex -c`, `claude
+    --settings` (hooks are arbitrary shell), `--add-dir` -- and reaching for
+    it should require saying so. And it is refused if it carries a flag from
+    DENIED_FLAGS, because those disable approval entirely; an escape hatch
+    for "I need one more option" is not an escape hatch for "run with no
+    guardrails at all".
+
+    Split with shlex so quoting behaves the way a shell user expects rather
+    than by whitespace, which would mangle any value containing a space.
+    """
+    if not raw:
+        return []
+    if not accepted:
+        raise UsageError(
+            "--unsafe-extra-args requires --i-accept-unsandboxed. It passes "
+            "flags this tool cannot validate straight through to an agent "
+            "CLI that is reviewing untrusted text; the acknowledgement is "
+            "the point."
+        )
+    try:
+        parsed = shlex.split(raw)
+    except ValueError as exc:
+        raise UsageError(
+            f"--unsafe-extra-args is not parseable as a shell word list: {exc}"
+        ) from exc
+    for flag in parsed:
+        if flag in DENIED_FLAGS:
+            raise UsageError(
+                f"refusing {flag!r} even under --unsafe-extra-args: it disables "
+                "approval entirely. This flag exists to pass an option the "
+                "allowlist has not learned yet, not to remove every guardrail."
+            )
+    return parsed

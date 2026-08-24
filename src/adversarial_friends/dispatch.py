@@ -5,6 +5,7 @@ argv meets spawn.run_process, and the place capability is trusted rather
 than re-derived (see _dispatch's own docstring below).
 """
 
+import dataclasses
 from pathlib import Path
 import shutil
 import threading
@@ -146,6 +147,7 @@ def _dispatch(
     abort_event: threading.Event | None = None,
     contract: PayloadContract = CLAIM_CONTRACT,
     allow_unsandboxed: bool = False,
+    extra_args: list[str] | None = None,
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -261,6 +263,14 @@ def _dispatch(
             else:
                 policy = sandbox.policy_for(cwd, adapter.binary, adapter.sandbox_read)
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
+    if extra_args and spec.cli != "fake":
+        # §13: their presence forces readonly False in the header regardless
+        # of what the argv appears to say. The runner cannot know what an
+        # unvalidated flag does -- it may well have re-enabled writes -- so
+        # the honest report is that read-only was not verified, not that the
+        # flag the adapter emitted is still in force.
+        argv = [*argv, *extra_args]
+        capability = dataclasses.replace(capability, readonly=False)
     outcome = run_process(
         argv,
         stdin_text,

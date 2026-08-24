@@ -22,6 +22,7 @@ from typing import Any
 from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec
 from ..ceilings import BUDGET_EXHAUSTED, Budget
+from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
 from ..rounds import dispatch_round, persist_result
@@ -145,6 +146,9 @@ def run_rounds(
     now: Callable[[], float] = time.monotonic,
     first_round: int = 2,
     allow_unsandboxed: bool = False,
+    tracker: RepeatTracker | None = None,
+    keep: bool = False,
+    extra_args: list[str] | None = None,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -230,6 +234,10 @@ def run_rounds(
             on_pool=on_pool,
             contract=VERDICT_CONTRACT,
             allow_unsandboxed=allow_unsandboxed,
+            tracker=tracker,
+            downgrades=outcome.downgrades,
+            extra_args=extra_args,
+            keep=keep,
         )
         budget.spend(len(results))
         outcome.rounds_run = round_no

@@ -50,6 +50,34 @@ def build_parser() -> argparse.ArgumentParser:
     # repository -- naming it is the operator's act. Only the trusted
     # user-level path is ever picked up automatically.
     run_p.add_argument("--roster", default=None, metavar="FILE")
+    # §10.1's layer 4: invocation flags outrank everything, including a
+    # roster entry's own values.
+    run_p.add_argument("--model", default=None, help="override every friend's model")
+    run_p.add_argument("--effort", default=None, help="override every friend's effort")
+    # §8.1: shape discovery without naming individual friends.
+    run_p.add_argument(
+        "--lens", action="append", default=[], help="restrict discovery to these lenses"
+    )
+    run_p.add_argument("--max-friends", type=int, default=None, metavar="N")
+    # §12.4: worktrees and the run directory are removed at run end unless
+    # asked otherwise. Keeping them is how you inspect what a friend saw.
+    run_p.add_argument("--keep", action="store_true", help="keep friend worktrees for inspection")
+    run_p.add_argument("--json", action="store_true", help="print run.json instead of the path")
+    # §13's escape hatch, and the only way arbitrary flags ever reach a
+    # friend. Command line ONLY -- never from any file -- and only together
+    # with the acknowledgement below.
+    run_p.add_argument(
+        "--unsafe-extra-args",
+        default=None,
+        metavar="'...'",
+        # Use the = form: argparse only accepts a dash-leading VALUE when it
+        # contains a space, so `--unsafe-extra-args --foo` is parsed as two
+        # flags while `--unsafe-extra-args '--foo --bar'` happens to work.
+        # Saying so here beats letting an operator discover it.
+        help="extra flags for every friend, e.g. --unsafe-extra-args='--foo'; "
+        "requires --i-accept-unsandboxed",
+    )
+    run_p.add_argument("--i-accept-unsandboxed", action="store_true")
     run_p.add_argument(
         "--resume",
         default=None,
@@ -96,7 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_p.add_argument("--force", action="store_true", help="overwrite an existing roster")
     init_p.add_argument("--out", default=None, help="write somewhere other than the default")
 
-    sub.add_parser("doctor")
+    doctor_p = sub.add_parser("doctor")
+    doctor_p.add_argument("--json", action="store_true", help="machine-readable output")
+    doctor_p.add_argument(
+        "--gc", action="store_true", help="remove run directories left by abandoned runs"
+    )
+    doctor_p.add_argument("--out", default=None, help="run root, if not the default")
     return parser
 
 
