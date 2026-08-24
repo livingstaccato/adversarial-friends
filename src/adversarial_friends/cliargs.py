@@ -25,7 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     run_p = sub.add_parser("run")
-    run_p.add_argument("artifact")
+    # Optional: `--resume` names a run directory that already knows its
+    # artifact, so requiring one again would invite passing a different
+    # file than the run actually reviewed.
+    run_p.add_argument("artifact", nargs="?", default=None)
     run_p.add_argument("--mode", default="report", choices=["report", "crossexam", "gate", "loop"])
     run_p.add_argument("--preset", default="inherit", choices=["inherit", "thorough", "cheap"])
     run_p.add_argument(
@@ -35,6 +38,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="cli:lens[:model], repeatable; overrides discovery",
     )
     run_p.add_argument("--include-self", action="store_true")
+    # §4.2. `exact` always reaches a terminal state unaided, which is what
+    # makes the documented CLI usable from a plain shell; `orchestrator`
+    # halts with exit 10 for judgment the runner cannot make.
+    run_p.add_argument("--merge", default="exact", choices=["exact", "orchestrator"])
+    run_p.add_argument(
+        "--resume",
+        default=None,
+        metavar="RUN_ID",
+        help="continue a run that halted for the orchestrator (exit 10)",
+    )
     # §12.2. A friend with no read-only mode of its own is refused when the
     # OS offers no way to confine it; this accepts that risk explicitly and
     # stamps every affected friend in the report.

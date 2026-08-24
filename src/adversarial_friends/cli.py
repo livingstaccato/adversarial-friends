@@ -18,8 +18,13 @@ import sys
 
 from .cliargs import _specs_from_flags, build_parser
 from .commands.doctor import cmd_doctor
+
+# _resolve_repo_root moved to commands/environment.py when run.py was
+# split for the line cap; re-exported from its original name because
+# tests and external callers reach into cli.py's namespace directly.
+from .commands.environment import _resolve_repo_root
 from .commands.resolve import cmd_resolve
-from .commands.run import _resolve_repo_root, cmd_run
+from .commands.run import cmd_run
 from .dispatch import (
     _FAKE_CAPABILITY,
     _UNKNOWN_CAPABILITY,

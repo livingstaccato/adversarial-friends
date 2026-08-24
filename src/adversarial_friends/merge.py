@@ -114,3 +114,47 @@ def exact_merge(
         replace(existing_by_id[cid], origin=origin_of[cid]) for cid in changed_existing_ids
     ]
     return kept, aliases, updated_existing
+
+
+def canonical_claims(records: list[object]) -> list[Claim]:
+    """Rebuild the live claim set from an append-only ledger.
+
+    A resumed run has to reconstruct what the original process held in
+    memory, and the ledger deliberately does not store it directly. Two
+    things have to be undone:
+
+    * **Aliased duplicates are still present as claim records.** They are
+      written on purpose -- an Alias's `duplicate` id must resolve to a real
+      claim record or the ledger has a dangling reference -- but they are not
+      part of the live set.
+    * **Every claim record's `origin` is frozen as first written.** When a
+      later friend's claim aliased an earlier one, the earlier record was
+      never rewritten (the ledger is append-only), so reading it back
+      under-counts corroboration. The alias graph is what carries that, and
+      folding it back in here is the only way a resumed run reports the same
+      corroboration the original would have.
+
+    Superseded claims are kept: a successor carries `supersedes`, and both
+    versions remain part of the record. It is the state machine's job to
+    decide which is live, not this function's.
+    """
+    claims = [r for r in records if isinstance(r, Claim)]
+    aliases = [r for r in records if isinstance(r, Alias)]
+    by_id = {c.id: c for c in claims}
+
+    origins: dict[str, list[str]] = {c.id: list(c.origin) for c in claims}
+    aliased: set[str] = set()
+    for alias in aliases:
+        aliased.add(alias.duplicate)
+        duplicate = by_id.get(alias.duplicate)
+        if duplicate is None or alias.canonical not in origins:
+            # A dangling alias. Recorded rather than repaired: this function
+            # reconstructs, it does not adjudicate.
+            continue
+        origins[alias.canonical] = _merge_origin(origins[alias.canonical], duplicate.origin)
+
+    return [
+        replace(c, origin=origins[c.id]) if origins[c.id] != list(c.origin) else c
+        for c in claims
+        if c.id not in aliased
+    ]

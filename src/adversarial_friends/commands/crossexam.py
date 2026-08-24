@@ -197,6 +197,12 @@ def run_rounds(
                 f"round {round_no}: no friend is independent of any remaining "
                 "claim, so no judging round could be run."
             )
+            # Settle them before leaving. Breaking out directly would leave
+            # every remaining claim at its `contested` seed, which reads as
+            # "judges disagreed" -- the opposite of what happened, which is
+            # that no judge existed. state_for returns `unproven` for a claim
+            # with no judges, which is the honest answer.
+            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, False)
             break
 
         if budget.would_exceed_calls(len(judge_specs)):

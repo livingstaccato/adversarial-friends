@@ -24,10 +24,19 @@ def default_root() -> Path:
 
 
 class RunStore:
-    def __init__(self, root: Path, run_id: str) -> None:
+    def __init__(self, root: Path, run_id: str, resume: bool = False) -> None:
         self.root = Path(root)
         self.run_id = run_id
         self.run_dir = self.root / run_id
+        if resume:
+            # A resumed run deliberately reopens a directory that already
+            # holds a ledger, an artifact copy, and a round-1 REQUEST -- the
+            # refusal below exists to stop two DIFFERENT runs sharing a
+            # directory, which is the opposite case.
+            if not self.run_dir.is_dir():
+                raise UsageError(f"cannot resume: no such run directory: {self.run_dir}")
+            self.ledger = Ledger(self.run_dir / "claims.jsonl")
+            return
         if self.run_dir.exists():
             # A prior run (or a caller-supplied --out that collides with one)
             # already occupies this path. Silently reusing it via

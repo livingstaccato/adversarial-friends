@@ -124,6 +124,18 @@ def state_for(
     quorum because judges declined to decide, which is `unproven`.
     """
     judges = judges_for(claim, roster)
+    if not judges:
+        # Nobody on the roster is independent of this claim -- every friend
+        # is in its `origin`. Without this the zero-judge case falls through
+        # to the disagreement branch below (quorum is 0, so "below quorum" is
+        # false, and no verdicts means not unanimous) and reports `contested`
+        # or, at max_rounds, `deadlocked` -- both of which assert that judges
+        # disagreed when there were none.
+        #
+        # Reachable two ways, and observed through the second: a roster where
+        # every friend co-authored a claim, and an orchestrator merge that
+        # unions two friends' origins onto one surviving claim.
+        return INCOMPLETE if required_missing else UNPROVEN
     quorum = quorum_for(judges)
     cast = latest_per_judge(
         v for v in verdicts if v.claim_id == claim.id and v.judge in set(judges)

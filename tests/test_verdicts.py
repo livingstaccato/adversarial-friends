@@ -222,3 +222,35 @@ def test_latest_per_judge_keeps_the_newest_round():
     )
     assert len(kept) == 1
     assert kept[0].verdict == "refuted"
+
+
+# --- Nobody independent enough to judge -----------------------------------
+
+
+def test_a_claim_every_friend_wrote_is_unproven_not_contested():
+    """Found by smoke-testing an orchestrator merge, which unions two
+    friends' origins onto the surviving claim and can leave it with no
+    judges at all.
+
+    Without this the zero-judge case falls through to the disagreement
+    branch -- quorum is 0 so "below quorum" is false, and no verdicts means
+    not unanimous -- and reports `contested`, asserting that judges
+    disagreed when there were none."""
+    everyone = claim(origin=tuple(ROSTER))
+    assert verdicts.judges_for(everyone, ROSTER) == []
+    assert verdicts.state_for(everyone, [], ROSTER, 2, 3) == verdicts.UNPROVEN
+
+
+def test_a_claim_with_no_judges_does_not_deadlock_at_max_rounds():
+    """`deadlocked` is worse than `contested` here: it is terminal, so it
+    would end the run reporting a disagreement that never happened."""
+    everyone = claim(origin=tuple(ROSTER))
+    assert verdicts.state_for(everyone, [], ROSTER, 3, 3) == verdicts.UNPROVEN
+
+
+def test_a_missing_required_friend_still_reads_as_incomplete():
+    """The two reasons for "below quorum" stay distinguishable even when the
+    judge set is empty."""
+    everyone = claim(origin=tuple(ROSTER))
+    state = verdicts.state_for(everyone, [], ROSTER, 2, 3, required_missing=True)
+    assert state == verdicts.INCOMPLETE

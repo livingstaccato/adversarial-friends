@@ -1,0 +1,236 @@
+"""The halt/resume handshake for judgment the runner cannot make -- §4.2.
+
+Deduplication is judgment. `--merge=exact` under-merges on purpose, because
+guessing at equivalence corrupts termination arithmetic; but it means two
+friends describing one defect in different words produce two claims, and the
+report shows one problem twice.
+
+`--merge=orchestrator` hands that judgment out. The runner writes
+`round-N/REQUEST.json`, exits 10, and stops. Something with judgment -- an
+agent driving this skill, or a person -- writes `RESPONSE.json`. `afriend run
+--resume RUN_ID` reads it and continues.
+
+**The same response must always produce the same run.** That is what makes
+mode drivers deterministic and lets fixtures ship canned responses, so this
+module applies a response as data rather than re-deciding anything.
+
+**A response is checked, not trusted.** It arrives as a file on disk, written
+by another process, naming claim ids that become permanent ledger records. A
+merge naming an id that does not exist, or a chain of merges, would corrupt
+the alias graph in ways only discovered much later while reading a report --
+so every referenced id is resolved and every structural rule is enforced
+before a single Alias is written.
+"""
+
+from dataclasses import dataclass, replace
+import json
+from pathlib import Path
+from typing import Any
+
+from .errors import AfError, UsageError
+from .ledger import Alias, Claim
+
+REQUEST_NAME = "REQUEST.json"
+RESPONSE_NAME = "RESPONSE.json"
+
+# §7.6's exit code for "needs orchestrator".
+NEEDS_ORCHESTRATOR_EXIT = 10
+
+SCHEMA_VERSION = 1
+
+# What the orchestrator is being asked to decide. Only merge adjudication is
+# implemented; §14.2's parse-halt extraction is the other user of this same
+# handshake and would arrive as a second question kind rather than a second
+# mechanism.
+QUESTION_MERGE = "merge"
+
+_INSTRUCTIONS = (
+    "Two of these claims may describe the same defect in different words. "
+    "For each such pair, add an entry to `merges` naming the claim to keep "
+    "as `canonical` and the one it subsumes as `duplicate`, with a short "
+    "`rationale`. Merge only what you are confident about: an unmerged "
+    "duplicate costs a round, a wrong merge silently deletes a finding. "
+    "Write this file as RESPONSE.json beside REQUEST.json, then re-run with "
+    "--resume."
+)
+
+
+class NeedsOrchestrator(AfError):
+    """Raised to stop a run that is waiting on RESPONSE.json."""
+
+    exit_code = NEEDS_ORCHESTRATOR_EXIT
+
+
+@dataclass(frozen=True)
+class MergeDecision:
+    canonical: str
+    duplicate: str
+    rationale: str
+
+
+def request_path(round_dir: Path) -> Path:
+    return Path(round_dir) / REQUEST_NAME
+
+
+def response_path(round_dir: Path) -> Path:
+    return Path(round_dir) / RESPONSE_NAME
+
+
+def write_request(round_dir: Path, run_id: str, round_no: int, claims: list[Claim]) -> Path:
+    """Write the question. Returns the path, for the message that names it.
+
+    Claims are rendered with the fields dedup actually needs and no others.
+    `origin` is omitted: knowing that two friends raised a claim says nothing
+    about whether two *texts* mean the same thing, and including it would
+    invite merging by author rather than by content.
+    """
+    path = request_path(round_dir)
+    payload = {
+        "version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "round": round_no,
+        "question": QUESTION_MERGE,
+        "instructions": _INSTRUCTIONS,
+        "claims": [
+            {
+                "id": claim.id,
+                "severity": claim.severity,
+                "claim": claim.claim,
+                "location": claim.location,
+                "evidence": claim.evidence,
+            }
+            for claim in claims
+        ],
+        "merges": [],
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _load(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise UsageError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise UsageError(f"{path} must contain a JSON object, got {type(data).__name__}")
+    return data
+
+
+def read_response(round_dir: Path, known_ids: set[str]) -> list[MergeDecision]:
+    """Parse and validate RESPONSE.json against the claims that exist.
+
+    Every rule here exists because breaking it corrupts the alias graph in a
+    way that only surfaces later, while someone is reading a report and
+    wondering where a finding went:
+
+    * An unknown id would produce an Alias pointing at nothing.
+    * Merging a claim into itself would make it its own canonical.
+    * A chain (A->B, B->C) leaves A pointing at a claim that is itself gone.
+      Rejected rather than resolved, because resolving it silently would
+      pick a canonical the orchestrator never actually chose.
+    * The same duplicate twice would record two different fates for one claim.
+    """
+    path = response_path(round_dir)
+    if not path.is_file():
+        raise UsageError(
+            f"no {RESPONSE_NAME} in {round_dir}. This run halted for merge "
+            f"adjudication; write the file described in {REQUEST_NAME} and "
+            "re-run with --resume."
+        )
+    data = _load(path)
+
+    version = data.get("version")
+    if version != SCHEMA_VERSION:
+        raise UsageError(
+            f"{path}: unsupported version {version!r} (this build understands {SCHEMA_VERSION})"
+        )
+
+    raw = data.get("merges")
+    if not isinstance(raw, list):
+        raise UsageError(f"{path}: 'merges' must be an array (use [] to merge nothing)")
+
+    decisions: list[MergeDecision] = []
+    duplicates: set[str] = set()
+    canonicals: set[str] = set()
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise UsageError(f"{path}: merges[{index}] is not an object")
+        canonical = entry.get("canonical")
+        duplicate = entry.get("duplicate")
+        for field, value in (("canonical", canonical), ("duplicate", duplicate)):
+            if not isinstance(value, str) or not value.strip():
+                raise UsageError(f"{path}: merges[{index}].{field} missing or empty")
+            if value not in known_ids:
+                raise UsageError(
+                    f"{path}: merges[{index}].{field} names {value!r}, which is "
+                    "not a claim in this run"
+                )
+        assert isinstance(canonical, str) and isinstance(duplicate, str)
+        if canonical == duplicate:
+            raise UsageError(f"{path}: merges[{index}] merges {canonical!r} into itself")
+        if duplicate in duplicates:
+            raise UsageError(
+                f"{path}: {duplicate!r} appears as a duplicate twice, which would "
+                "record two different fates for one claim"
+            )
+        duplicates.add(duplicate)
+        canonicals.add(canonical)
+        rationale = entry.get("rationale")
+        decisions.append(
+            MergeDecision(
+                canonical=canonical,
+                duplicate=duplicate,
+                rationale=(rationale if isinstance(rationale, str) and rationale.strip() else ""),
+            )
+        )
+
+    chained = duplicates & canonicals
+    if chained:
+        raise UsageError(
+            f"{path}: {sorted(chained)} appear as both a canonical and a duplicate. "
+            "A chain leaves the first claim pointing at one that is itself merged "
+            "away; name the final canonical directly instead."
+        )
+    return decisions
+
+
+def apply_merges(
+    claims: list[Claim], decisions: list[MergeDecision], round_no: int
+) -> tuple[list[Claim], list[Alias]]:
+    """Fold merge decisions into the claim list.
+
+    Mirrors merge.exact_merge's contract on purpose: a merged-away claim's
+    `origin` joins its canonical, so corroboration survives adjudicated
+    merges exactly as it survives exact ones. Losing it here would be worse
+    than in the exact path -- these are the merges that combine *differently
+    worded* claims, which is precisely where independent agreement is
+    strongest evidence.
+    """
+    by_id = {claim.id: claim for claim in claims}
+    aliases: list[Alias] = []
+    origins: dict[str, list[str]] = {c.id: list(c.origin) for c in claims}
+    removed: set[str] = set()
+
+    for decision in decisions:
+        duplicate = by_id[decision.duplicate]
+        for value in duplicate.origin:
+            if value not in origins[decision.canonical]:
+                origins[decision.canonical].append(value)
+        removed.add(decision.duplicate)
+        aliases.append(
+            Alias(
+                canonical=decision.canonical,
+                duplicate=decision.duplicate,
+                round=round_no,
+                source="orchestrator",
+                rationale=decision.rationale or "adjudicated by orchestrator",
+            )
+        )
+
+    kept = [
+        replace(c, origin=origins[c.id]) if origins[c.id] != list(c.origin) else c
+        for c in claims
+        if c.id not in removed
+    ]
+    return kept, aliases

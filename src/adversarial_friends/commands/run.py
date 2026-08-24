@@ -7,13 +7,11 @@ Split out of cli.py.
 import argparse
 from collections.abc import Callable
 import concurrent.futures
-import contextlib
 import dataclasses
 import os
 from pathlib import Path
 import shutil
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -29,6 +27,10 @@ from ..cliargs import _specs_from_flags
 from ..errors import CeilingError, NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
+from ..orchestrator import (
+    NEEDS_ORCHESTRATOR_EXIT,
+    write_request,
+)
 from ..paths import ADAPTER_DIR
 from ..prompt import available_lenses
 from ..report import render
@@ -39,6 +41,9 @@ from ..verdicts import loop_should_terminate, next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
 from .crossexam import run_rounds
+from .environment import _resolve_repo_root, install_abort_handlers
+from .resume import resume_round_one
+from .runmeta import _base_meta, _restore_args
 
 # Every mode that judges claims after critiquing them. `report` stops at the
 # critique round; the rest all run cross-examination and differ only in what
@@ -51,32 +56,30 @@ IMPLEMENTED_MODES = frozenset({"report", *JUDGING_MODES})
 _SignalHandler = Callable[[int, FrameType | None], Any] | int | None
 
 
-def _resolve_repo_root(artifact: Path) -> Path | None:
-    """Return the git repository root enclosing `artifact`, or None if it
-    is not inside a git repository at all.
-
-    isolation.snapshot_commit requires a repository ROOT and raises AfError
-    for a nested subdirectory (naming the real root). Resolving the root
-    here -- via the artifact's own enclosing directory, not Path.cwd() --
-    means snapshot_commit is only ever called with a value it will accept,
-    regardless of how deeply nested the artifact is inside the repo, and
-    regardless of what directory `afriend` itself happens to be invoked
-    from.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(artifact.resolve().parent), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    return Path(result.stdout.strip()).resolve()
-
-
 def cmd_run(args: argparse.Namespace) -> int:
+    if args.resume:
+        # A resumed run takes its whole configuration from the run directory
+        # rather than from this invocation. §4.2 requires that the same
+        # response produce the same run, and re-reading flags from a second
+        # command line is exactly how that stops being true.
+        args = _restore_args(args)
+    if not args.artifact:
+        raise UsageError("an artifact path is required (or --resume RUN_ID)")
     artifact = Path(args.artifact)
     if not artifact.is_file():
         raise UsageError(f"artifact not found: {artifact}")
+    if args.merge == "orchestrator" and args.mode == "loop":
+        # A loop halts once per iteration and would have to resume into the
+        # middle of one, restoring a budget, a dry-round streak and a claim
+        # set mid-flight. That state is reconstructible in principle and is
+        # not reconstructed here; refusing is better than resuming into a
+        # state this build has not verified.
+        raise UsageError(
+            "--merge orchestrator is not supported with --mode loop in this "
+            "build: a loop would halt once per iteration and resume into "
+            "mid-iteration state that is not reconstructed. Use --mode "
+            "crossexam or gate, or --merge exact."
+        )
     if args.mode not in IMPLEMENTED_MODES:
         raise UsageError(
             f"mode {args.mode!r} is not implemented yet; "
@@ -187,39 +190,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
-
-    def _handle_abort(signum: int, frame: FrameType | None) -> None:
-        abort_signum["value"] = signum
-        abort_event.set()
-        # spawn.run_process (via dispatch._dispatch's abort_event) already
-        # notices this on its own next poll and terminates its process
-        # group promptly -- but the main thread here may be blocked inside
-        # pool.map()'s wait for that same worker future. Shutting the pool
-        # down without waiting means this handler itself never blocks, and
-        # the main thread's wait resolves as soon as the worker's own
-        # abort-triggered return lands, not whenever `with pool:`'s
-        # implicit wait=True would otherwise have unblocked it.
-        pool = active_pool[0]
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
-
-    # signal.signal() only works from the main thread of the main
-    # interpreter -- called from anywhere else (a caller's own
-    # threading.Thread invoking cmd_run directly, e.g.) it raises
-    # ValueError. cmd_run is "library-ish" (the same premise behind
-    # restoring handlers unconditionally below), so a non-main-thread
-    # caller is a real, contemplated audience, not a hypothetical one --
-    # this must degrade, not crash before the try/finally below even
-    # starts. installed_handlers records exactly which signals were
-    # actually captured so the finally below restores only those, and the
-    # degradation itself is recorded in `downgrades` (the same place an
-    # artifact-outside-a-repo downgrade goes) so a run that cannot be
-    # signal-aborted is visible in run.json rather than looking identical
-    # to one that can be.
-    installed_handlers: dict[int, _SignalHandler] = {}
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(ValueError):
-            installed_handlers[sig] = signal.signal(sig, _handle_abort)
+    installed_handlers = install_abort_handlers(abort_event, abort_signum, active_pool)
     if len(installed_handlers) < 2:
         downgrades.append(
             "signal-based abort handling is unavailable in this context "
@@ -237,9 +208,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             specs = [dataclasses.replace(s, scope="doc") for s in specs]
 
         run_started = time.monotonic()
-        run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
-        store = RunStore(Path(args.out) if args.out else default_root(), run_id)
-        frozen, digest = store.artifact_copy(artifact)
+        resume_dir = getattr(args, "_resume_dir", None)
+        if resume_dir is not None:
+            run_id = resume_dir.name
+            store = RunStore(resume_dir.parent, run_id, resume=True)
+            frozen = next(iter((resume_dir / "artifact").iterdir()))
+            digest = getattr(args, "_resume_meta", {}).get("artifact_hash", "")
+        else:
+            run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+            store = RunStore(Path(args.out) if args.out else default_root(), run_id)
+            frozen, digest = store.artifact_copy(artifact)
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
 
@@ -316,6 +294,32 @@ def cmd_run(args: argparse.Namespace) -> int:
             # dry-round streak is what ends the loop.
             artifact_text = artifact.read_text(encoding="utf-8")
 
+            if resume_dir is not None and iteration == 1:
+                resumed = resume_round_one(
+                    args,
+                    store,
+                    specs,
+                    registry,
+                    fake_cmd,
+                    artifact,
+                    artifact_text,
+                    repo_root,
+                    snapshot_sha,
+                    abort_event,
+                    budget,
+                    base_round,
+                    _track_pool,
+                )
+                all_claims = resumed.claims
+                all_aliases.extend(resumed.aliases)
+                friends_meta.extend(resumed.friends_meta)
+                downgrades.extend(resumed.downgrades)
+                cross = resumed.cross
+                counter = len(all_claims)
+                any_success = True
+                iterations_run = 1
+                break
+
             critique, all_claims, counter = run_critique(
                 specs,
                 base_round,
@@ -339,6 +343,33 @@ def cmd_run(args: argparse.Namespace) -> int:
             downgrades.extend(critique.downgrades)
             all_aliases.extend(critique.aliases)
             any_success = any_success or critique.any_success
+
+            if args.merge == "orchestrator" and all_claims:
+                # §4.2. Stop and ask for judgment the runner cannot make.
+                # run.json is written first: a resumed run rebuilds its whole
+                # configuration from it, so halting without it would leave a
+                # run directory that can never be resumed.
+                halt_meta = _base_meta(
+                    args,
+                    artifact,
+                    digest,
+                    friends_meta,
+                    downgrades,
+                    specs,
+                    repo_root,
+                    snapshot_sha,
+                )
+                store.write_run_json(halt_meta)
+                request = write_request(store.round_dir(base_round), run_id, base_round, all_claims)
+                store.write_report(render(all_claims, all_aliases, halt_meta))
+                print(store.run_dir)
+                print(
+                    f"afriend: waiting for merge adjudication. Fill in "
+                    f"{request}, save it as RESPONSE.json beside it, then run:\n"
+                    f"  afriend run --resume {run_id} --out {store.root}",
+                    file=sys.stderr,
+                )
+                return NEEDS_ORCHESTRATOR_EXIT
 
             if args.mode in JUDGING_MODES and all_claims:
                 # Only worth entering with claims in hand: with none there is
@@ -390,20 +421,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.mode == "gate":
             blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
 
-        meta: dict[str, Any] = {
-            "mode": args.mode,
-            "preset": args.preset,
-            "artifact": artifact.name,
-            "artifact_hash": digest,
-            # Persisted so `afriend resolve` can verify a location against
-            # how this run first saw it (§6.4). Without them a resolution
-            # could only ever be `unverifiable`, since the snapshot commit
-            # exists but nothing would remember which one it was.
-            "repo_root": str(repo_root) if repo_root else None,
-            "snapshot_sha": snapshot_sha,
-            "friends": friends_meta,
-            "downgrades": downgrades,
-        }
+        meta: dict[str, Any] = _base_meta(
+            args, artifact, digest, friends_meta, downgrades, specs, repo_root, snapshot_sha
+        )
         if args.mode == "loop":
             meta["iterations_run"] = iterations_run
             meta["dry_streak"] = streak
