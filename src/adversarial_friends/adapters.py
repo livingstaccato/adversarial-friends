@@ -40,6 +40,16 @@ class Adapter:
     # normalize() falls back to scanning stdout directly rather than
     # guessing one.
     envelope: Envelope | None = None
+    # §12.2: paths this CLI genuinely needs to read when it runs under OS
+    # confinement -- its configuration and credential locations. Declared
+    # per-adapter rather than guessed, because a sandbox missing a
+    # credential path does not fail loudly: the CLI starts, fails to
+    # authenticate, and looks like a broken friend. `~` is expanded at
+    # policy-construction time so these stay portable between machines.
+    #
+    # Empty is meaningful: an adapter with a real readonly mode is trusted
+    # to confine itself (§11) and never reaches the sandbox at all.
+    sandbox_read: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +101,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             effort={k: list(v) for k, v in data.get("effort", {}).items()},
             transport=data.get("transport", "exec"),
             endpoint=data.get("endpoint", ""),
+            sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
             structured_output=bool(data.get("structured_output", False)),
             envelope=parse_envelope(data.get("envelope")),
         )

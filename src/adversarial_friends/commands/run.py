@@ -169,6 +169,21 @@ def cmd_run(args: argparse.Namespace) -> int:
             "this report reflects a single reviewer's opinion, not "
             "disagreement between several."
         )
+    # §12.2: every friend that will run without OS confinement is named in
+    # the report, whether that is because the operator overrode the refusal
+    # or because the CLI has no read-only mode and one was available. A
+    # weakened guarantee has to be visible in the artifact a human reads,
+    # not only in the code that decided it.
+    unconfined = [s for s in specs if s.cli in registry and not registry[s.cli].readonly_argv]
+    if unconfined and args.allow_unsandboxed_friend:
+        downgrades.append(
+            "--allow-unsandboxed-friend was passed: "
+            + ", ".join(s.name for s in unconfined)
+            + " may run with no OS confinement at all. The artifact under "
+            "review is untrusted text; a friend that follows an instruction "
+            "inside it can read anything this user can."
+        )
+
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
@@ -316,6 +331,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 snapshot_sha,
                 abort_event,
                 on_pool=_track_pool,
+                allow_unsandboxed=args.allow_unsandboxed_friend,
             )
             budget.spend(critique.calls)
             iterations_run = iteration
@@ -346,6 +362,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     attributed=args.attributed,
                     on_pool=_track_pool,
                     first_round=base_round + 1,
+                    allow_unsandboxed=args.allow_unsandboxed_friend,
                 )
                 all_claims = cross.claims
                 friends_meta.extend(cross.friends_meta)

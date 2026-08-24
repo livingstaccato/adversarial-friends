@@ -110,6 +110,7 @@ def run_critique(
     snapshot_sha: str | None,
     abort_event: threading.Event,
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _p: None,
+    allow_unsandboxed: bool = False,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -137,6 +138,7 @@ def run_critique(
         snapshot_sha,
         abort_event,
         on_pool=on_pool,
+        allow_unsandboxed=allow_unsandboxed,
     )
     outcome.calls = len(results)
 

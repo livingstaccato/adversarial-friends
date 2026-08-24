@@ -45,6 +45,7 @@ def dispatch_round(
     abort_event: threading.Event,
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _pool: None,
     contract: PayloadContract = CLAIM_CONTRACT,
+    allow_unsandboxed: bool = False,
 ) -> list[RoundResult]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -113,6 +114,7 @@ def dispatch_round(
                         schema_file,
                         abort_event,
                         contract,
+                        allow_unsandboxed,
                     )
                 except AfError:
                     raise

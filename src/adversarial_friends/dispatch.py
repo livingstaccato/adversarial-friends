@@ -6,9 +6,10 @@ than re-derived (see _dispatch's own docstring below).
 """
 
 from pathlib import Path
+import shutil
 import threading
 
-from . import http_transport
+from . import http_transport, sandbox
 from .adapters import Adapter, Capability, FriendSpec, build_argv
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
@@ -89,6 +90,35 @@ def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
     )
 
 
+def _refused_unsandboxed(argv: list[str], spec: FriendSpec, adapter: Adapter) -> SpawnResult:
+    """§12.2's refusal: this friend cannot confine itself and the OS offers
+    no way to confine it.
+
+    Refused as a FAILED FRIEND rather than a raised error, deliberately. One
+    unconfinable friend must not end a run that has three usable ones -- the
+    same rule every other per-friend problem follows. The security property
+    is unchanged either way: the process is never started. The report shows
+    it as failed, with the reason and the override.
+    """
+    return SpawnResult(
+        argv=argv,
+        exit_code=None,
+        stdout="",
+        stderr="",
+        duration_s=0.0,
+        timed_out=False,
+        result=NormalizeResult(None, [], False),
+        failure_reason=(
+            f"refused: {adapter.name} has no read-only mode, and no OS sandbox "
+            f"({sandbox.SANDBOX_EXEC} on macOS, {sandbox.BWRAP} on Linux) is "
+            "available to confine it. An artifact under review is untrusted "
+            "text and could tell it to read anything this user can. Install "
+            "one, or pass --allow-unsandboxed-friend to accept the risk."
+        ),
+        orphans_suspected=False,
+    )
+
+
 def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = 200) -> str:
     """A short, status-column-sized excerpt of a friend's stderr -- not the
     whole capture, which lives in `round-1/<friend>.err` (see
@@ -115,6 +145,7 @@ def _dispatch(
     schema_file: Path,
     abort_event: threading.Event | None = None,
     contract: PayloadContract = CLAIM_CONTRACT,
+    allow_unsandboxed: bool = False,
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -193,6 +224,43 @@ def _dispatch(
         check_denied_values(argv)
         envelope = adapter.envelope
         structured_output = adapter.structured_output
+        # A friend whose binary is not installed is not sandboxed. Wrapping
+        # a command that does not exist confines nothing, and it destroys the
+        # diagnosis: spawn.run_process reports "binary not found" from
+        # Popen's own FileNotFoundError, but once the argv starts with
+        # `sandbox-exec` Popen succeeds and the real error becomes an opaque
+        # exit 71 from the wrapper. A missing agent CLI is the single most
+        # common setup problem this tool has; its message must not degrade
+        # because the friend happened to need confinement.
+        binary_present = bool(adapter.binary and shutil.which(adapter.binary))
+        if not adapter.readonly_argv and binary_present:
+            # §12.2. This CLI enforces nothing on its own, and cwd is not
+            # containment -- an artifact telling it to read
+            # ~/.ssh/id_ed25519 would simply work. Confined by the OS, or
+            # refused.
+            #
+            # **Deliberately narrower than §12.2's letter**, which keys on
+            # the capability rather than the adapter. `build_argv` emits a
+            # readonly flag only for repo scope, so a doc-scope claude also
+            # reports `readonly=False` -- and every friend is downgraded to
+            # doc scope whenever the artifact is not inside a git repository.
+            # Keying on the capability would therefore refuse every friend
+            # for any artifact outside a repo, and would put CLIs whose
+            # credential paths this project has NOT verified under a sandbox
+            # that silently breaks their authentication.
+            #
+            # So the rule here is "this CLI has no read-only mode at all",
+            # which is the case §12.2's own example is about. The residual
+            # gap -- a doc-scope friend of a readonly-capable CLI is not
+            # OS-confined -- is real and recorded in the spec's divergences
+            # section rather than left implied.
+            mechanism = sandbox.detect()
+            if mechanism is None:
+                if not allow_unsandboxed:
+                    return spec, capability, _refused_unsandboxed(argv, spec, adapter)
+            else:
+                policy = sandbox.policy_for(cwd, adapter.binary, adapter.sandbox_read)
+                argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
     outcome = run_process(
         argv,
         stdin_text,

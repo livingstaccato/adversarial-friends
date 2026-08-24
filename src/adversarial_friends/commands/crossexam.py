@@ -144,6 +144,7 @@ def run_rounds(
     on_pool: Callable[[concurrent.futures.ThreadPoolExecutor | None], None] = lambda _pool: None,
     now: Callable[[], float] = time.monotonic,
     first_round: int = 2,
+    allow_unsandboxed: bool = False,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -222,6 +223,7 @@ def run_rounds(
             abort_event,
             on_pool=on_pool,
             contract=VERDICT_CONTRACT,
+            allow_unsandboxed=allow_unsandboxed,
         )
         budget.spend(len(results))
         outcome.rounds_run = round_no

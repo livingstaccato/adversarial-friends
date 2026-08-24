@@ -72,6 +72,16 @@ jobs:
       - name: build wheel and verify assets
         run: ci/verify_wheel_assets.sh
 
+      # Install the Linux OS-confinement mechanism (§12.2). Without it the
+      # real containment tests skip, and a skip looks exactly like a pass.
+      - name: install sandbox mechanism
+        run: ci/install_sandbox.sh
+
       # Tests
       - name: pytest
         run: uv run pytest
+
+      # Fail if the containment tests silently skipped -- the whole point of
+      # installing bwrap above is that this path is actually exercised.
+      - name: assert containment tests ran
+        run: ci/assert_sandbox_tested.sh

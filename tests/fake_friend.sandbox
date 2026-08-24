@@ -1,0 +1,22 @@
+(version 1)
+(deny default)
+
+; Bootstrap: without these a process aborts before main().
+(allow process*)
+(allow sysctl-read)
+(allow mach-lookup)
+(allow ipc-posix-shm)
+(allow signal (target self))
+(allow file-read-metadata)
+
+; The friend must reach its model (§12.3).
+(allow network*)
+
+; Read-only: system paths, plus this CLI's own config and binary.
+(allow file-read* (literal "/") (subpath "/usr") (subpath "/System") (subpath "/bin") (subpath "/sbin") (subpath "/Library") (subpath "/private/var/db") (subpath "/private/var/select") (subpath "/dev") (subpath "/etc") (subpath "/private/etc") (subpath "/opt/homebrew") (subpath "/usr/local"))
+
+; Read-write: this friend's isolation directory and nothing else.
+(allow file-read* file-write* (subpath "/Users/tim/code/gh/livingstaccato/adversarial-friends"))
+
+; Scratch space every runtime expects.
+(allow file-write* (literal "/dev/null") (literal "/dev/dtracehelper"))

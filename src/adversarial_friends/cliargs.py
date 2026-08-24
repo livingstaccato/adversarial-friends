@@ -35,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="cli:lens[:model], repeatable; overrides discovery",
     )
     run_p.add_argument("--include-self", action="store_true")
+    # §12.2. A friend with no read-only mode of its own is refused when the
+    # OS offers no way to confine it; this accepts that risk explicitly and
+    # stamps every affected friend in the report.
+    run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
     run_p.add_argument("--timeout", type=int, default=900)
     run_p.add_argument("--out", default=None)
     run_p.add_argument(

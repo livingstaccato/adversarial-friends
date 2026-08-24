@@ -30,3 +30,21 @@ match_field = "type"
 [[envelope.rules]]
 type = "error"
 field = "error.data.message"
+
+# §12.2: opencode declares no readonly_argv, so it runs under OS-level
+# confinement and must be told where its own configuration and credentials
+# live -- a sandbox missing a credential path does not fail loudly, it makes
+# the CLI look like a broken friend. Paths are the documented XDG locations
+# plus opencode's own directories; a path that does not exist on a given
+# machine is simply not bound (see sandbox.linux_argv on --ro-bind-try).
+[sandbox]
+read = [
+  "~/.config/opencode",
+  "~/.local/share/opencode",
+  "~/.local/state/opencode",
+  "~/.cache/opencode",
+  "~/.opencode",
+  "~/.npm",
+  "~/.bun",
+  "~/.config/node",
+]
