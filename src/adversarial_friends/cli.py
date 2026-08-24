@@ -23,6 +23,7 @@ from .commands.doctor import cmd_doctor
 # split for the line cap; re-exported from its original name because
 # tests and external callers reach into cli.py's namespace directly.
 from .commands.environment import _resolve_repo_root
+from .commands.init import cmd_init
 from .commands.resolve import cmd_resolve
 from .commands.run import cmd_run
 from .dispatch import (
@@ -53,6 +54,7 @@ __all__ = [
     "available_lenses",
     "build_parser",
     "cmd_doctor",
+    "cmd_init",
     "cmd_resolve",
     "cmd_run",
     "main",
@@ -65,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             return cmd_run(args)
+        if args.command == "init":
+            return cmd_init(args)
         if args.command == "resolve":
             return cmd_resolve(args)
         if args.command == "doctor":

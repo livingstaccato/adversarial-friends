@@ -15,6 +15,7 @@ from .ceilings import (
 )
 from .errors import UsageError
 from .ids import validate_friend_name
+from .presets import PRESETS
 from .resolutions import DISPOSITIONS
 from .trust import MODEL_RE
 
@@ -30,7 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     # file than the run actually reviewed.
     run_p.add_argument("artifact", nargs="?", default=None)
     run_p.add_argument("--mode", default="report", choices=["report", "crossexam", "gate", "loop"])
-    run_p.add_argument("--preset", default="inherit", choices=["inherit", "thorough", "cheap"])
+    # §10.1: the default depends on the mode (gate defaults to thorough), so
+    # it is resolved after parsing rather than baked in here -- None means
+    # "the operator did not say".
+    run_p.add_argument("--preset", default=None, choices=list(PRESETS))
     run_p.add_argument(
         "--friend",
         action="append",
@@ -42,6 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
     # makes the documented CLI usable from a plain shell; `orchestrator`
     # halts with exit 10 for judgment the runner cannot make.
     run_p.add_argument("--merge", default="exact", choices=["exact", "orchestrator"])
+    # §13: an explicitly named roster may live anywhere, including inside the
+    # repository -- naming it is the operator's act. Only the trusted
+    # user-level path is ever picked up automatically.
+    run_p.add_argument("--roster", default=None, metavar="FILE")
     run_p.add_argument(
         "--resume",
         default=None,
@@ -82,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resolve_p.add_argument("--author", default=None, help="defaults to $USER")
     resolve_p.add_argument("--out", default=None, help="run root, if not the default")
+
+    # §17. Writes a roster from what is actually installed; asks nothing.
+    init_p = sub.add_parser("init")
+    init_p.add_argument("--force", action="store_true", help="overwrite an existing roster")
+    init_p.add_argument("--out", default=None, help="write somewhere other than the default")
 
     sub.add_parser("doctor")
     return parser

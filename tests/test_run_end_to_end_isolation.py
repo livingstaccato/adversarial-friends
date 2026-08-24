@@ -17,7 +17,7 @@ from e2e_helpers import FAKE, REPO, _env, _git_commit, _git_repo, run_af
 import pytest
 
 from adversarial_friends import adapters, cli
-from adversarial_friends.commands import run as cmd_run_module
+from adversarial_friends.commands import friends as friends_module
 
 # --- I2: corroboration must survive exact-merge, end to end ---------------
 #
@@ -257,7 +257,9 @@ def test_cli_run_passes_timeout_through_to_roster_resolve(monkeypatch, tmp_path)
         captured.update(kwargs)
         raise _StopAfterResolve
 
-    monkeypatch.setattr(cmd_run_module, "resolve", _spy_resolve)
+    # roster.resolve is called from commands.friends now, not commands.run:
+    # resolving the roster became a separate decision from running it.
+    monkeypatch.setattr(friends_module, "resolve", _spy_resolve)
     parser = cli.build_parser()
     parsed = parser.parse_args(["run", str(artifact), "--mode", "report", "--timeout", "37"])
     with pytest.raises(_StopAfterResolve):

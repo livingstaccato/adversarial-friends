@@ -10,7 +10,6 @@ import concurrent.futures
 import dataclasses
 import os
 from pathlib import Path
-import shutil
 import signal
 import sys
 import threading
@@ -23,8 +22,7 @@ from .. import isolation, verdicts as vd
 from ..adapters import load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
-from ..cliargs import _specs_from_flags
-from ..errors import CeilingError, NoFriendsError, UsageError
+from ..errors import CeilingError, UsageError
 from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
 from ..orchestrator import (
@@ -32,16 +30,15 @@ from ..orchestrator import (
     write_request,
 )
 from ..paths import ADAPTER_DIR
-from ..prompt import available_lenses
 from ..report import render
 from ..resolutions import blocking_claims
-from ..roster import resolve
 from ..runstore import RunStore, default_root
 from ..verdicts import loop_should_terminate, next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import _resolve_repo_root, install_abort_handlers
+from .friends import resolve_friends
 from .resume import resume_round_one
 from .runmeta import _base_meta, _restore_args
 
@@ -93,16 +90,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"--mode {args.mode} (round 1 is the critique round; judging "
             "starts at round 2). Use --mode report, or --max-rounds 2 or more."
         )
-    if args.preset != "inherit":
-        # --preset is accepted and printed in the report header, but nothing
-        # reads it: no code path varies model/effort/timeout selection by
-        # preset name. Rejecting explicitly (same pattern as the --mode
-        # check just above) rather than silently accepting and doing
-        # nothing -- a report that says "preset: thorough" while running
-        # exactly like "inherit" would misrepresent what actually happened.
-        raise UsageError(
-            f"preset {args.preset!r} is not implemented yet; only 'inherit' is available"
-        )
     # Deliberately NOT resolved here: resolving would follow a symlinked
     # artifact to its target's own name, so a review of `link_spec.md ->
     # real_spec.md` would report and store the artifact as "real_spec.md"
@@ -119,21 +106,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     # travels in the lens slot of the cli:lens flag syntax.
     fake_env = os.environ.get("AF_FAKE_FRIEND")
     fake_cmd = fake_env.split() if fake_env else None
+    downgrades: list[str] = []
 
-    specs = (
-        _specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
-        if args.friend
-        else resolve(
-            registry,
-            available_lenses(),
-            os.environ,
-            shutil.which,
-            include_self=args.include_self,
-            timeout=args.timeout,
-        )
-    )
-    if not specs:
-        raise NoFriendsError("no usable friends for mode 'report'")
+    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+    specs = resolved.specs
+
     for spec in specs:
         validate_friend_name(spec.name)
 
@@ -155,7 +132,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     # `finally` blocks below reachable promptly. Handlers are restored
     # unconditionally in the outer `finally` -- a library-ish function
     # should not permanently hijack process-wide signal disposition.
-    downgrades: list[str] = []
     if len(specs) == 1:
         # --friend REPLACES the roster rather than augmenting discovery (see
         # cliargs._specs_from_flags above), so a single --friend flag -- or,
@@ -358,6 +334,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     specs,
                     repo_root,
                     snapshot_sha,
+                    preset=resolved.preset,
+                    roster_source=resolved.source,
                 )
                 store.write_run_json(halt_meta)
                 request = write_request(store.round_dir(base_round), run_id, base_round, all_claims)
@@ -422,7 +400,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
 
         meta: dict[str, Any] = _base_meta(
-            args, artifact, digest, friends_meta, downgrades, specs, repo_root, snapshot_sha
+            args,
+            artifact,
+            digest,
+            friends_meta,
+            downgrades,
+            specs,
+            repo_root,
+            snapshot_sha,
+            preset=resolved.preset,
+            roster_source=resolved.source,
         )
         if args.mode == "loop":
             meta["iterations_run"] = iterations_run

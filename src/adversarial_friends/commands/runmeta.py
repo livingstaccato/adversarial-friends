@@ -61,6 +61,8 @@ def _base_meta(
     specs: list[FriendSpec],
     repo_root: Path | None = None,
     snapshot_sha: str | None = None,
+    preset: str = "inherit",
+    roster_source: str | None = None,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -71,7 +73,11 @@ def _base_meta(
     """
     return {
         "mode": args.mode,
-        "preset": args.preset,
+        # The preset ACTUALLY used, not the flag: it defaults per mode (gate
+        # defaults to thorough, §7), so printing the flag would report
+        # `None` for a run that emitted high-effort flags everywhere.
+        "preset": preset,
+        "roster_source": roster_source,
         "merge": args.merge,
         "artifact": artifact.name,
         "artifact_hash": digest,

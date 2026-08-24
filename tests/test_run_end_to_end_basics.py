@@ -128,17 +128,31 @@ def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path):
     assert meta["friends"][0]["name"] == "ollama-security-0"
 
 
-def test_preset_other_than_inherit_is_rejected(tmp_path):
-    """I5: --preset is accepted and printed in the report header, but
-    nothing reads it -- no code path varies behavior by preset name.
-    Rejected explicitly (same pattern as --mode) rather than silently
-    accepted and doing nothing."""
+def test_a_preset_reaches_run_json(tmp_path):
+    """This used to assert --preset was refused as unimplemented. It now
+    selects effort per §10.1, so what matters is that the preset actually
+    used is recorded -- a report claiming `thorough` while running like
+    `inherit` would misrepresent what happened, which was the original
+    reason for refusing it."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
     result = run_af(tmp_path, artifact, "--preset", "thorough", "--friend", "fake:good")
-    assert result.returncode == 2, result.stderr
-    assert "thorough" in result.stderr
-    assert "not implemented" in result.stderr.lower()
+    assert result.returncode == 0, result.stderr
+    run_dir = sorted((tmp_path / "runs").iterdir())[0]
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["preset"] == "thorough"
+
+
+def test_gate_defaults_to_the_thorough_preset(tmp_path):
+    """§7's mode table: gate defaults to --preset thorough. It is the mode
+    that fails a build, so spending more per friend is right there and
+    nowhere else."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    run_af(tmp_path, artifact, "--friend", "fake:good", mode="gate")
+    run_dir = sorted((tmp_path / "runs").iterdir())[0]
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["preset"] == "thorough"
 
 
 def test_preset_inherit_is_accepted(tmp_path):
