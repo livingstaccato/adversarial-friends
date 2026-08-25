@@ -217,3 +217,22 @@ def test_gc_keeps_a_run_halted_for_the_orchestrator(tmp_path):
         env=_env(),
     )
     assert halted.exists()
+
+
+def test_a_downgrade_is_recorded_once_not_twice(tmp_path):
+    """Every downgrade must appear exactly once in run.json.
+
+    A duplicated block in cmd_run ran the whole resolve/validate/downgrade
+    sequence twice: `resolve_friends` was called twice, the second call
+    silently reassigned `specs` AFTER confinement_downgrades had already
+    been computed from the first, and the single-friend note was appended
+    twice. Visible in a real report as the same sentence printed twice --
+    which is also the cheapest thing to assert on.
+    """
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n\nSome design text.\n")
+    run_af(tmp_path, artifact, "--friend", "fake:good")
+    meta = json.loads((sorted((tmp_path / "runs").iterdir())[0] / "run.json").read_text())
+    downgrades = meta["downgrades"]
+    duplicated = [d for d in set(downgrades) if downgrades.count(d) > 1]
+    assert not duplicated, f"downgrade recorded more than once: {duplicated}"

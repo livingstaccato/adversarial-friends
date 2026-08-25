@@ -15,6 +15,22 @@ effort_kind = "native"
 # to stdout, so the NDJSON reader must skip unparseable lines rather than fail.
 structured_output = true
 
+# codex refuses to start outside a git repository:
+#
+#   Not inside a trusted directory and --skip-git-repo-check was not specified.
+#
+# Doc scope is a bare directory holding a copy of the artifact, and EVERY
+# friend is downgraded to doc scope whenever the artifact is not inside a
+# repository -- so without this codex fails every such run before the model
+# sees anything. Found by running this tool against an artifact outside a
+# repo.
+#
+# The flag skips codex's own trust check and nothing else. Verified against
+# the real CLI: with it, codex starts in a bare directory, reads the
+# artifact, and STILL cannot write outside its workspace -- "the filesystem
+# sandbox is read-only and the target is outside the permitted workspace".
+doc_argv = ["--skip-git-repo-check"]
+
 [envelope]
 kind = "ndjson"
 match_field = "type"

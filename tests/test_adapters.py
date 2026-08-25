@@ -1,7 +1,19 @@
 import pytest
 
-from adversarial_friends import adapters
+from adversarial_friends import adapters, trust
 from adversarial_friends.errors import UsageError
+
+
+def argv_contains_sequence(argv, seq):
+    """True when `seq` appears as CONSECUTIVE elements of argv.
+
+    Asserting the two tokens separately would pass on an argv that emitted
+    the flag name and its value at opposite ends -- which is the exact bug
+    the older version of this test existed to catch. Adjacency is the
+    property that matters.
+    """
+    return any(list(argv[i : i + len(seq)]) == list(seq) for i in range(len(argv) - len(seq) + 1))
+
 
 ADAPTER_DIR = (
     __import__("pathlib").Path(__file__).resolve().parents[1]
@@ -81,26 +93,38 @@ def test_readonly_flags_are_emitted_for_repo_scope(registry, files):
 
 
 def test_capability_is_derived_from_argv_not_defaults(registry, files):
-    """Readonly capability reflects what build_argv actually emitted for this
-    call, not merely that the adapter declares readonly_argv."""
+    """Readonly capability reflects what build_argv actually EMITTED for this
+    call, never what the adapter declares or what the scope implies.
+
+    opencode is the case that keeps this honest: it declares
+    `readonly_argv = []`, so even a scope="repo" request emits no read-only
+    flag and its real capability is False. Re-deriving the value as
+    `scope == "repo"` would report it as confined when nothing confines it
+    -- which is why §12.2 makes opencode the one adapter that must run under
+    OS-level containment instead.
+
+    This used doc-scope claude as its example until doc scope began emitting
+    readonly_argv too; that made claude agree in both scopes and left the
+    invariant untested. The invariant did not change, only the example.
+    """
     prompt, schema = files
-    argv_doc, _, cap_doc = adapters.build_argv(
-        registry["claude"],
-        spec(cli="claude", scope="doc"),
+    argv_open, _, cap_open = adapters.build_argv(
+        registry["opencode"],
+        spec(cli="opencode", scope="repo"),
         prompt_file=prompt,
         schema_file=schema,
     )
-    assert "--tools" not in argv_doc
-    assert cap_doc.readonly is False  # declared by claude.toml but not emitted
+    assert "--tools" not in argv_open
+    assert cap_open.readonly is False  # scope says repo; the argv says nothing
 
-    argv_repo, _, cap_repo = adapters.build_argv(
+    argv_claude, _, cap_claude = adapters.build_argv(
         registry["claude"],
         spec(cli="claude", scope="repo"),
         prompt_file=prompt,
         schema_file=schema,
     )
-    assert "--tools" in argv_repo
-    assert cap_repo.readonly is True
+    assert argv_contains_sequence(argv_claude, ["--tools", "Read,Grep,Glob"])
+    assert cap_claude.readonly is True
 
 
 def test_prompt_text_cannot_forge_a_capability(registry, tmp_path):
@@ -119,9 +143,20 @@ def test_prompt_text_cannot_forge_a_capability(registry, tmp_path):
     assert cap.readonly is False
 
 
-def test_doc_scope_skips_readonly_argv_entirely(registry, files):
-    """scope='doc' must omit every readonly_argv token, not just suppress the
-    flag name while leaving its value behind."""
+def test_doc_scope_still_engages_the_cli_readonly_mode(registry, files):
+    """Doc scope must NOT drop readonly_argv.
+
+    This asserted the opposite until doc scope was actually exercised. The
+    reasoning for omitting it -- "doc scope has no repo to protect" -- skips
+    that there is still a filesystem, and that doc scope is precisely where a
+    readonly-capable CLI gets no OS confinement either. Omitting it left the
+    friend restrained by nothing.
+
+    Measured, not inferred: real codex in a bare directory with no --sandbox
+    flag, asked to write outside its working directory, did it on the first
+    attempt. With the flag it refuses -- "the filesystem sandbox is read-only
+    and the target is outside the permitted workspace".
+    """
     prompt, schema = files
     argv, _, cap = adapters.build_argv(
         registry["codex"],
@@ -129,9 +164,40 @@ def test_doc_scope_skips_readonly_argv_entirely(registry, files):
         prompt_file=prompt,
         schema_file=schema,
     )
-    assert "--sandbox" not in argv
-    assert "read-only" not in argv
-    assert cap.readonly is False
+    assert argv_contains_sequence(argv, ["--sandbox", "read-only"])
+    assert cap.readonly is True
+
+
+def test_doc_argv_is_emitted_only_in_doc_scope(registry, files):
+    """codex refuses to start outside a git repo, so doc scope -- a bare
+    directory -- needs --skip-git-repo-check or the friend never runs. Repo
+    scope must not carry it: there the check passes on its own merits."""
+    prompt, schema = files
+    seen = {}
+    for scope in ("repo", "doc"):
+        argv, _, _ = adapters.build_argv(
+            registry["codex"],
+            spec(cli="codex", scope=scope),
+            prompt_file=prompt,
+            schema_file=schema,
+        )
+        seen[scope] = "--skip-git-repo-check" in argv
+    assert seen == {"repo": False, "doc": True}
+
+
+def test_doc_argv_never_grants_access(registry):
+    """doc_argv exists to let a CLI START in a bare directory. A flag that
+    also widens what it may touch would smuggle a permission grant in
+    through a field nothing else audits -- so the denied-flag vocabulary
+    applies to it exactly as it does to any other emitted token."""
+    for name, adapter in registry.items():
+        if not adapter.doc_argv:
+            continue
+        for token in adapter.doc_argv:
+            assert token not in trust.DENIED_FLAGS, f"{name}: {token}"
+        # Also catches a denied *value* (danger-full-access, workspace-write)
+        # attached to an otherwise innocuous flag name.
+        trust.check_denied_values(list(adapter.doc_argv))
 
 
 def test_capability_for_flag_value_adapter(registry, files):

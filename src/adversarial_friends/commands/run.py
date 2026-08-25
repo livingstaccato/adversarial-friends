@@ -90,23 +90,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     for spec in specs:
         validate_friend_name(spec.name)
 
-    # §13's escape hatch. Parsed early so a bad value fails before any
-    # dispatch, and recorded as a downgrade because a run carrying
-    # unvalidated flags has weaker guarantees than its friend table implies.
-    extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
-    if extra_args:
-        downgrades.append(
-            f"--unsafe-extra-args passed {extra_args} to every friend. These "
-            "flags are not validated, so read-only is reported as False for "
-            "every friend regardless of what its adapter emitted."
-        )
-
-    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
-    specs = resolved.specs
-
-    for spec in specs:
-        validate_friend_name(spec.name)
-
     if len(specs) == 1:
         # --friend REPLACES the roster rather than augmenting discovery (see
         # cliargs._specs_from_flags above), so a single --friend flag -- or,
@@ -130,19 +113,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     # not only in the code that decided it.
     env_withheld = confinement_downgrades(args, specs, registry, downgrades)
 
-    if extra_args:
-        downgrades.append(
-            f"--unsafe-extra-args passed {extra_args} to every friend. These "
-            "flags are not validated, so read-only is reported as False for "
-            "every friend regardless of what its adapter emitted."
-        )
-
-    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
-    specs = resolved.specs
-
-    for spec in specs:
-        validate_friend_name(spec.name)
-
     # Signal handling: a cancelled or CI-killed run must not leave a
     # metered agent CLI process running unbounded, nor a stale
     # `git worktree` registration behind in the repo under review. Neither
@@ -161,27 +131,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     # `finally` blocks below reachable promptly. Handlers are restored
     # unconditionally in the outer `finally` -- a library-ish function
     # should not permanently hijack process-wide signal disposition.
-    if len(specs) == 1:
-        # --friend REPLACES the roster rather than augmenting discovery (see
-        # cliargs._specs_from_flags above), so a single --friend flag -- or,
-        # per design doc §8.3, discovery itself resolving to just one friend
-        # -- produces a run that cannot cross-examine anything: it is one
-        # reviewer's opinion, not disagreement between several. That
-        # reduced guarantee must be visible in run.json/report.md rather
-        # than a single-reviewer report quietly looking like the real
-        # thing -- the same rule already applied to every other downgrade
-        # this function records.
-        downgrades.append(
-            f"only one friend ({specs[0].name}) resolved for this run; "
-            "cross-examination needs at least two independent friends, so "
-            "this report reflects a single reviewer's opinion, not "
-            "disagreement between several."
-        )
-    # §12.2: every friend that will run without OS confinement is named in
-    # the report, whether that is because the operator overrode the refusal
-    # or because the CLI has no read-only mode and one was available. A
-    # weakened guarantee has to be visible in the artifact a human reads,
-    # not only in the code that decided it.
     abort_event = threading.Event()
     abort_signum: dict[str, int | None] = {"value": None}
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]

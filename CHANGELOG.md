@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Doc scope was the unguarded half
+
+Every friend is downgraded to doc scope when the artifact is not inside a git
+repository. That path had never been exercised against a real CLI. Two
+defects, found by finally running it:
+
+- **codex could not run in doc scope at all.** It refuses to start outside a
+  git repository — `Not inside a trusted directory and --skip-git-repo-check
+  was not specified` — so it failed before the model saw the prompt, every
+  time. Adapters can now declare `doc_argv` for flags a CLI needs in order to
+  *start* in a bare directory.
+- **Doc scope dropped the CLI's own read-only mode.** The reasoning was "doc
+  scope has no repo to protect", which skips that there is still a
+  filesystem — and that doc scope is exactly where a read-only-capable CLI
+  gets no OS confinement either. Measured, not inferred: real codex in a bare
+  directory with no `--sandbox` flag, asked to write outside its working
+  directory, did so on the first attempt. Fixing only the first defect would
+  have turned "fails to start" into "starts able to write anywhere", so the
+  two ship together.
+
+A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
+sequence three times over, calling `resolve_friends` three times and
+reassigning `specs` *after* confinement had been computed from an earlier
+copy. Visible in any real report as the same downgrade printed twice.
+
 ## 0.1.1
 
 **Upgrade from 0.1.0 if you use `codex` or `agy`.** Both shipped schemas were
@@ -108,8 +135,10 @@ repository does not get to choose who reviews it.
   auth failure, and guessing at stderr is what the design rejects. Repeat
   detection covers the cost of it meanwhile: a friend that fails identically
   twice stops being dispatched.
-- A doc-scope friend of a read-only-capable CLI is not OS-confined. Closing
-  it needs verified credential paths for those CLIs.
+- A doc-scope friend of a read-only-capable CLI is not OS-confined. Its own
+  read-only mode is now engaged there (see Unreleased), so it is no longer
+  unrestrained — but OS-level confinement still needs verified credential
+  paths for those CLIs.
 - `--merge orchestrator` is refused with `--mode loop`.
 
 See `docs/superpowers/specs/` for the design and its recorded divergences.

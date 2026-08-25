@@ -93,6 +93,13 @@ class Adapter:
     # confined. Its own credentials, essentially -- §12.3 already accepts
     # that a friend can exfiltrate those. Everything else is withheld.
     env_pass: tuple[str, ...] = ()
+    # Flags this CLI needs in DOC scope, where its working directory holds a
+    # copy of the artifact and nothing else. Some CLIs refuse to start
+    # outside a git repository at all, which makes doc scope unusable for
+    # them -- and every friend is downgraded to doc scope whenever the
+    # artifact is not inside one. Emitted only for doc scope, and never
+    # anything that grants access: see the note in codex.toml.
+    doc_argv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,6 +154,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
             auth=parse_auth(data.get("auth")),
             env_pass=tuple(data.get("env", {}).get("pass", [])),
+            doc_argv=tuple(data.get("doc_argv", [])),
             structured_output=bool(data.get("structured_output", False)),
             envelope=parse_envelope(data.get("envelope")),
         )
@@ -172,9 +180,23 @@ def build_argv(
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     argv = [adapter.binary, *adapter.base_argv]
 
-    readonly_emitted = bool(spec.scope == "repo" and adapter.readonly_argv)
+    # A friend never needs to write, in EITHER scope: it reads the artifact
+    # (plus, at repo scope, the checkout) and returns findings on stdout.
+    #
+    # Doc scope used to omit this on the reasoning that there is no repo to
+    # protect. There is still a filesystem. Doc scope is also exactly where
+    # a readonly-capable CLI gets no OS confinement either, so omitting it
+    # left the friend unconfined by anything at all. Measured against the
+    # real codex in a bare directory with no --sandbox flag: asked to write
+    # outside its working directory, it did so on the first attempt.
+    readonly_emitted = bool(adapter.readonly_argv)
     if readonly_emitted:
         argv += adapter.readonly_argv
+    if spec.scope == "doc":
+        # Never anything that grants access -- these exist because a CLI may
+        # refuse to START outside a git repository, and doc scope is a bare
+        # directory. See codex.toml for the one case and its evidence.
+        argv += adapter.doc_argv
 
     schema_emitted = bool(adapter.schema_flag)
     if schema_emitted:
