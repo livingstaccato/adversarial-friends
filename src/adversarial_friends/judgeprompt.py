@@ -34,7 +34,7 @@ import json
 
 from .adapters import FriendSpec
 from .ledger import Claim, Verdict
-from .prompt import _load_lens
+from .prompt import _load_lens, scope_note
 
 # §5.1's exact per-claim field set. `advisory` is rendered as a bare boolean
 # precisely so the lens that produced it stays hidden.
@@ -176,6 +176,7 @@ def build_judge_prompt(
         lens_block = "\n--- LENS ---\n" + body + "\n"
     prompt = (
         JUDGE_HEADER
+        + scope_note(spec.scope)
         + lens_block
         + "\n--- ARTIFACT ---\n"
         + artifact_text

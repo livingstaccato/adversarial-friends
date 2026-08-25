@@ -177,3 +177,55 @@ def test_the_prompt_contains_the_artifact_and_the_slice():
     prompt, _ = judgeprompt.build_judge_prompt(spec(), "THE ARTIFACT TEXT", [claim()])
     assert "THE ARTIFACT TEXT" in prompt
     assert "c-0001@1" in prompt
+
+
+# --- Telling a friend what it can actually read ----------------------------
+
+
+def test_a_repo_scope_judge_is_told_the_repository_is_there():
+    """Found by running this tool on its own state machine: 8 of 9 verdicts
+    came back `unverifiable` for claims whose evidence was one directory
+    away. The friend HAD a read-only checkout -- isolation hands it one --
+    and nothing in the prompt said so.
+
+    That is not merely wasted isolation. §6.5 downgrades a dispositive
+    verdict whose evidence is unverifiable to `unproven`, so a judge that
+    does not know to look degrades its own verdict.
+    """
+    repo_spec = FriendSpec(
+        name="codex-ops-0",
+        cli="codex",
+        lens="ops",
+        model=None,
+        effort=None,
+        scope="repo",
+        timeout=900,
+    )
+    prompt, _ = judgeprompt.build_judge_prompt(repo_spec, "ARTIFACT", [claim()])
+    assert "read-only checkout" in prompt
+    assert "Open any file" in prompt
+
+
+def test_a_doc_scope_judge_is_told_it_has_nothing_else():
+    """The other half, and it matters as much: a friend told it can read the
+    repository when it cannot will report having checked things it never
+    opened."""
+    prompt, _ = judgeprompt.build_judge_prompt(spec(), "ARTIFACT", [claim()])
+    assert "nothing else" in prompt
+    assert "read-only checkout" not in prompt
+
+
+def test_a_critique_prompt_carries_the_same_note():
+    from adversarial_friends.prompt import _build_friend_prompt
+
+    repo_spec = FriendSpec(
+        name="codex-ops-0",
+        cli="codex",
+        lens="ops",
+        model=None,
+        effort=None,
+        scope="repo",
+        timeout=900,
+    )
+    prompt, _advisory, _note = _build_friend_prompt(repo_spec, "ARTIFACT")
+    assert "read-only checkout" in prompt

@@ -86,8 +86,9 @@ def _build_friend_prompt(spec: FriendSpec, artifact_text: str) -> tuple[str, boo
     pretending the friend had lens guidance.
     """
     loaded = _load_lens(spec.lens)
+    scope = scope_note(spec.scope)
     if loaded is None:
-        prompt = PROMPT_HEADER + "\n--- ARTIFACT ---\n" + artifact_text
+        prompt = PROMPT_HEADER + scope + "\n--- ARTIFACT ---\n" + artifact_text
         note = (
             f"{spec.name}: no lens file found for lens {spec.lens!r}; ran "
             "with the generic prompt only, with no lens-specific guidance."
@@ -95,5 +96,38 @@ def _build_friend_prompt(spec: FriendSpec, artifact_text: str) -> tuple[str, boo
         return prompt, False, note
     meta, body = loaded
     advisory = meta.get("requires_failure_scenario", "true").strip().lower() == "false"
-    prompt = PROMPT_HEADER + "\n--- LENS ---\n" + body + "\n\n--- ARTIFACT ---\n" + artifact_text
+    prompt = (
+        PROMPT_HEADER + scope + "\n--- LENS ---\n" + body + "\n\n--- ARTIFACT ---\n" + artifact_text
+    )
     return prompt, advisory, None
+
+
+# What a friend is actually able to look at. Without this a repo-scope
+# friend -- handed a full read-only checkout by isolation.add_worktree --
+# is told only "read the artifact below" and never learns the rest of the
+# repository is there. It is the difference between a judge that opens the
+# file a claim cites and one that reports `unverifiable`, which §6.5 then
+# downgrades to `unproven`: the missing sentence does not just waste the
+# isolation, it degrades every verdict that depended on evidence.
+#
+# Found by running this tool on its own state machine: 8 of 9 verdicts came
+# back `unverifiable` for claims whose evidence was one directory away.
+_REPO_SCOPE = (
+    "Your working directory is a read-only checkout of the repository this "
+    "artifact belongs to, at the commit under review. Open any file in it "
+    "you need -- following an import, checking a caller, confirming that a "
+    "cited line says what it is claimed to say. Prefer evidence you have "
+    "actually read over inference from the artifact alone.\n"
+)
+
+_DOC_SCOPE = (
+    "You have the artifact text below and nothing else: there is no "
+    "repository to open, and no other file is readable. If checking "
+    "something would require a file you cannot see, say so rather than "
+    "assuming what it contains.\n"
+)
+
+
+def scope_note(scope: str) -> str:
+    """The paragraph telling a friend what it can actually read."""
+    return _REPO_SCOPE if scope == "repo" else _DOC_SCOPE
