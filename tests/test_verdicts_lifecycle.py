@@ -258,3 +258,46 @@ def test_gate_blocking_per_state(state, blocks):
     """settled-upheld blocks: the judges agreed the defect is real, which
     needs a Resolution rather than a pass."""
     assert verdicts.gate_blocked([state]) is blocks
+
+
+# --- Findings from running the tool on verdicts.py -------------------------
+
+
+def test_a_successor_uses_only_a_judges_latest_amendment():
+    """codex's finding. `verdicts` accumulates across rounds, so a judge that
+    amended in round 2 and changed its mind in round 3 would still supply
+    wording for the successor -- the same accumulation bug already fixed in
+    state_for and verdict_set_signature, missed at this third site.
+
+    Checked through latest_per_judge, which is what the caller now filters
+    with before building a successor.
+    """
+    stale = in_round(verdict("claude-security", "amended", amended="the round-2 wording"), 2)
+    current = in_round(verdict("claude-security", "refuted"), 3)
+    latest = verdicts.latest_per_judge([stale, current])
+    amendments = [v for v in latest if v.verdict == "amended"]
+    assert amendments == [], "a judge that changed its mind supplies no amendment"
+
+
+def test_a_judge_that_still_amends_in_the_latest_round_does_supply_wording():
+    """The other half: the filter must not discard a live amendment."""
+    old = in_round(verdict("claude-security", "unproven"), 2)
+    new = in_round(verdict("claude-security", "amended", amended="reworded"), 3)
+    latest = verdicts.latest_per_judge([old, new])
+    amendments = [v for v in latest if v.verdict == "amended"]
+    assert [v.amended_claim for v in amendments] == ["reworded"]
+
+
+def test_loop_termination_ignores_advisory_claims():
+    """codex's other finding, and the reason it matters: an advisory claim
+    stuck at `unproven` would block termination forever and force every loop
+    to its ceiling -- exactly the failure §7.3's H4 correction exists to
+    prevent, arriving through a different door.
+
+    The contract was always "every non-advisory claim terminal"; the caller
+    was passing every claim's state in.
+    """
+    non_advisory_only = [verdicts.SETTLED_UPHELD]
+    assert verdicts.loop_should_terminate(2, non_advisory_only) is True
+    # And with the advisory claim's state included, it would not have.
+    assert verdicts.loop_should_terminate(2, [*non_advisory_only, verdicts.UNPROVEN]) is False

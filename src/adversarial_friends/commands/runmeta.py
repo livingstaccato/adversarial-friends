@@ -177,3 +177,18 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
             "starts at round 2). Use --mode report, or --max-rounds 2 or more."
         )
     return args, artifact
+
+
+def non_advisory_states(claims: list[Any], cross: Any) -> list[str]:
+    """Claim states §7.3 actually terminates on.
+
+    Advisory claims are excluded because their lens deliberately does not
+    demand a failure scenario -- including them would let one advisory claim
+    stuck at `unproven` block termination forever and force every loop to its
+    ceiling, which is the failure §7.3's H4 correction exists to prevent,
+    arriving through a different door.
+    """
+    if cross is None:
+        return []
+    advisory = {c.id for c in claims if c.advisory}
+    return [state for cid, state in cross.states.items() if cid not in advisory]

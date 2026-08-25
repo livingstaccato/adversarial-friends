@@ -199,7 +199,30 @@ _JUDGEMENTS = {
     # A well-formed but empty verdict set. Unlike a critique round there is
     # no honest empty result here, so this must be read as a failure.
     "judge_nothing": lambda: print(json.dumps({"verdicts": []})),
+    # Answers only the FIRST claim it was shown. Passes validation -- the
+    # schema requires at least one verdict, not one per claim -- so the
+    # claims it skipped would look merely unproven, and the discard rule
+    # would then close them as terminal without anyone having judged them.
+    "judge_partial": lambda: _judge_first_only(),
 }
+
+
+def _judge_first_only() -> None:
+    claims = _claims_in_prompt()
+    out = []
+    for claim in claims[:1]:
+        out.append(
+            {
+                "claim_id": claim["id"],
+                "verdict": "upheld",
+                "confidence": "high",
+                "evidence_assessment": "confirmed",
+                "reasoning": "only answered the first claim on purpose",
+                "counter_evidence": None,
+                "amended_claim": None,
+            }
+        )
+    print(json.dumps({"verdicts": out}))
 
 
 def _judgement_for(mode: str):

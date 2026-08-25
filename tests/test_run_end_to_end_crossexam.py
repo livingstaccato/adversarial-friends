@@ -221,3 +221,25 @@ def test_report_mode_is_unaffected_by_any_of_this(tmp_path):
     meta = _run_json(tmp_path)
     assert "claim_states" not in meta
     assert "Cross-examination" not in (_run_dir(tmp_path) / "report.md").read_text()
+
+
+def test_a_judge_that_skips_claims_is_reported(tmp_path):
+    """codex's finding, end to end. A judge is told to return one verdict per
+    claim in its slice; one that silently returns fewer still passes
+    validation, and the skipped claims would look merely `unproven` -- which
+    the discard rule turns TERMINAL after two rounds. A claim nobody was
+    willing to judge would be closed as though judges had looked and failed.
+    """
+    repo = tmp_path
+    result = _crossexam(repo, "fake:judge_partial_a", "fake:judge_partial_b", "fake:judge_uphold_c")
+    meta = _run_json(tmp_path)
+    downgrades = " ".join(meta["downgrades"])
+    assert "returned no verdict on" in downgrades, result.stderr
+
+
+def test_skipped_claims_never_become_discarded(tmp_path):
+    """The consequence that made it worth fixing: `incomplete` keeps them out
+    of the discard rule, which only fires on `unproven`."""
+    _crossexam(tmp_path, "fake:judge_partial_a", "fake:judge_partial_b", "fake:judge_uphold_c")
+    states = set(_run_json(tmp_path)["claim_states"].values())
+    assert "discarded" not in states

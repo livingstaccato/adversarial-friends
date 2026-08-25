@@ -259,10 +259,42 @@ def run_rounds(
             # verdict: an unverifiable dispositive verdict is not dispositive
             # (§6.5), and a final-round amendment cannot create a successor
             # nobody can judge (§7.2).
-            cast = [vd.apply_downgrades(v, round_no, max_rounds) for v in cast]
+            downgraded = [vd.apply_downgrades(v, round_no, max_rounds) for v in cast]
+            # §7.2: "the report flags it as a late amendment the operator may
+            # want to run again". The rewrite records its proposal in
+            # `reasoning`, but a claim that ends settled-upheld never has its
+            # reasoning rendered -- so without this the flag existed only in
+            # the ledger, which is the one place an operator does not look.
+            for before, after in zip(cast, downgraded, strict=True):
+                if before.verdict == "amended" and after.verdict != "amended":
+                    outcome.notes.append(
+                        f"{before.claim_id}: {friend_key(spec)} proposed an amendment in "
+                        f"the final round, too late to judge a successor, so it was "
+                        f"counted as `upheld`. Proposed wording: "
+                        f"{before.amended_claim!r}. Re-run with a higher "
+                        "--max-rounds to have it judged."
+                    )
+            cast = downgraded
             # A judge may only rule on what it was actually shown. Anything
             # else is a verdict on a claim it never saw -- or on its own.
             shown = {c.id for c in _slice_for(spec, contested)}
+            # A judge is told to return one verdict per claim in its slice.
+            # One that silently returns fewer still passes validation, and
+            # the claims it skipped would look merely `unproven` -- which
+            # the discard rule turns TERMINAL after two rounds. A claim
+            # nobody was willing to judge would then be closed as though
+            # judges had looked and failed. Recorded, and the round is
+            # marked incomplete so those claims read as `incomplete`
+            # (§7.2's M12: a judge that never reported) rather than
+            # `unproven`, which is what keeps them out of the discard rule.
+            omitted = shown - {v.claim_id for v in cast}
+            if omitted:
+                any_failed = True
+                outcome.downgrades.append(
+                    f"round {round_no}: {spec.name} was shown {len(shown)} claim(s) "
+                    f"and returned no verdict on {sorted(omitted)}; those claims "
+                    "were not judged by it."
+                )
             for verdict in cast:
                 if verdict.claim_id not in shown:
                     outcome.downgrades.append(
@@ -322,8 +354,15 @@ def _settle_round(
             signatures[claim.id] = signature
 
         if state == vd.SUPERSEDED:
+            # Latest per judge, not every amendment ever cast. `verdicts`
+            # accumulates across rounds, so a judge that amended in round 2
+            # and changed its mind in round 3 would otherwise still supply
+            # wording for the successor -- the same accumulation bug already
+            # fixed in state_for and verdict_set_signature, missed here.
             amendments = [
-                v for v in outcome.verdicts if v.claim_id == claim.id and v.verdict == "amended"
+                v
+                for v in vd.latest_per_judge(v for v in outcome.verdicts if v.claim_id == claim.id)
+                if v.verdict == "amended"
             ]
             successor, note = vd.build_successor(claim, amendments, round_no)
             if note:

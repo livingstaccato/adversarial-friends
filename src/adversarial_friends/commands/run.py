@@ -43,7 +43,7 @@ from .environment import _resolve_repo_root, install_abort_handlers
 from .exits import decide_exit
 from .friends import resolve_friends
 from .resume import resume_round_one
-from .runmeta import JUDGING_MODES, _base_meta, validate_run_args
+from .runmeta import JUDGING_MODES, _base_meta, non_advisory_states, validate_run_args
 
 # Every mode that judges claims after critiquing them. `report` stops at the
 # critique round; the rest all run cross-examination and differ only in what
@@ -410,8 +410,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # convergence.
                 dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
                 streak = next_streak(streak, failed=critique.any_failed, dry=dry)
-                states = list(cross.states.values()) if cross else []
-                if loop_should_terminate(streak, states):
+                if loop_should_terminate(streak, non_advisory_states(all_claims, cross)):
                     break
                 if budget.exhausted_by:
                     break
