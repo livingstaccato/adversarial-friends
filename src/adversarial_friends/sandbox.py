@@ -42,8 +42,29 @@ now closed:
   cloud metadata endpoint is still reachable on macOS.
 * bwrap has no selective network filtering at all: `--unshare-net` blocks
   everything including the model, so Linux keeps shared networking entirely.
-  Closing either properly needs an authenticated egress proxy, which is a
-  larger design than a filesystem policy.
+
+  Closing either properly needs an egress proxy. That was investigated and
+  deliberately not built; what the investigation established, so the next
+  person does not have to redo it:
+
+  - The macOS half is viable. `(remote ip "localhost:8899")` DOES parse --
+    only the numeric form is rejected -- so `(deny network*)` plus an allow
+    for one loopback port would confine a friend to a local HTTP CONNECT
+    proxy, which sees the hostname SBPL cannot match on. Metadata becomes
+    unreachable by denying everything direct, not by naming it.
+  - codex and agy both honor `HTTPS_PROXY`: pointed at a dead port, codex
+    reports "Reconnecting... waiting for network" and agy falls back to
+    re-authenticating. So a proxy would actually be traversed rather than
+    bypassed.
+  - The Linux half has no stdlib answer. `--unshare-net` also severs
+    loopback to the host, so the friend cannot reach a proxy there either;
+    escaping that needs slirp4netns (a dependency this runtime does not
+    take) or root.
+  - It buys less than the name suggests. A friend must reach its own model
+    to work at all, so an allowlist admitting `api.openai.com` still admits
+    the whole artifact leaving to OpenAI. What it removes is metadata,
+    host-local services, internal hosts, and arbitrary C2 -- lateral
+    movement, not exfiltration.
 * §12.3's original limit stands: a friend needs its own credentials to
   authenticate, so it can always exfiltrate those and the artifact.
 

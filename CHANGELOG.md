@@ -61,7 +61,12 @@ Two holes straight through the middle of the sandbox, from the same review:
 
 Still open, and stated rather than implied: SBPL cannot filter numeric IPs, so
 cloud metadata stays reachable on macOS; `bwrap` has no selective filtering at
-all, so Linux keeps shared networking. Both need an egress proxy.
+all, so Linux keeps shared networking. Both need an egress proxy, which was
+investigated and deliberately not built -- the macOS half is viable
+(`localhost:PORT` does parse, and codex and agy both honor `HTTPS_PROXY`), the
+Linux half has no stdlib answer, and the whole thing stops lateral movement
+rather than exfiltration, since a friend must reach its own model to work.
+`sandbox.py` records the measurements so the next attempt starts from them.
 
 - The binary allowlist assumed a CLI's libraries sit beside its executable.
   They do not for any package-manager layout — `opencode` keeps a 61MB
@@ -134,7 +139,10 @@ repository does not get to choose who reviews it.
 - No adapter declares auth markers yet — none has been captured from a real
   auth failure, and guessing at stderr is what the design rejects. Repeat
   detection covers the cost of it meanwhile: a friend that fails identically
-  twice stops being dispatched.
+  twice stops being dispatched. One near-miss is recorded in `failures.py`:
+  agy says `Error: authentication timed out` when it cannot REACH the auth
+  endpoint, so adopting that as the marker would classify every
+  network-denied run as an auth failure and abort it.
 - A doc-scope friend of a read-only-capable CLI is not OS-confined. Its own
   read-only mode is now engaged there (see Unreleased), so it is no longer
   unrestrained — but OS-level confinement still needs verified credential

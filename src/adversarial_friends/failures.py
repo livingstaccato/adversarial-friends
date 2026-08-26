@@ -30,6 +30,19 @@ real auth failure, and inventing one would be exactly the stderr-guessing
 the spec rejects. The mechanism is here and the fallback is honest -- the
 same order the envelope work followed, where shapes were declared only once
 someone had run the CLI and saved its output.
+
+One trap, found while probing whether the CLIs honor HTTPS_PROXY: with the
+network unreachable, agy prints
+
+    Error: authentication timed out.
+    Error: authentication failed or timed out
+
+That reads like the missing marker and must NOT be adopted as one. It is
+what agy says when it cannot REACH the auth endpoint, so a marker matching
+it would classify every network-denied run as an auth failure -- aborting
+the whole run, since auth is treated as declared rather than inferred. A
+usable marker has to come from a run with working network and bad
+credentials, which is the capture nobody has made yet.
 """
 
 from .adapters import Adapter, AuthMarkers
