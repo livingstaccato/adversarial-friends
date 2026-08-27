@@ -72,6 +72,14 @@ jobs:
       - name: build wheel and verify assets
         run: ci/verify_wheel_assets.sh
 
+      # Install that wheel and run the console script from outside the
+      # checkout. Building proves it packs; installing proves it works, and
+      # the two are not the same check -- the version the CLI reported
+      # drifted two releases behind VERSION while every other check agreed,
+      # because nothing here ever ran the installed entry point.
+      - name: install wheel and run it
+        run: ci/verify_wheel_install.sh
+
       # Install the Linux OS-confinement mechanism (§12.2). Without it the
       # real containment tests skip, and a skip looks exactly like a pass.
       - name: install sandbox mechanism

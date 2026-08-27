@@ -4,6 +4,12 @@ Date: 2026-08-22
 Version: 3 (see §19 for revision history)
 Status: Approved for planning
 
+**§1–§19 are the text as approved, and are not edited when the implementation
+departs from them — §20 records every departure, with which side is
+authoritative. Nineteen are listed there. Check §20 before relying on any
+section below: several describe rules the shipped runner deliberately does not
+have.**
+
 ## 1. Problem
 
 The current manual workflow:
@@ -948,6 +954,19 @@ listed here with which side is authoritative.
 | §7.4, §17 | `--max-spend-usd`, "native where supported, estimated elsewhere" | Not implemented at all | **Code** |
 | §17 | `af run ... [--rounds N]` | `--max-rounds N` | **Code** — §7.4 of the same spec already says `--max-rounds` |
 | §14 | Auth markers come from the CLI's structured output, "never by stderr substring" | An adapter may also declare `stderr_contains`, restricted to a sentence captured verbatim from a real failure | **Code**, with the spec's reasoning kept as the condition |
+| §7.2 M12 | A failed round marks the run `incomplete`; terminal states reached in it are annotated `quorum_partial: true` | The run-level flag is kept; the per-claim state is decided per claim. `quorum_partial` is emitted nowhere | **Code** |
+| §7, §7.2 | Everything but `settled-refuted` needs a Resolution; `superseded` is "n/a"; no `discarded` row | Only `settled-refuted` clears. `superseded` is exempt, `discarded` blocks — nobody could check it | **Code** |
+| §7.2 M8 | A final-round `amended` is downgraded to `upheld` | An amendment is a rewrite in any round. A successor no round can judge stays `incomplete` and blocks a gate | **Code** |
+| §8.1 | The roster unit is `(cli, model, effort, lens)` | The ledger identity now spells that out: `cli/lens`, plus `@model` and `+effort` when set. A repeated entry is refused | **Spec** — the code was brought into line |
+| §7.3 | A loop is repeated cross-examination; what an iteration inherits is unstated | An iteration inherits states, verdicts, notes and discard signatures; the carry stops at a revision; termination ignores claims no friend can judge | **Code** |
+| §7.2, §11 | A judge that did not report is a missing judge | A friend the repeat tracker disabled for the run leaves the judging roster entirely | **Code** |
+| §12.2 | The run records which environment variables were withheld | Computed per friend from the adapter's own pass list, and only when a confinement mechanism exists | **Code** |
+| §8.3 | `crossexam`, `gate` and `loop` hard-error (exit 3) with one friend | Enforced. It was a downgrade note in every mode, so a one-friend gate exited 0 | **Spec** — the code was brought into line |
+| §4.1, §7.3 | A friend's inputs include "the frozen artifact" | Enforced. Dispatch re-read the live path; a loop now re-freezes per iteration | **Spec** — the code was brought into line |
+| §6.4 | Resolutions verify a location against the snapshot | The snapshot is taken whenever a repository exists, not only for `gate` or repo-scope friends | **Spec** — the code was brought into line |
+| §12.1 | Silent on symlinked artifacts | The directory the operator named picks the repository; the final symlink is not followed | **Code** (spec silent) |
+| §7.4 | Ceilings bound the run | Each friend's timeout is capped at the remaining wall clock, and concurrency has a default ceiling of its own | **Code** (concurrency is new) |
+| §12.1 | Silent on two processes writing one run directory | A run directory takes an advisory lock; a second resume is refused | **Code** (spec silent) |
 
 ### §11.1 — capability must not be derived by reading argv
 
