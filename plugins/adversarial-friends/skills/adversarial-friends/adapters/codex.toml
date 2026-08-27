@@ -13,6 +13,12 @@ effort_kind = "native"
 # item.type is "agent_message", at item.text as a JSON-escaped string. Note
 # codex also writes a non-JSON line ("Reading additional input from stdin...")
 # to stdout, so the NDJSON reader must skip unparseable lines rather than fail.
+#
+# Under --output-schema codex ALSO emits its progress narration as
+# agent_message items, each forced into the schema's shape -- "I'm inspecting
+# the repository..." arrived as a valid findings object with location null,
+# before the real answer. The ndjson unwrapper therefore offers matches
+# latest-first (captured: tests/fixtures/codex_progress_then_findings.ndjson).
 structured_output = true
 
 # codex refuses to start outside a git repository:

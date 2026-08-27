@@ -53,6 +53,57 @@ verdicts would have been.
   the near-miss that must not be adopted: `authentication timed out` is what
   agy says when it cannot *reach* the auth endpoint.
 
+### What the second crossexam found
+
+The same three friends, run again on `verdicts.py` after those fixes. All
+three succeeded in rounds 2 and 3 -- twenty verdicts, two claims
+settled-upheld -- and the round-1 failures, the verdicts, and a two-day-old
+process found along the way each turned into a fix.
+
+- **codex's real findings were dropped.** Under `--output-schema` codex emits
+  its progress narration as `agent_message` events, each forced into the
+  schema's shape: "I'm inspecting the repository..." arrived as a valid
+  findings object with `location: null`, before the answer. The normalizer
+  keeps the first candidate that ranks best, so the progress line was
+  recorded as a claim (and duly discarded) and the answer -- a high-severity
+  finding about amendment wording -- was never seen. An NDJSON envelope now
+  offers its matches latest-first: in an event stream the final event is
+  the answer.
+- **The abort handler could deadlock the run it was aborting.** A second
+  SIGTERM pending while the handler's first invocation was inside
+  `abort_event.set()` ran the handler again, nested, on the same thread; the
+  nested `set()` blocked on the lock its own caller held. Found as a process
+  from a crossexam two days earlier, still alive with five invocations
+  nested on its main thread; reproduced with three back-to-back signals --
+  GNU `timeout` alone sends two. The handler is re-entrancy guarded now, and
+  a probe forces the interleaving in the suite.
+- **`incomplete` was run-level.** The fix above made a withheld judge count
+  as one that never reported -- for every below-quorum claim in the run, so
+  one unrelated friend's failure marked claims whose own judges had all
+  reported `incomplete` and reset their discard signatures. The judges of
+  this run raised it. It is per claim now: a claim is `incomplete` when one
+  of *its* judges was silent; the run-level flag stays.
+- **`discarded` cleared a gate.** The spec says everything but
+  `settled-refuted` needs a Resolution; the comment above the set said only
+  `settled-refuted` clears; the set also cleared `superseded` and
+  `discarded` (settled-upheld by both judges). A discarded claim is one
+  nobody could check, and a gate passing on that is the failure the tool
+  exists to prevent -- it blocks now. `superseded` is exempt rather than
+  clearing: its successor carries the question.
+- **The late-amendment note fired for any downgraded amendment**
+  (settled-upheld by both judges): the evidence rule rewrites `amended` to
+  `unproven` in any round, and the detector could not tell that from the
+  final-round rewrite, so a round-2 amendment with unverifiable evidence was
+  reported as "in the final round ... counted as upheld", with advice to
+  add rounds that would change nothing.
+- **agy's own error message was hidden.** `{"status":"ERROR","response":"",
+  "error":"timeout waiting for response"}` was reported as "the adapter may
+  need an envelope path". A json_path envelope can now name an
+  `error_path`, read only after normalizing has failed, so the failure
+  leads with what the CLI said. agy then stayed alive until the runner's
+  900 s ceiling and left orphans -- its problem, but a fifteen-minute round
+  is the cost.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier

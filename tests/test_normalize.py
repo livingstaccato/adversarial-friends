@@ -437,3 +437,16 @@ def test_structured_output_hint_does_not_fire_for_ordinary_schema_errors():
     assert result.succeeded is False
     assert any("severity" in e for e in result.errors)
     assert not any("envelope path" in e for e in result.errors)
+
+
+def test_parse_envelope_json_path_reads_an_error_path():
+    env = normalize.parse_envelope({"kind": "json_path", "path": "response", "error_path": "error"})
+    assert env is not None
+    assert env.error_path == "error"
+    assert normalize.envelope_error(json.dumps({"response": "", "error": "boom"}), env) == "boom"
+    assert normalize.envelope_error(json.dumps({"response": "x"}), env) is None
+
+
+def test_envelope_error_is_never_read_from_an_ndjson_envelope():
+    env = normalize.Envelope(kind="ndjson", rules=(normalize.EnvelopeRule("error", "message"),))
+    assert normalize.envelope_error(json.dumps({"type": "error", "message": "boom"}), env) is None

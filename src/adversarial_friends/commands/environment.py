@@ -69,7 +69,25 @@ def install_abort_handlers(
     the reduced guarantee as a downgrade.
     """
 
+    aborting = [False]
+
     def _handle_abort(signum: int, frame: FrameType | None) -> None:
+        # Re-entrancy guard, and it has to come before anything that takes a
+        # lock. A second signal pending while this handler's first
+        # invocation is inside `abort_event.set()` -- which holds the
+        # Event's plain, non-reentrant Lock -- runs the handler again at the
+        # next eval-breaker point, nested, on the same thread; the nested
+        # `set()` then blocks on the lock its own caller holds, forever.
+        # Found as a two-day-old process with five invocations nested on the
+        # main thread, and reproduced with three back-to-back SIGTERMs; GNU
+        # coreutils `timeout` alone sends two (to the pid, then the group).
+        # Later signals are dropped rather than escalated: teardown is
+        # already under way, and SIGTERM's default disposition would end the
+        # process before it finished. tests/abort_reentry_probe.py forces
+        # the interleaving.
+        if aborting[0]:
+            return
+        aborting[0] = True
         abort_signum["value"] = signum
         abort_event.set()
         pool = active_pool[0]

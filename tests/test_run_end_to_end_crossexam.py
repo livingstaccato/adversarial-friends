@@ -267,3 +267,65 @@ def test_a_disabled_judge_leaves_claims_incomplete_not_discarded(tmp_path):
     # Round 2 fails, round 3 fails again, round 4 finds no judge it may
     # dispatch. Anything past that is a fan-out that decides nothing.
     assert meta["rounds_run"] <= 4, meta["rounds_run"]
+
+
+# --- M12 is per claim ------------------------------------------------------
+
+
+def _claim_ids_by_origin(tmp_path) -> dict[str, list[str]]:
+    by_origin: dict[str, list[str]] = {}
+    for line in next(tmp_path.rglob("claims.jsonl")).read_text().splitlines():
+        entry = json.loads(line)
+        if entry.get("type") == "claim":
+            for origin in entry["origin"]:
+                by_origin.setdefault(origin, []).append(entry["id"])
+    return by_origin
+
+
+def test_an_unrelated_friends_failure_does_not_mark_other_claims_incomplete(tmp_path):
+    """Raised by the judges of a real crossexam, reviewing the previous fix:
+    `required_missing` was a run-level flag, so one friend failing marked
+    every below-quorum claim in the run `incomplete` and reset its discard
+    signature -- including claims whose own judges had all reported.
+
+    Friend a fails in round 2. Its claim is judged by b and c, who both
+    report (unverifiably): below quorum with nobody missing is `unproven`.
+    b's and c's claims each had a in their judge set: `incomplete`.
+    """
+    _crossexam(
+        tmp_path,
+        "fake:judge_absent_once_a",
+        "fake:judge_unverifiable_b",
+        "fake:judge_unverifiable_c",
+        extra=("--max-rounds", "2"),
+    )
+    meta = _run_json(tmp_path)
+    states = meta["claim_states"]
+    by_origin = _claim_ids_by_origin(tmp_path)
+    assert {states[c] for c in by_origin["fake/judge_absent_once_a"]} == {"unproven"}, states
+    assert {states[c] for c in by_origin["fake/judge_unverifiable_b"]} == {"incomplete"}, states
+    assert {states[c] for c in by_origin["fake/judge_unverifiable_c"]} == {"incomplete"}, states
+    assert meta["incomplete"] is True
+
+
+# --- The late-amendment note fires only for late amendments ----------------
+
+
+def test_an_unverifiable_amendment_in_an_early_round_is_not_reported_as_late(tmp_path):
+    """Settled-upheld by two judges of a real crossexam: the evidence rule
+    rewrites `amended` to `unproven` in any round, and the detector's
+    `!= "amended"` could not tell that from the final-round rewrite -- so a
+    round-2 amendment was reported as having come "in the final round" and
+    "counted as upheld", both false, with advice to add rounds that would
+    change nothing."""
+    _crossexam(
+        tmp_path, "fake:judge_shaky_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "4")
+    )
+    notes = _run_json(tmp_path)["amendment_notes"]
+    assert not any("too late to judge" in n for n in notes), notes
+
+
+def test_an_amendment_in_the_final_round_is_reported_as_late(tmp_path):
+    _crossexam(tmp_path, "fake:judge_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "2"))
+    notes = _run_json(tmp_path)["amendment_notes"]
+    assert any("too late to judge a successor" in n for n in notes), notes

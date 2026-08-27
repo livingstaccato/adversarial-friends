@@ -27,7 +27,7 @@ import re
 import subprocess
 
 from .ledger import Claim, Resolution
-from .verdicts import GATE_CLEARING_STATES
+from .verdicts import GATE_CLEARING_STATES, GATE_EXEMPT_STATES
 
 DISPOSITIONS = ("fixed", "rejected", "accepted-risk")
 
@@ -185,7 +185,7 @@ def blocking_claims(
     for claim in claims:
         if claim.advisory or claim.id in resolved:
             continue
-        if states.get(claim.id) in GATE_CLEARING_STATES:
+        if states.get(claim.id) in GATE_CLEARING_STATES | GATE_EXEMPT_STATES:
             continue
         blocking.append(claim)
     return blocking

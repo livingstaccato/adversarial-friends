@@ -232,6 +232,27 @@ def test_settled_refuted_clears_without_a_resolution():
     assert blocking == []
 
 
+def test_a_discarded_claim_blocks_the_gate():
+    """Nobody could check it: two rounds of judges unable to verify the
+    evidence. A gate that passed on that would pass on the strength of
+    nobody having looked, which is the failure this tool exists to prevent.
+    The set used to clear it; a crossexam of verdicts.py found the comment
+    above the set, the spec, and the code giving three different answers."""
+    blocking = resolutions.blocking_claims(
+        [claim()], {"c-0001@1": verdicts.DISCARDED}, resolutions=[]
+    )
+    assert [c.id for c in blocking] == ["c-0001@1"]
+
+
+def test_a_superseded_claim_is_exempt_rather_than_cleared():
+    """Rewritten; its successor carries the question (spec §7.2: "n/a").
+    Blocking the original too would demand two resolutions for one defect."""
+    blocking = resolutions.blocking_claims(
+        [claim()], {"c-0001@1": verdicts.SUPERSEDED}, resolutions=[]
+    )
+    assert blocking == []
+
+
 def test_an_advisory_claim_never_blocks():
     """Its lens deliberately does not demand a failure scenario; gating on
     "this is more than you need" would silence the lens entirely."""

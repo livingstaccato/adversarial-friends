@@ -35,7 +35,7 @@ def _cast(outcome, round_no, kinds):
 def _settle(outcome, signatures, round_no, kinds, max_rounds=6):
     _cast(outcome, round_no, kinds)
     contested = [claim(origin=("codex/ops",))]
-    _settle_round(outcome, contested, signatures, SPECS, None, round_no, max_rounds, False)
+    _settle_round(outcome, contested, signatures, SPECS, None, round_no, max_rounds, {})
     return outcome.states["c-0001@1"]
 
 

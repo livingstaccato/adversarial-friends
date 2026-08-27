@@ -26,6 +26,11 @@ high = ["--effort", "high"]
 [envelope]
 kind = "json_path"
 path = "response"
+# Captured from a real run on 2026-08-26: {"status":"ERROR","response":"",
+# "error":"timeout waiting for response",...}. Read only once normalizing
+# has failed, so the failure reason leads with agy's own words instead of
+# "the adapter may need an envelope path".
+error_path = "error"
 
 # Captured verbatim from a real failure: a crossexam run on 2026-08-26 whose
 # agy login had lapsed. Exit status was 1 and stdout empty, so this sentence

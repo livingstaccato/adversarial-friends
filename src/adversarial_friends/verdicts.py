@@ -51,9 +51,20 @@ DISCARDED = "discarded"
 # they are the states a further round could still change.
 TERMINAL_STATES = frozenset({SETTLED_UPHELD, SETTLED_REFUTED, SUPERSEDED, DEADLOCKED, DISCARDED})
 
-# Only settled-refuted clears a gate on its own. settled-upheld means the
-# judges agreed the defect is real, which needs a Resolution, not a pass.
-GATE_CLEARING_STATES = frozenset({SETTLED_REFUTED, SUPERSEDED, DISCARDED})
+# §7's gate: only settled-refuted clears a gate on its own. settled-upheld
+# means the judges agreed the defect is real, which needs a Resolution, not
+# a pass. discarded means nobody could check -- two rounds of judges unable
+# to verify the evidence -- and a gate that passes on the strength of nobody
+# having looked is the failure this tool exists to prevent, so it needs a
+# Resolution too. This set held discarded until a crossexam of this file
+# pointed out that the comment above it, the spec, and the code gave three
+# different answers.
+GATE_CLEARING_STATES = frozenset({SETTLED_REFUTED})
+
+# superseded neither clears a gate nor blocks one: the claim was rewritten
+# and its successor carries the question (§7.2 marks it "n/a"), so counting
+# the original as well would demand two resolutions for one defect.
+GATE_EXEMPT_STATES = frozenset({SUPERSEDED})
 
 
 def judges_for(claim: Claim, roster: Iterable[str]) -> list[str]:
@@ -118,8 +129,8 @@ def state_for(
 ) -> str:
     """The claim's state at the end of a round -- §7.1's decision table.
 
-    `required_missing` is the run-level signal that a required friend failed
-    this round (§7.2's M12 rule): below quorum *because a judge never
+    `required_missing` says one of THIS claim's judges never reported this
+    round (§7.2's M12 rule, per claim): below quorum *because a judge never
     reported* is `incomplete`, which is a different problem from below
     quorum because judges declined to decide, which is `unproven`.
     """
@@ -356,4 +367,4 @@ def gate_blocked(states: Iterable[str]) -> bool:
     them; `settled-upheld` blocks because the judges agreed the defect is
     real and it needs a Resolution, not a pass.
     """
-    return any(state not in GATE_CLEARING_STATES for state in states)
+    return any(state not in GATE_CLEARING_STATES | GATE_EXEMPT_STATES for state in states)

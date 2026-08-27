@@ -118,6 +118,12 @@ def _slice_for(spec: FriendSpec, contested: list[Claim]) -> list[Claim]:
     return [claim for claim in contested if key not in claim.origin]
 
 
+def _never_reported(missing: dict[str, set[str]], spec: FriendSpec, claims: list[Claim]) -> None:
+    """Record `spec` as a judge that did not report on `claims` this round."""
+    for claim in claims:
+        missing.setdefault(claim.id, set()).add(friend_key(spec))
+
+
 def _prior_verdicts_by_claim(
     all_verdicts: list[Verdict], claim_ids: set[str]
 ) -> dict[str, list[Verdict]]:
@@ -208,7 +214,7 @@ def run_rounds(
             # "judges disagreed" -- the opposite of what happened, which is
             # that no judge existed. state_for returns `unproven` for a claim
             # with no judges, which is the honest answer.
-            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, False)
+            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, {})
             break
 
         if budget.would_exceed_calls(len(judge_specs)):
@@ -256,14 +262,29 @@ def run_rounds(
         # "judges looked twice and could not verify", when no judge had
         # been dispatched at all.
         dispatched = {spec.name for spec, _capability, _result in results}
-        withheld = [s.name for s in judge_specs if s.name not in dispatched]
+        withheld = [s for s in judge_specs if s.name not in dispatched]
+        # §7.2's M12, per claim: the judges that never reported on it this
+        # round. A friend that failed or was withheld is missing from every
+        # claim in its slice and from no other; a judge that answered only
+        # part of its slice is missing from the rest. `incomplete` is then
+        # what a claim reads when one of ITS judges was silent. Until this
+        # was per claim, one unrelated friend's failure marked every
+        # below-quorum claim in the run `incomplete` and reset its discard
+        # signature -- raised by the judges of a real crossexam, reviewing
+        # the previous version of this file.
+        missing: dict[str, set[str]] = {}
+        for spec in withheld:
+            _never_reported(missing, spec, _slice_for(spec, contested))
         if not results and withheld and not abort_event.is_set():
+            names = ", ".join(s.name for s in withheld)
             outcome.downgrades.append(
                 f"round {round_no}: every judge with claims left to judge is "
-                f"disabled ({', '.join(withheld)}); no judging round could be run."
+                f"disabled ({names}); no judging round could be run."
             )
             outcome.incomplete = True
-            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, True)
+            _settle_round(
+                outcome, contested, signatures, specs, store, round_no, max_rounds, missing
+            )
             break
 
         round_verdicts: list[Verdict] = []
@@ -274,6 +295,7 @@ def run_rounds(
                 # §7.2's M12: a round in which a required friend fails marks
                 # the RUN incomplete, regardless of per-claim states.
                 any_failed = True
+                _never_reported(missing, spec, _slice_for(spec, contested))
                 continue
             cast = _parse_verdicts(result.result.payload or {}, friend_key(spec), round_no)
             # Both spec-mandated rewrites, applied before anything counts the
@@ -286,8 +308,16 @@ def run_rounds(
             # `reasoning`, but a claim that ends settled-upheld never has its
             # reasoning rendered -- so without this the flag existed only in
             # the ledger, which is the one place an operator does not look.
+            # `upheld` is what the late-amendment rewrite produces and
+            # nothing else does: the evidence rule rewrites `amended` to
+            # `unproven`, in any round, and `!= "amended"` could not tell
+            # the two apart -- so a judge whose amendment merely cited
+            # unverifiable evidence in round 2 was reported as having
+            # amended "in the final round", and told to add rounds that
+            # would change nothing. Settled-upheld by two judges of a real
+            # crossexam.
             for before, after in zip(cast, downgraded, strict=True):
-                if before.verdict == "amended" and after.verdict != "amended":
+                if before.verdict == "amended" and after.verdict == "upheld":
                     outcome.notes.append(
                         f"{before.claim_id}: {friend_key(spec)} proposed an amendment in "
                         f"the final round, too late to judge a successor, so it was "
@@ -311,6 +341,7 @@ def run_rounds(
             omitted = shown - {v.claim_id for v in cast}
             if omitted:
                 any_failed = True
+                _never_reported(missing, spec, [contested_ids[c] for c in omitted])
                 outcome.downgrades.append(
                     f"round {round_no}: {spec.name} was shown {len(shown)} claim(s) "
                     f"and returned no verdict on {sorted(omitted)}; those claims "
@@ -331,9 +362,7 @@ def run_rounds(
             store.ledger.append(verdict)
         outcome.verdicts.extend(round_verdicts)
 
-        _settle_round(
-            outcome, contested, signatures, specs, store, round_no, max_rounds, any_failed
-        )
+        _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, missing)
         round_no += 1
 
     if budget.exhausted_by:
@@ -350,10 +379,11 @@ def _settle_round(
     store: RunStore,
     round_no: int,
     max_rounds: int,
-    any_failed: bool,
+    missing: dict[str, set[str]],
 ) -> None:
     """Recompute every contested claim's state and grow the claim list with
-    any successors a unanimous amendment produced."""
+    any successors a unanimous amendment produced. `missing` maps a claim
+    id to the judges that never reported on it this round."""
     roster = [friend_key(s) for s in specs]
     for claim in contested:
         state = vd.state_for(
@@ -362,7 +392,7 @@ def _settle_round(
             roster,
             round_no,
             max_rounds,
-            required_missing=any_failed,
+            required_missing=bool(missing.get(claim.id)),
         )
 
         if state == vd.UNPROVEN:

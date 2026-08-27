@@ -24,6 +24,7 @@ see `normalize()`'s docstring for the exact fallback order.
 """
 
 from collections.abc import Iterator
+import dataclasses
 from dataclasses import dataclass
 import json
 import re
@@ -95,6 +96,12 @@ class Envelope:
     path: str = ""
     match_field: str = "type"
     rules: tuple[EnvelopeRule, ...] = ()
+    # json_path only: a dotted path to the CLI's own error message, for the
+    # case where the envelope carries one INSTEAD of an answer (agy: a
+    # top-level `error` string beside an empty `response`). Read only after
+    # normalizing has failed, so it can never turn a working answer into a
+    # failure; it makes the failure say what the CLI said.
+    error_path: str = ""
 
 
 def parse_envelope(data: dict[str, Any] | None) -> "Envelope | None":
@@ -111,7 +118,12 @@ def parse_envelope(data: dict[str, Any] | None) -> "Envelope | None":
         path = data.get("path", "")
         if not path:
             return None
-        return Envelope(kind="json_path", path=path)
+        error_path = data.get("error_path", "")
+        return Envelope(
+            kind="json_path",
+            path=path,
+            error_path=error_path if isinstance(error_path, str) else "",
+        )
     if kind == "ndjson":
         rules = tuple(
             EnvelopeRule(match_value=rule["type"], field=rule["field"])
@@ -165,9 +177,18 @@ def _unwrap_json_path(raw: str, envelope: Envelope) -> str | None:
 def _unwrap_ndjson(raw: str, envelope: Envelope) -> str | None:
     """Scan every line as its own JSON object (an NDJSON event stream);
     every line whose `match_field` matches a rule contributes that rule's
-    extracted field to the unwrapped text, in stream order. A line that
+    extracted field to the unwrapped text, latest first. A line that
     fails to parse (blank, partial, non-JSON) is simply skipped -- one
-    malformed event must not poison the rest of a real stream."""
+    malformed event must not poison the rest of a real stream.
+
+    Latest first because in an event stream the final matching event is
+    the answer and the earlier ones are progress. codex under
+    `--output-schema` emits "I'm inspecting the repository..." as an
+    `agent_message` that is itself a schema-valid findings object, then
+    the real answer; extract_json keeps the first candidate that ranks
+    best, so stream order handed it the progress line and lost the answer
+    -- a high-severity finding, in the run that found this. Captured in
+    tests/fixtures/codex_progress_then_findings.ndjson."""
     cleaned = strip_ansi(raw)
     extracted: list[str] = []
     for line in cleaned.splitlines():
@@ -188,7 +209,7 @@ def _unwrap_ndjson(raw: str, envelope: Envelope) -> str | None:
                     extracted.append(value)
     if not extracted:
         return None
-    return "\n".join(extracted)
+    return "\n".join(reversed(extracted))
 
 
 def unwrap_envelope(raw: str, envelope: Envelope) -> str | None:
@@ -201,6 +222,41 @@ def unwrap_envelope(raw: str, envelope: Envelope) -> str | None:
     if envelope.kind == "ndjson":
         return _unwrap_ndjson(raw, envelope)
     return None
+
+
+def envelope_error(raw: str, envelope: Envelope) -> str | None:
+    """The CLI's own error message, when its json_path envelope declares
+    where one lives and `raw` carries a non-empty one. None otherwise --
+    including for every ndjson envelope, whose error events are rules."""
+    if envelope.kind != "json_path" or not envelope.error_path:
+        return None
+    try:
+        parsed = json.loads(strip_ansi(raw).strip())
+    except _JSON_ERRORS:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    value = _dotted_get(parsed, envelope.error_path)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _with_reported_error(result: NormalizeResult, raw: str, envelope: Envelope) -> NormalizeResult:
+    """A failed result, led by what the CLI itself said went wrong. Before
+    this, agy's `{"status":"ERROR","response":"","error":"timeout waiting
+    for response"}` was reported as "the adapter may need an envelope
+    path" -- a diagnosis of the adapter, when the CLI had already given
+    the diagnosis of itself."""
+    if result.succeeded:
+        return result
+    reported = envelope_error(raw, envelope)
+    if reported is None:
+        return result
+    return dataclasses.replace(
+        result,
+        errors=[f"the CLI reported an error in place of an answer: {reported!r}", *result.errors],
+    )
 
 
 def _iter_balanced_objects(text: str) -> Iterator[str]:
@@ -398,5 +454,10 @@ def normalize(
             # failure it is still the more informative diagnosis (it can
             # carry the structured_output hint; the unwrapped-only failure
             # never can, by design -- see above).
-            return _normalize_text(raw, structured_output, contract)
+            return _with_reported_error(
+                _normalize_text(raw, structured_output, contract), raw, envelope
+            )
+        return _with_reported_error(
+            _normalize_text(raw, structured_output, contract), raw, envelope
+        )
     return _normalize_text(raw, structured_output, contract)

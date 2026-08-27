@@ -79,9 +79,11 @@ exits `11` — it has neither converged nor cleared anything.
 ## Gate
 
 `gate` is cross-examination plus one rule: every non-advisory claim that did
-not clear on its own needs an explicit resolution. Only `settled-refuted`,
-`superseded` and `discarded` clear unaided — `settled-upheld` does not,
-because the judges agreeing a defect is real is the opposite of a pass.
+not clear on its own needs an explicit resolution. Only `settled-refuted`
+clears unaided. `settled-upheld` does not, because the judges agreeing a
+defect is real is the opposite of a pass; `discarded` does not, because two
+rounds of judges unable to verify the evidence is nobody having looked.
+`superseded` is exempt: its successor carries the question.
 
 ```bash
 afriend run docs/design.md --mode gate

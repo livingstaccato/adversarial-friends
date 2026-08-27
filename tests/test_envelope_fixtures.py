@@ -221,3 +221,39 @@ def test_claude_structured_output_fixture_unwraps_to_the_real_findings():
     assert len(findings) >= 3
     assert findings[0]["severity"] == "high"
     assert "Logout" in findings[0]["claim"]
+
+
+# --- codex: a schema-shaped progress message before the real answer --------
+
+
+def test_codex_progress_message_does_not_outrank_its_final_answer():
+    """Captured from a real crossexam round on 2026-08-26 (codex under
+    `--output-schema`); lines 0-2, 11-12 and 21-22 of the stream, verbatim,
+    the omitted lines being nine more command executions. Under an output
+    schema codex's *progress* message is itself a schema-valid findings
+    object -- "I'm inspecting the repository...", location null -- followed
+    by the real answer. The first schema-valid object won: the progress line
+    was recorded as a claim and judged (and discarded), and the answer, a
+    high-severity finding about amendment wording, was never seen at all.
+    """
+    result = _normalize_fixture("codex", "codex_progress_then_findings.ndjson")
+    assert result.succeeded, result.errors
+    assert result.payload is not None
+    claims = [f["claim"] for f in result.payload["findings"]]
+    assert claims[0].startswith("Different amendment wordings"), claims
+    assert not any("inspecting the repository" in c for c in claims), claims
+
+
+# --- agy: an error in place of an answer -----------------------------------
+
+
+def test_agy_error_envelope_leads_the_failure_with_agys_own_words():
+    """Captured verbatim on 2026-08-26: agy exited 1 after
+    `"error":"timeout waiting for response"` with an empty `response`. The
+    failure used to read "the adapter may need an envelope path" -- a
+    diagnosis of the adapter, when the CLI had already diagnosed itself."""
+    result = _normalize_fixture("agy", "agy_error_captured.json")
+    assert result.succeeded is False
+    assert result.errors[0] == (
+        "the CLI reported an error in place of an answer: 'timeout waiting for response'"
+    ), result.errors

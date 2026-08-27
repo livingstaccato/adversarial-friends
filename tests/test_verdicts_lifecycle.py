@@ -245,8 +245,11 @@ def test_termination_needs_both_a_streak_and_terminal_claims():
     "state,blocks",
     [
         (verdicts.SETTLED_REFUTED, False),
+        # Exempt, not cleared: the successor carries the question.
         (verdicts.SUPERSEDED, False),
-        (verdicts.DISCARDED, False),
+        # Nobody could check it -- two rounds of judges unable to verify the
+        # evidence. Passing on that is passing on nobody having looked.
+        (verdicts.DISCARDED, True),
         (verdicts.SETTLED_UPHELD, True),
         (verdicts.CONTESTED, True),
         (verdicts.DEADLOCKED, True),

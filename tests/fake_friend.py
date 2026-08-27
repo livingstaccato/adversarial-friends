@@ -210,7 +210,23 @@ _JUDGEMENTS = {
     # the claims it was supposed to judge must then read `incomplete`, not
     # `discarded` as though it had looked twice and failed.
     "judge_fail": lambda: _fail_judging(),
+    # Fails in round 2 only, then judges normally: one unrelated friend's
+    # failure must mark ITS slice incomplete, not every below-quorum claim
+    # in the run. (No shared prefix with judge_fail: modes match by prefix.)
+    "judge_absent_once": lambda: _fail_judging() if _round() == 2 else _judge("upheld"),
+    # Amends, but could not check the evidence -- the evidence rule turns
+    # this into `unproven`, which must not be reported as a final-round
+    # amendment. (No shared prefix with judge_amend or judge_unverifiable.)
+    "judge_shaky_amend": lambda: _judge(
+        "amended", "unverifiable", amended_claim="the guard is weak, not missing"
+    ),
 }
+
+
+def _round() -> int:
+    """This round's number, from the prompt file's `round-N` directory."""
+    assert PROMPT_FILE is not None
+    return int(Path(PROMPT_FILE).parent.name.removeprefix("round-"))
 
 
 def _fail_judging() -> None:

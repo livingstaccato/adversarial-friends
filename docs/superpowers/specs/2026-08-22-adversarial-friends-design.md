@@ -896,7 +896,7 @@ as upheld and fixed in §5.1.
 | M9 `--max-calls 60` below default fan-out | §7.4 derived from the resolved roster |
 | M10 dry-round counting contradictory | §7.3 pseudocode |
 | M11 hash check satisfied by any edit | §6.4 per-location verification; resolutions labeled attestations |
-| M12 `incomplete` per-claim vs run-level | §7.2 run-level rule; auth failure aborts |
+| M12 `incomplete` per-claim vs run-level | §7.2 run-level rule; auth failure aborts. Implemented per claim as well -- see the §7.2 M12 note below |
 | L13 isolation test vacuous | §16 positive assertions |
 | L14 deny list direction-blind | subsumed by §13's allowlist |
 | L15 exit precedence undefined | §7.6 |
@@ -1062,3 +1062,31 @@ failure, never a word it might plausibly use. `agy.toml` records the capture
 and, beside it, the near-miss that must not be adopted -- `"authentication
 timed out"`, which is what agy says when it cannot *reach* the auth endpoint,
 and which would classify every network-denied run as an auth failure.
+
+### §7.2 M12 — `incomplete` is per claim, and `quorum_partial` is not emitted
+
+The body says a round in which a required friend fails marks the **run**
+`incomplete`, and that terminal states reached during such a round are annotated
+`quorum_partial: true`. The run-level flag is implemented. The per-claim state is
+decided per claim: a claim reads `incomplete` when one of *its* judges never
+reported this round — failed, withheld by the repeat tracker, or silent on that
+claim — and `unproven` when its judges all reported and declined to decide. A
+run-level reading was implemented first, and the judges of a crossexam over
+`verdicts.py` showed what it cost: one unrelated friend's failure marked every
+below-quorum claim in the run `incomplete` and reset its discard signature.
+`quorum_partial` is not emitted anywhere; `run.json`'s `incomplete` and the
+per-claim states carry the same information.
+
+### §7.2 / gate — `discarded` needs a Resolution; `superseded` is exempt
+
+§7's mode table says every non-advisory claim not `settled-refuted` needs a
+Resolution; §7.2's state table marks `superseded` "n/a" and has no `discarded`
+row. The implementation cleared both, under a comment saying only
+`settled-refuted` clears — three answers from three places, as a crossexam of
+`verdicts.py` put it. A `discarded` claim is one two rounds of judges could not
+verify, and a gate that passes on it passes on the strength of nobody having
+looked: it blocks, per §7. `superseded` neither clears nor blocks — the
+successor is the live claim and carries the question, and blocking the original
+too would demand two resolutions for one defect. `superseded` is also entered the
+moment judges unanimously amend, not when the successor reaches a terminal state
+as the §7.2 row reads; the successor's own state is what the gate looks at.
