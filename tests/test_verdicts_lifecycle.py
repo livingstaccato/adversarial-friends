@@ -16,6 +16,7 @@ import pytest
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
+from adversarial_friends.commands.crossexam import _prior_verdicts_by_claim
 from adversarial_friends.commands.runmeta import unresolved_loop_states
 
 # --- §7.2 discard rule -----------------------------------------------------
@@ -294,3 +295,19 @@ def test_the_downgrade_records_the_verdict_the_judge_actually_cast():
     )
     assert out.verdict == verdicts.UNPROVEN
     assert "downgraded from 'refuted' to 'unproven'" in out.reasoning
+
+
+def test_prior_verdicts_show_each_judge_once():
+    """§5.1 strips the judge and carries no round, so a judge's round-2 and
+    round-3 verdicts render as two anonymous reviewers -- a consensus that
+    does not exist, in the prompt the next judge reads."""
+    same_judge = [
+        in_round(verdict("claude/security", "upheld"), 2),
+        in_round(verdict("claude/security", "refuted"), 3),
+        in_round(verdict("agy/assumptions", "upheld"), 3),
+    ]
+    prior = _prior_verdicts_by_claim(same_judge, {"c-0001@1"})
+    cast = prior["c-0001@1"]
+    assert len(cast) == 2, cast
+    assert {v.judge for v in cast} == {"claude/security", "agy/assumptions"}
+    assert [v.verdict for v in cast if v.judge == "claude/security"] == ["refuted"]

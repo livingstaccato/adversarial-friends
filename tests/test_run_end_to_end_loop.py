@@ -201,3 +201,63 @@ def test_a_claim_no_friend_can_judge_does_not_hold_the_loop_open(tmp_path):
     assert meta["rounds_run"] < 16, meta["rounds_run"]
     assert not any("no round was left to judge" in d for d in meta["downgrades"]), meta
     assert result.returncode in (0, 1), result.stderr
+
+
+# --- What a later iteration inherits ---------------------------------------
+
+
+def test_a_claim_settled_in_an_earlier_iteration_still_quotes_its_judges(tmp_path):
+    """Carrying only states meant a claim deadlocked in iteration 1 was
+    printed under "Unsettled" with "No verdict was cast on this claim" --
+    while both judges' reasoning sat in the ledger. §7.2 requires both sides
+    quoted verbatim, and that is the whole reason the section exists."""
+    result = _loop(
+        tmp_path,
+        "fake:judge_refute_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "3", "--max-loop-iterations", "3"),
+    )
+    assert result.returncode == 0, result.stderr
+    states = _run_json(tmp_path)["claim_states"]
+    assert "deadlocked" in states.values(), states
+    report = (_run_dir(tmp_path) / "report.md").read_text()
+    assert "No verdict was cast" not in report, report
+
+
+def test_a_failure_in_an_earlier_iteration_is_not_forgotten(tmp_path):
+    """§7.2's M12 marks the RUN incomplete, not the iteration. Each block
+    built a fresh outcome, so a friend that failed in iteration 1 and
+    recovered in iteration 2 left a run reporting itself complete."""
+    _loop(
+        tmp_path,
+        "fake:judge_absent_once_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "3"),
+    )
+    assert _run_json(tmp_path)["incomplete"] is True
+
+
+def test_a_revised_artifact_reopens_what_the_earlier_text_settled(tmp_path):
+    """A loop re-reads the artifact precisely to pick up a revision, and a
+    claim settled against the old text is not settled against the new one --
+    carried across the edit, the report goes on naming a defect the edit may
+    have removed."""
+    artifact = _artifact(tmp_path)
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:judge_edit_a",
+        "--friend",
+        "fake:judge_uphold_b",
+        "--max-rounds",
+        "2",
+        "--max-loop-iterations",
+        "2",
+        mode="loop",
+        env_extra={"AF_TEST_EDIT_ARTIFACT": str(artifact)},
+    )
+    assert result.returncode in (0, 1), result.stderr
+    assert "the guard was added." in artifact.read_text()
+    downgrades = _run_json(tmp_path)["downgrades"]
+    assert any("the artifact changed before iteration" in d for d in downgrades), downgrades

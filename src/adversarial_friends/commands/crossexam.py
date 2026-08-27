@@ -32,7 +32,18 @@ from ..verdictschema import VERDICT_CONTRACT
 
 @dataclass
 class CrossexamOutcome:
-    """Everything rounds 2..N produced, for the report and the exit code."""
+    """Everything rounds 2..N produced, for the report and the exit code.
+
+    In `loop` mode this accumulates across iterations rather than starting
+    fresh: `run_rounds` seeds a block from the previous one (`prior`). It
+    carried only claim states at first, and a review of that found four
+    things wrong with it at once -- a claim deadlocked in an earlier
+    iteration printed under "Unsettled" with no verdicts beneath it; later
+    blocks' judges never saw earlier arguments; a required friend's failure
+    in an earlier iteration was forgotten; and the discard rule, which
+    needs two consecutive rounds, could never fire in a loop whose blocks
+    hold one judging round each.
+    """
 
     verdicts: list[Verdict] = field(default_factory=list)
     states: dict[str, str] = field(default_factory=dict)
@@ -43,6 +54,10 @@ class CrossexamOutcome:
     rounds_run: int = 1
     ceiling_hit: str | None = None
     incomplete: bool = False
+    # Per-claim discard fingerprints (§7.2), on the outcome rather than
+    # local to `run_rounds` so a loop's next block can go on comparing
+    # against the last round that actually happened.
+    signatures: dict[str, "vd._Signature"] = field(default_factory=dict)
 
 
 def _parse_verdicts(payload: dict[str, Any], judge: str, round_no: int) -> list[Verdict]:
@@ -89,11 +104,19 @@ def _never_reported(missing: dict[str, set[str]], spec: FriendSpec, claims: list
 def _prior_verdicts_by_claim(
     all_verdicts: list[Verdict], claim_ids: set[str]
 ) -> dict[str, list[Verdict]]:
+    """One verdict per judge per claim -- `latest_per_judge`, the same
+    reduction `state_for` and `verdict_set_signature` apply.
+
+    §5.1 strips the judge and carries no round, so two verdicts from one
+    judge render as two anonymous reviewers: from round 4 a judge weighing
+    "what did the others conclude" reads a consensus that does not exist.
+    The file's own comment listed the three sites already fixed; this was
+    the fourth."""
     prior: dict[str, list[Verdict]] = {}
     for verdict in all_verdicts:
         if verdict.claim_id in claim_ids:
             prior.setdefault(verdict.claim_id, []).append(verdict)
-    return prior
+    return {cid: vd.latest_per_judge(cast) for cid, cast in prior.items()}
 
 
 def run_rounds(
@@ -119,7 +142,7 @@ def run_rounds(
     keep: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
-    prior_states: dict[str, str] | None = None,
+    prior: CrossexamOutcome | None = None,
     final_block: bool = True,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
@@ -129,7 +152,9 @@ def run_rounds(
     block of round numbers so its rounds never collide with an earlier
     iteration's in the run directory or the ledger.
 
-    `prior_states` carries what an earlier loop iteration already decided.
+    `prior` is the previous block's outcome, and carries what an earlier
+    loop iteration decided AND what it heard -- states, verdicts, notes and
+    discard signatures (see `CrossexamOutcome`).
     Terminal is terminal (§7.2): without it every iteration re-seeded every
     claim `contested` and re-judged claims it had already settled -- and a
     claim re-amended each iteration produced a successor with the SAME id
@@ -141,12 +166,23 @@ def run_rounds(
     another iteration will judge what this one leaves contested.
     """
     outcome = CrossexamOutcome(claims=list(claims))
+    if prior is not None:
+        # Everything the next block needs to keep telling the truth about
+        # what already happened: the arguments themselves, the notes, the
+        # discard fingerprints, and whether a required friend has already
+        # failed somewhere in this run.
+        outcome.verdicts = list(prior.verdicts)
+        outcome.notes = list(prior.notes)
+        outcome.signatures = dict(prior.signatures)
+        outcome.incomplete = prior.incomplete
 
     # A claim starts unjudged. `contested` is the non-terminal set, so
     # seeding every claim as contested is what puts it in round 2's slice.
-    carried = prior_states or {}
+    carried = prior.states if prior is not None else {}
     outcome.states = {claim.id: carried.get(claim.id, vd.CONTESTED) for claim in outcome.claims}
-    signatures: dict[str, vd._Signature] = {}
+    # Friends already reported as gone for the rest of the run, so the
+    # downgrade is written once rather than every round.
+    dropped: set[str] = set()
 
     round_no = first_round
     while round_no <= max_rounds:
@@ -158,15 +194,34 @@ def run_rounds(
         if not contested:
             break
 
+        # A friend the repeat tracker disabled is disabled for the rest of
+        # the run (`failures.RepeatTracker` never clears one), so it is not
+        # a judge that happens to be silent this round -- it is not a judge.
+        # Counted as one, it was recorded "missing" every round, which
+        # pinned its claims at `incomplete`: never `unproven`, so never
+        # discardable, so a loop could not converge on them. Dropping it
+        # from the roster makes quorum reflect who can still vote, and the
+        # shrunken roster is reported rather than implied.
+        active = [s for s in specs if tracker is None or not tracker.is_disabled(s.name)]
+        for spec in specs:
+            if spec not in active and spec.name not in dropped:
+                dropped.add(spec.name)
+                outcome.downgrades.append(
+                    f"round {round_no}: {spec.name} failed identically twice and is "
+                    "disabled for the rest of this run; it is no longer counted as "
+                    "one of the judges a claim needs."
+                )
         judge_specs: list[FriendSpec] = []
         prompt_for: dict[str, Path] = {}
         contested_ids = {c.id: c for c in contested}
-        prior = _prior_verdicts_by_claim(outcome.verdicts, set(contested_ids))
-        for spec in specs:
+        prior_cast = _prior_verdicts_by_claim(outcome.verdicts, set(contested_ids))
+        for spec in active:
             slice_ = _slice_for(spec, contested)
             if not slice_:
                 continue
-            prompt_text, note = build_judge_prompt(spec, artifact_text, slice_, prior, attributed)
+            prompt_text, note = build_judge_prompt(
+                spec, artifact_text, slice_, prior_cast, attributed
+            )
             if note:
                 outcome.downgrades.append(note)
             path = store.friend_prompt_path(round_no, spec.name)
@@ -187,9 +242,7 @@ def run_rounds(
             # "judges disagreed" -- the opposite of what happened, which is
             # that no judge existed. state_for returns `unproven` for a claim
             # with no judges, which is the honest answer.
-            _settle_round(
-                outcome, contested, signatures, specs, store, round_no, max_rounds, {}, final_block
-            )
+            _settle_round(outcome, contested, active, store, round_no, max_rounds, {}, final_block)
             break
 
         if budget.would_exceed_calls(len(judge_specs)):
@@ -260,7 +313,6 @@ def run_rounds(
             _settle_round(
                 outcome,
                 contested,
-                signatures,
                 specs,
                 store,
                 round_no,
@@ -322,9 +374,7 @@ def run_rounds(
             store.ledger.append(verdict)
         outcome.verdicts.extend(round_verdicts)
 
-        _settle_round(
-            outcome, contested, signatures, specs, store, round_no, max_rounds, missing, final_block
-        )
+        _settle_round(outcome, contested, active, store, round_no, max_rounds, missing, final_block)
         round_no += 1
 
     if budget.exhausted_by:
@@ -336,7 +386,6 @@ def run_rounds(
 def _settle_round(
     outcome: CrossexamOutcome,
     contested: list[Claim],
-    signatures: dict[str, "vd._Signature"],
     specs: list[FriendSpec],
     store: RunStore,
     round_no: int,
@@ -363,9 +412,9 @@ def _settle_round(
             # does not exist draws the same non-dispositive verdicts every
             # round, identically, at full cost until max_rounds.
             signature = vd.verdict_set_signature(outcome.verdicts, claim.id)
-            if vd.should_discard(signatures.get(claim.id), signature):
+            if vd.should_discard(outcome.signatures.get(claim.id), signature):
                 state = vd.DISCARDED
-            signatures[claim.id] = signature
+            outcome.signatures[claim.id] = signature
         else:
             # "Two consecutive rounds" means consecutive. A claim that was
             # unproven in round 2, contested in round 3 (judges engaged and
@@ -374,7 +423,7 @@ def _settle_round(
             # with live disagreement on the record as though nobody had
             # ever been able to look. Raised by codex reviewing this file;
             # reachability confirmed by test_discard_consecutive.
-            signatures.pop(claim.id, None)
+            outcome.signatures.pop(claim.id, None)
 
         if state == vd.SUPERSEDED:
             # Latest per judge, not every amendment ever cast. `verdicts`
@@ -418,6 +467,19 @@ def _settle_round(
                     f"{successor.id}: created by an amendment in round {round_no}, "
                     "the last this run will schedule; no round was left to judge "
                     "it. Re-run with a higher --max-rounds to have it judged."
+                )
+            elif round_no >= max_rounds:
+                # Last round of a block that is not the run's last. The next
+                # iteration is expected to judge it -- but the loop may stop
+                # first (a dry streak, or a ceiling), and a successor with no
+                # independent judge is excluded from the termination test, so
+                # it cannot even hold the loop open. Left silent, it would be
+                # reported as `contested`: "judges disagreed" about a rewrite
+                # no judge has seen.
+                outcome.downgrades.append(
+                    f"{successor.id}: created by an amendment in round {round_no}, "
+                    "the last of this iteration; it is judged by the next iteration "
+                    "if the loop runs one, and is unjudged if the loop stops here."
                 )
 
         outcome.states[claim.id] = state

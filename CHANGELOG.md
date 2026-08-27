@@ -184,6 +184,57 @@ round the run reached rather than the last iteration's -- which, once a
 final iteration could legitimately run no judging round, read "1" for a run
 that had just spent eight.
 
+### What the fourth crossexam found
+
+Pointed at `commands/crossexam.py` -- the file the last two commits
+changed, and the first target that was not `verdicts.py`. Nine claims,
+eight settled-upheld, one settled-refuted. Almost all of them were about
+the loop carry-over those commits had just introduced.
+
+**A loop block carried states and nothing else**, and four claims followed
+from that one omission. Each iteration built a fresh outcome, so a claim
+deadlocked in iteration 1 was printed under "Unsettled" with "No verdict
+was cast on this claim" -- the line added one commit earlier -- while both
+judges' reasoning sat in the ledger; later blocks' judges never saw earlier
+arguments; a required friend's failure in an earlier iteration was
+forgotten, so a run that lost a judge reported itself complete; and the
+discard rule, which needs two consecutive rounds, could never fire in a
+loop whose blocks hold one judging round each. A block now inherits the
+previous one's verdicts, notes, discard signatures and `incomplete` flag.
+
+**Carried states were not tied to the artifact.** A loop re-reads the
+artifact precisely to pick up a revision, and a claim settled against the
+old text is not settled against the new one -- carried across an edit, the
+report goes on naming a defect the edit may have removed. The carry now
+stops at any change to the artifact, and the run says it re-opened those
+claims.
+
+**A friend the repeat tracker disabled was still counted as a judge.**
+`RepeatTracker` never clears a disabled friend, so it was recorded as
+"missing" every round for the rest of the run: its claims were pinned at
+`incomplete`, never `unproven`, so never discardable, so a loop could not
+converge on them. It leaves the judging roster now -- quorum counts who can
+still vote -- and the shrunken roster is reported rather than implied. The
+judges refuted the claim's headline (it does not pin *every* claim, and
+disabled friends were never re-dispatched) and upheld the narrower defect.
+
+Three smaller ones from the same run:
+
+- `_prior_verdicts_by_claim` never reduced to one verdict per judge, so
+  from round 4 a judge's prompt showed one judge's round-2 and round-3
+  verdicts as two anonymous reviewers -- §5.1 strips the judge and carries
+  no round. A manufactured consensus, in the prompt the next judge reads.
+  The file's own comment listed three sites where this accumulation bug had
+  been fixed; this was the fourth.
+- The call-budget precheck counted judges the repeat tracker would drop, so
+  a run could stop `budget-exhausted` with room for the one judge it would
+  actually have dispatched.
+- A successor created at the last round of a *non-final* loop block was
+  left `contested` with no note, on the assumption the next iteration would
+  judge it. The loop can stop first, and such a successor cannot even hold
+  it open, so the report said "judges disagreed" about a rewrite no judge
+  had seen.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier

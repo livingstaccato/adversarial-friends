@@ -8,6 +8,7 @@ import argparse
 from collections.abc import Callable
 import concurrent.futures
 import dataclasses
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -215,6 +216,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         counter = 0
         any_success = False
         cross = None
+        # What the next loop iteration inherits: states, verdicts, notes and
+        # discard signatures. None means "judge everything fresh" -- the
+        # first iteration, and any iteration whose artifact changed.
+        carry_over = None
+        last_digest: str | None = None
         streak = 0
         iterations_run = 0
         # The highest round number the run reached, across every loop
@@ -255,6 +261,21 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # artifact produces identical claims, they all alias, and the
                 # dry-round streak is what ends the loop.
                 artifact_text = artifact.read_text(encoding="utf-8")
+                # Terminal states are only terminal for the text they were
+                # decided against. A loop exists to pick up a revision, and
+                # a claim settled against the old text is not settled
+                # against the new one -- carried across an edit, the report
+                # goes on naming a defect the edit may have removed. So the
+                # carry stops at the edit and every claim is judged again.
+                iteration_digest = hashlib.sha256(artifact_text.encode("utf-8")).hexdigest()
+                if last_digest is not None and iteration_digest != last_digest:
+                    carry_over = None
+                    downgrades.append(
+                        f"the artifact changed before iteration {iteration}; claims "
+                        "settled against the earlier text were re-opened and judged "
+                        "again, since a revision can decide them differently."
+                    )
+                last_digest = iteration_digest
 
                 if resume_dir is not None and iteration == 1:
                     resumed = resume_round_one(
@@ -354,10 +375,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                         keep=args.keep,
                         extra_args=extra_args,
                         pass_env=tuple(args.pass_env),
-                        prior_states=cross.states if cross is not None else None,
+                        prior=carry_over,
                         final_block=(args.mode != "loop" or iteration == max_iterations),
                     )
                     all_claims = cross.claims
+                    carry_over = cross
                     rounds_reached = max(rounds_reached, cross.rounds_run)
                     friends_meta.extend(cross.friends_meta)
                     downgrades.extend(cross.downgrades)

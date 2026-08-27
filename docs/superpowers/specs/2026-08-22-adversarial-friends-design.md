@@ -1132,6 +1132,18 @@ judging and still allows it.
 
 ### §7.3 — what a loop iteration inherits, and what it may stop waiting for
 
+**An iteration inherits the whole record, not just the verdict.** States,
+verdicts, notes and discard signatures all carry: the report quotes both sides
+of a claim settled in any iteration, a later block's judges see the earlier
+arguments, §7.2's two-consecutive-rounds discard rule can span a block
+boundary, and M12's run-level `incomplete` survives an iteration in which
+every friend recovered. Carrying states alone produced all four of those
+failures at once.
+
+**The carry stops at a revision.** Terminal states are terminal for the text
+they were decided against; if the artifact changes between iterations, every
+claim is judged again and the run records that it re-opened them.
+
 The body describes a loop as repeated crossexam over a possibly-revised
 artifact, without saying what an iteration inherits from the one before. It
 inherits claim states: terminal is terminal (§7.2) across iterations, and an
@@ -1148,3 +1160,19 @@ everyone. Such a claim is still reported and still blocks a gate; it just
 cannot be what a loop waits for. Waiting on one ran every such loop to its
 iteration ceiling, which is the failure §7.3's H4 correction exists to
 prevent.
+
+### §7.2 / §11 — a friend disabled for the run is not a judge
+
+The repeat tracker disables a friend that fails identically twice and never
+re-enables it. §7.2's M12 treats a judge that did not report as a missing
+judge, which is right for one bad round and wrong for the rest of the run: a
+permanently disabled friend was recorded missing every round, so every
+below-quorum claim in its slice was pinned `incomplete` — never `unproven`,
+therefore never discardable, therefore never terminal, and a loop could not
+converge on it.
+
+A disabled friend leaves the roster that `judges_for` and `quorum_for` see, so
+quorum reflects who can still vote and the claims it can no longer reach settle
+or go `unproven` on their own merits. The reduced roster is recorded as a
+downgrade, once, naming the friend; the run-level `incomplete` flag still says
+the roster shrank.

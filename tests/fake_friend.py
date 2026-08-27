@@ -210,6 +210,10 @@ _JUDGEMENTS = {
     # the claims it was supposed to judge must then read `incomplete`, not
     # `discarded` as though it had looked twice and failed.
     "judge_fail": lambda: _fail_judging(),
+    # Revises the artifact the way something outside the run would, which is
+    # the only reason `loop` re-reads it. Used to check that claims settled
+    # against the earlier text are re-opened.
+    "judge_edit": lambda: (_edit_artifact(), _judge("upheld")),
     # Fails in round 2 only, then judges normally: one unrelated friend's
     # failure must mark ITS slice incomplete, not every below-quorum claim
     # in the run. (No shared prefix with judge_fail: modes match by prefix.)
@@ -227,6 +231,18 @@ def _round() -> int:
     """This round's number, from the prompt file's `round-N` directory."""
     assert PROMPT_FILE is not None
     return int(Path(PROMPT_FILE).parent.name.removeprefix("round-"))
+
+
+def _edit_artifact() -> None:
+    """Append a line to the file named by AF_TEST_EDIT_ARTIFACT, once."""
+    target = os.environ.get("AF_TEST_EDIT_ARTIFACT")
+    if not target:
+        return
+    path = Path(target)
+    marker = "\nthe guard was added.\n"
+    text = path.read_text(encoding="utf-8")
+    if marker not in text:
+        path.write_text(text + marker, encoding="utf-8")
 
 
 def _fail_judging() -> None:
