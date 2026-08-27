@@ -47,6 +47,15 @@ _RESUMABLE_ARGS = (
     "effort",
     "roster",
     "lens",
+    # Everything else that changes what is dispatched or how. Left out, a
+    # resume silently ran a different roster under different rules than the
+    # halted run recorded -- fewer or more friends, a dropped --pass-env,
+    # unvalidated flags appearing or vanishing.
+    "max_friends",
+    "pass_env",
+    "unsafe_extra_args",
+    "i_accept_unsandboxed",
+    "keep",
 )
 
 
@@ -132,6 +141,15 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
             setattr(restored, name, saved[name])
     restored.artifact = saved.get("artifact")
     restored.friend = saved.get("friend", [])
+    # The concrete roster the halted run resolved, not the inputs that
+    # produced it. §4.2 requires the same response to produce the same run,
+    # and re-resolving cannot promise that: a roster file can be edited and
+    # discovery re-reads whatever CLIs are installed now, so a resume could
+    # change quorum, or hand a claim's author a new identity under which it
+    # judges its own claim.
+    restored._resume_roster = [
+        FriendSpec(**entry) for entry in meta.get("roster", []) if isinstance(entry, dict)
+    ]
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta

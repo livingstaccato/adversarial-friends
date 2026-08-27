@@ -1176,3 +1176,27 @@ quorum reflects who can still vote and the claims it can no longer reach settle
 or go `unproven` on their own merits. The reduced roster is recorded as a
 downgrade, once, naming the friend; the run-level `incomplete` flag still says
 the roster shrank.
+
+### §12.2 — the withheld record describes the filter that ran, or says none did
+
+`env_withheld` in `run.json` is the run's evidence that a confined friend was
+denied the operator's secrets, so it is computed from exactly what dispatch
+does: `childenv.build(adapter.env_pass, pass_env)`, per friend, and only when
+`sandbox.detect()` finds a mechanism. A name is listed only when no confined
+friend received it; one that a single adapter's own pass list admits is named
+in a downgrade instead, since folding it into the withheld list would claim it
+was kept back from everyone.
+
+When no mechanism exists the child inherits the whole environment, and the run
+says so rather than emitting a list: a record that overstates a protection is
+worse than no record, because it is the artifact an auditor reads.
+
+### §8.3 — the single-friend refusal is enforced, not noted
+
+`report` runs and states that no cross-examination occurred. `crossexam`,
+`gate` and `loop` raise `NoFriendsError` (exit 3) with remediation. This was a
+downgrade note in every mode until a crossexam of `cmd_run` found what that
+cost: with one friend no judge is independent of any claim, so a `gate` run
+settles nothing, blocks on nothing, and exits 0 — a cleared gate from a run
+that could not check anything. `roster.DEGRADED_MODES` is the constant that
+decides it.

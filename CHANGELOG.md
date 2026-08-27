@@ -235,6 +235,52 @@ Three smaller ones from the same run:
   it open, so the report said "judges disagreed" about a rewrite no judge
   had seen.
 
+### What the fifth crossexam found
+
+Pointed at `commands/run.py`. Thirteen claims, twelve settled-upheld. Two
+of them are the worst kind this tool can find: a run record that asserts a
+protection that did not happen, and a gate that cannot gate exiting 0.
+
+- **`env_withheld` described a filter that had not run.** It is the run's
+  record that secrets were kept from confined friends, and it was computed
+  by passing `--pass-env` into `childenv.withheld`'s *adapter* slot -- so
+  the adapter's own pass list was never consulted. opencode declares six
+  API keys in its `pass` list, dispatch hands all six to the child, and all
+  six were reported as withheld. Nothing checked whether a confinement
+  mechanism existed either, so an unsandboxed run that filtered nothing
+  still produced a full withheld list. Both fixed: the list is computed per
+  friend from the same inputs dispatch uses, only when a mechanism exists,
+  and a name counts as withheld only if no confined friend received it. A
+  run with no mechanism now says the environment was NOT filtered.
+- **§8.3 was a comment, not a rule.** One friend plus `crossexam`, `gate`
+  or `loop` must hard-error (exit 3); the code appended a downgrade and
+  ran. With one friend no judge is independent of any claim, so a `gate`
+  run settles nothing, blocks on nothing, and exits 0 -- CI reads "gate
+  clear" from a run that structurally could not check anything. The
+  `DEGRADED_MODES` constant that encodes the rule existed and was wired to
+  nothing.
+- **A loop could review two revisions at once.** The snapshot was taken
+  once before the loop, so re-reading the artifact each iteration asked
+  friends to judge new wording while repo-scope friends were checked out at
+  the old commit: claim and evidence from different revisions, in one
+  verdict. The repository is re-snapshotted when the artifact changes.
+- **Resume re-resolved the roster.** "A resumed run rebuilds its whole
+  configuration from run.json" was not true: `resolve_friends` ran
+  unconditionally, the recorded roster was never consumed, and
+  `max_friends`, `pass_env`, `unsafe_extra_args`, `i_accept_unsandboxed`
+  and `keep` were not restored either. A roster file edited between halt
+  and resume, or a CLI installed in the meantime, could change quorum.
+- **A test passed by construction**: `test_a_friend_that_recovers_is_not_
+  disabled` used two friends that never failed, so the tracker it meant to
+  exercise was never engaged.
+
+Two existing tests had encoded the pre-§8.3 behaviour -- a single-friend
+gate exiting 1, and the preset test running one friend -- and were changed
+to two friends. `cmd_run` crossed the 500-line cap with the refusal in it,
+so which friends a run dispatches now lives in one place,
+`friends.roster_for_run`, including both rules that can stop a run before
+anything is spent.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier

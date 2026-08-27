@@ -155,11 +155,29 @@ def test_a_deterministically_broken_friend_stops_being_dispatched(tmp_path):
 
 def test_a_friend_that_recovers_is_not_disabled(tmp_path):
     """A friend that failed once and then worked told us the failure was
-    transient. Disabling it would throw away a working reviewer."""
-    result = _loop(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b")
-    assert result.returncode == 0, result.stderr
-    downgrades = " ".join(_run_json(tmp_path)["downgrades"])
+    transient. Disabling it would throw away a working reviewer.
+
+    Both friends used to succeed in every round, so nothing was ever
+    disabled and the assertion held whatever the tracker did -- a test that
+    passed by construction, found by a crossexam of this file's caller.
+    `judge_absent_once` fails in round 2 and judges normally afterwards, so
+    the tracker is actually exercised: one failure must not disable it, and
+    its later verdicts must still count."""
+    result = _loop(
+        tmp_path,
+        "fake:judge_absent_once_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "4"),
+    )
+    assert result.returncode in (0, 1), result.stderr
+    meta = _run_json(tmp_path)
+    downgrades = " ".join(meta["downgrades"])
     assert "not be dispatched again" not in downgrades
+    assert "no longer counted as one of the judges" not in downgrades
+    # It failed once, so the run is incomplete -- and it judged afterwards,
+    # so its claim reached a settled state rather than sitting unproven.
+    assert meta["incomplete"] is True
+    assert "settled-upheld" in meta["claim_states"].values(), meta["claim_states"]
 
 
 # --- What an iteration must not redo ---------------------------------------

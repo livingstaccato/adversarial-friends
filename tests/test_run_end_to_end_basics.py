@@ -52,10 +52,15 @@ def test_missing_artifact_exits_2(tmp_path):
 # --- Adversarial break-it attempts beyond the brief's four required tests -
 
 
-def test_a_single_friend_gate_blocks_rather_than_passing(tmp_path):
+def test_a_two_friend_gate_blocks_rather_than_passing(tmp_path):
     """This test used to assert `--mode gate` exited 2 as unimplemented.
     Gate now runs, and the interesting property is that it does not pass:
-    one friend's unjudged claim is not a cleared gate."""
+    an unresolved claim is not a cleared gate.
+
+    Two friends, because §8.3 now refuses a judging mode with one (exit 3,
+    see test_one_friend_is_refused_for_every_mode_that_judges) -- and a
+    single-friend gate was the wrong shape for this assertion anyway: it
+    blocked on claims no judge had been able to look at."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
     result = subprocess.run(
@@ -69,7 +74,9 @@ def test_a_single_friend_gate_blocks_rather_than_passing(tmp_path):
             "--out",
             str(tmp_path / "runs"),
             "--friend",
-            "fake:good",
+            "fake:judge_uphold_a",
+            "--friend",
+            "fake:judge_uphold_b",
         ],
         capture_output=True,
         text=True,
@@ -149,7 +156,8 @@ def test_gate_defaults_to_the_thorough_preset(tmp_path):
     nowhere else."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
-    run_af(tmp_path, artifact, "--friend", "fake:good", mode="gate")
+    # Two friends: §8.3 refuses a judging mode with one.
+    run_af(tmp_path, artifact, "--friend", "fake:good_a", "--friend", "fake:good_b", mode="gate")
     run_dir = sorted((tmp_path / "runs").iterdir())[0]
     meta = json.loads((run_dir / "run.json").read_text())
     assert meta["preset"] == "thorough"
@@ -350,3 +358,34 @@ def test_report_mode_allows_the_same_friend_twice(tmp_path):
     artifact.write_text("# spec\nA design with a missing guard.\n")
     result = run_af(tmp_path, artifact, "--friend", "fake:good", "--friend", "fake:good")
     assert result.returncode == 0, result.stderr
+
+
+# --- §8.3 degraded single-friend mode --------------------------------------
+
+
+def test_one_friend_is_refused_for_every_mode_that_judges(tmp_path):
+    """§8.3: "cross-examination with one participant is a different and
+    weaker thing wearing the same name", so it hard-errors (exit 3).
+
+    It used to append a downgrade and run. With one friend no judge is
+    independent of any claim, so a `gate` run settles nothing, blocks on
+    nothing, and exits 0 -- CI reads "gate clear" from a run that could not
+    check anything. Found by a crossexam of cmd_run, which also noticed the
+    DEGRADED_MODES constant wired to nothing."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nA design with a missing guard.\n")
+    for mode in ("crossexam", "gate", "loop"):
+        result = run_af(tmp_path, artifact, "--friend", "fake:good", mode=mode)
+        assert result.returncode == 3, (mode, result.returncode, result.stderr)
+        assert "at least two independent friends" in result.stderr, result.stderr
+
+
+def test_one_friend_still_runs_a_report_and_says_what_it_is(tmp_path):
+    """The one mode §8.3 allows: it runs, exits 0, and the reduced guarantee
+    is in the artifact a human reads."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nA design with a missing guard.\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    meta = json.loads((sorted((tmp_path / "runs").iterdir())[0] / "run.json").read_text())
+    assert any("only one friend" in d for d in meta["downgrades"]), meta["downgrades"]

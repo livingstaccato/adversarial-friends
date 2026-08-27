@@ -24,7 +24,6 @@ from ..adapters import friend_key, load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
-from ..ids import validate_friend_name
 from ..ledger import Alias, Claim
 from ..orchestrator import (
     NeedsOrchestrator,
@@ -42,7 +41,7 @@ from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import _resolve_repo_root, install_abort_handlers
 from .exits import decide_exit
-from .friends import resolve_friends
+from .friends import roster_for_run
 from .resume import resume_round_one
 from .runmeta import JUDGING_MODES, _base_meta, unresolved_loop_states, validate_run_args
 
@@ -85,28 +84,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             "every friend regardless of what its adapter emitted."
         )
 
-    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
-    specs = resolved.specs
-
-    for spec in specs:
-        validate_friend_name(spec.name)
-
-    if len(specs) == 1:
-        # --friend REPLACES the roster rather than augmenting discovery (see
-        # cliargs._specs_from_flags above), so a single --friend flag -- or,
-        # per design doc §8.3, discovery itself resolving to just one friend
-        # -- produces a run that cannot cross-examine anything: it is one
-        # reviewer's opinion, not disagreement between several. That
-        # reduced guarantee must be visible in run.json/report.md rather
-        # than a single-reviewer report quietly looking like the real
-        # thing -- the same rule already applied to every other downgrade
-        # this function records.
-        downgrades.append(
-            f"only one friend ({specs[0].name}) resolved for this run; "
-            "cross-examination needs at least two independent friends, so "
-            "this report reflects a single reviewer's opinion, not "
-            "disagreement between several."
-        )
+    resolved, specs = roster_for_run(args, registry, fake_cmd, downgrades)
     # §12.2: every friend that will run without OS confinement is named in
     # the report, whether that is because the operator overrode the refusal
     # or because the CLI has no read-only mode and one was available. A
@@ -270,10 +248,21 @@ def cmd_run(args: argparse.Namespace) -> int:
                 iteration_digest = hashlib.sha256(artifact_text.encode("utf-8")).hexdigest()
                 if last_digest is not None and iteration_digest != last_digest:
                     carry_over = None
+                    # The prompt text and the repository the friends read
+                    # have to be the same revision. `snapshot_sha` was taken
+                    # once, before the loop, so re-reading the artifact each
+                    # iteration asked friends to judge NEW wording while
+                    # repo-scope friends were checked out at the OLD commit
+                    # -- evidence and claim from two different revisions, in
+                    # one verdict. Re-snapshot with the text.
+                    if repo_root is not None and needs_snapshot:
+                        snapshot_sha = isolation.snapshot_commit(repo_root)
                     downgrades.append(
                         f"the artifact changed before iteration {iteration}; claims "
                         "settled against the earlier text were re-opened and judged "
-                        "again, since a revision can decide them differently."
+                        "again, since a revision can decide them differently, and the "
+                        "repository was re-snapshotted so friends read the same "
+                        "revision the prompt quotes."
                     )
                 last_digest = iteration_digest
 

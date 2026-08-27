@@ -327,3 +327,23 @@ def test_resume_restores_the_model_the_ledger_identities_were_written_with(tmp_p
     meta = _run_json(tmp_path)
     assert meta["invocation"]["model"] == "gpt-5"
     assert {s["model"] for s in meta["roster"]} == {"gpt-5"}
+
+
+def test_resume_judges_with_the_roster_the_ledger_was_written_against(tmp_path):
+    """§4.2: the same response must produce the same run. `resolve_friends`
+    ran unconditionally on resume and its roster replaced the recorded one,
+    so a roster file edited between halt and resume -- or a CLI installed in
+    the meantime -- could change quorum, or hand a claim's author a new
+    identity under which it judges its own claim. The concrete roster is
+    restored now."""
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    before = json.loads((_run_dir(tmp_path) / "run.json").read_text())["roster"]
+    _respond(tmp_path, [])
+
+    # The resume names no friends at all: without the recorded roster it
+    # would fall through to discovery.
+    result = _resume(tmp_path)
+    assert result.returncode == 0, result.stderr
+    after = _run_json(tmp_path)["roster"]
+    assert [s["name"] for s in after] == [s["name"] for s in before]
+    assert [s["cli"] for s in after] == [s["cli"] for s in before]

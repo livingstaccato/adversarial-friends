@@ -195,13 +195,26 @@ def test_max_rounds_below_two_is_a_usage_error(tmp_path):
 # --- Degenerate rosters ----------------------------------------------------
 
 
-def test_a_single_friend_has_nobody_to_judge_it(tmp_path):
-    """One friend originates every claim, so no judging round can run at
-    all. That must be reported, not silently look like a clean crossexam."""
-    result = _crossexam(tmp_path, "fake:judge_uphold_a")
-    downgrades = " ".join(_run_json(tmp_path)["downgrades"])
-    assert "no friend is independent" in downgrades
-    assert result.returncode == 1  # nothing reached a terminal state
+def test_a_claim_every_friend_authored_has_nobody_to_judge_it(tmp_path):
+    """No judging round can run against a claim whose origin covers the
+    roster. That must be reported, not silently look like a clean crossexam.
+
+    This used to be spelled with a single friend, which §8.3 now refuses
+    outright (exit 3, see test_one_friend_is_refused_for_every_mode_that_
+    judges). The state is still reachable with a full roster: a unanimous
+    amendment builds a successor whose origin is the author plus every
+    amender, which on two friends is everyone."""
+    result = _crossexam(
+        tmp_path, "fake:judge_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "4")
+    )
+    meta = _run_json(tmp_path)
+    downgrades = " ".join(meta["downgrades"])
+    assert "no friend is independent" in downgrades, meta["downgrades"]
+    # The successor is reported as unproven -- the honest answer for a claim
+    # with no judges -- rather than left at its `contested` seed.
+    successors = [cid for cid in meta["claim_states"] if cid.endswith("@2")]
+    assert successors and all(meta["claim_states"][c] == "unproven" for c in successors), meta
+    assert result.returncode == 1  # not everything reached a terminal state
 
 
 def test_a_failed_judge_marks_the_run_incomplete(tmp_path):

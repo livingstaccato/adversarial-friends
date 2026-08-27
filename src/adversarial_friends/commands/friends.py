@@ -23,9 +23,10 @@ from .. import rosterfile
 from ..adapters import Adapter, FriendSpec, friend_key
 from ..cliargs import _specs_from_flags
 from ..errors import NoFriendsError, UsageError
+from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
-from ..roster import resolve
+from ..roster import DEGRADED_MODES, resolve
 
 
 @dataclass
@@ -169,3 +170,61 @@ def _refuse_duplicate_identities(specs: list[FriendSpec], mode: str) -> None:
                 "give one a different lens, model, or effort"
             )
         seen[key] = spec.name
+
+
+def roster_for_run(
+    args: argparse.Namespace,
+    registry: dict[str, Adapter],
+    fake_cmd: list[str] | None,
+    downgrades: list[str],
+) -> tuple[ResolvedRoster, list[FriendSpec]]:
+    """The roster this run will actually dispatch, and the refusals that
+    come with it.
+
+    Separated from `cmd_run` when it crossed this repo's 500-line cap. It
+    is also one concern: which friends run, decided in one place, including
+    the two rules that can stop a run before anything is spent -- §8.3's
+    minimum and a resumed run's recorded roster.
+    """
+    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+    specs = resolved.specs
+    # A resumed run judges with the roster its ledger was written against.
+    # `resolve_friends` still runs above -- it validates the invocation and
+    # supplies the preset -- but its roster is discarded here rather than
+    # allowed to replace the recorded one.
+    resume_roster = getattr(args, "_resume_roster", None)
+    if resume_roster:
+        specs = list(resume_roster)
+
+    for spec in specs:
+        validate_friend_name(spec.name)
+
+    if len(specs) < 2:
+        # §8.3. --friend REPLACES the roster rather than augmenting
+        # discovery (see cliargs._specs_from_flags), so a single --friend
+        # flag -- or discovery itself resolving to one friend -- produces a
+        # run that cannot cross-examine anything.
+        #
+        # `report` is allowed to run and say so. Every other mode is
+        # refused, because "cross-examination with one participant is a
+        # different and weaker thing wearing the same name": with no judge
+        # independent of any claim, a `gate` run settles nothing, blocks on
+        # nothing, and exits 0 -- CI reads "gate clear" from a run that
+        # structurally could not check anything. This was a downgrade note
+        # for every mode until a crossexam of this file found the exit-0
+        # gate and the DEGRADED_MODES constant that was wired to nothing.
+        if args.mode not in DEGRADED_MODES:
+            raise NoFriendsError(
+                f"only one friend ({specs[0].name}) resolved, and mode "
+                f"{args.mode!r} needs at least two independent friends "
+                "(§8.3). Install a second agent CLI, add a local model "
+                "(`--friend ollama:<lens>:<model>`), or use --mode report "
+                "for a single reviewer's opinion."
+            )
+        downgrades.append(
+            f"only one friend ({specs[0].name}) resolved for this run; "
+            "cross-examination needs at least two independent friends, so "
+            "this report reflects a single reviewer's opinion, not "
+            "disagreement between several."
+        )
+    return resolved, specs
