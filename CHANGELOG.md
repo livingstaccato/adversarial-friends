@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.3
+
+**The first release published to PyPI.** 0.1.2 was tagged but never
+published, because building it turned up the reason to look: `afriend
+--version` printed `0.1.0` from a 0.1.2 wheel.
+
+- **The reported version had drifted two releases.** `__version__` was a
+  literal in `__init__.py`, and nothing compared it to `VERSION` -- the
+  file that drives the build, the plugin manifests and the wheel metadata
+  all agreed with each other while the string a user actually sees did not.
+  It is derived now: from `VERSION` in a checkout, from distribution
+  metadata when installed. `scripts/check_version_sync.py` checks it
+  alongside the manifests, so the next spelling that reintroduces a literal
+  fails the gate.
+- **The test for it passed by construction.** `test_af_reports_version`
+  asserted the output started with `"afriend "` and never looked at the
+  number, which is exactly how an installed 0.1.2 could print 0.1.0 with
+  the suite green. It compares the number now.
+
 ## 0.1.2
 
 **Upgrade from 0.1.1 if you use `--mode gate`, `--mode loop`, or run friends

@@ -54,6 +54,17 @@ def main() -> int:
             if version != expected:
                 mismatches.append(f"  {label}: {version} != {expected}")
 
+    # The version the CLI reports. It was hardcoded in
+    # src/adversarial_friends/__init__.py and drifted two releases behind
+    # VERSION before anything noticed -- `afriend --version` printed 0.1.0
+    # from a 0.1.2 wheel. It is derived now, and checked here so a future
+    # spelling that reintroduces a literal cannot go unnoticed.
+    sys.path.insert(0, str(Path("src")))
+    from adversarial_friends import __version__ as cli_version
+
+    if cli_version != expected:
+        mismatches.append(f"  adversarial_friends.__version__: {cli_version} != {expected}")
+
     if not mismatches:
         return 0
 
