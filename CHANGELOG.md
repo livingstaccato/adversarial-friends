@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
+
+**Upgrade from 0.1.1 if you use `--mode gate`, `--mode loop`, or run friends
+confined.** A gate could clear without checking anything, a run's record of
+withheld secrets could describe a filter that never ran, and a loop could
+judge one revision's wording against another revision's code.
+
+Everything below was found by pointing the tool at its own source: five
+cross-examinations, each one reviewing the file the previous one's fixes had
+just changed. Every round found defects in the round before it.
 
 ### Doc scope was the unguarded half
 
@@ -396,12 +405,12 @@ repository does not get to choose who reviews it.
 ### Known gaps
 
 - Only agy declares an auth marker (captured from a real failure; see
-  Unreleased). The others stay unclassified until theirs is captured —
+  0.1.2). The others stay unclassified until theirs is captured —
   guessing at stderr is what the design rejects. Repeat detection covers the
   cost meanwhile: a friend that fails identically twice stops being
   dispatched.
 - A doc-scope friend of a read-only-capable CLI is not OS-confined. Its own
-  read-only mode is now engaged there (see Unreleased), so it is no longer
+  read-only mode is now engaged there (see 0.1.2), so it is no longer
   unrestrained — but OS-level confinement still needs verified credential
   paths for those CLIs.
 - `--merge orchestrator` is refused with `--mode loop`.
