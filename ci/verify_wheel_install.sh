@@ -25,12 +25,22 @@ if [ "$reported" != "afriend $EXPECTED_VERSION" ]; then
   exit 1
 fi
 
-# Doctor reads the packaged adapters and lenses. From /tmp there is no
-# checkout to fall back on, so this fails if package data did not ship.
-if ! (cd /tmp && AF_NO_HTTP_DISCOVERY=1 "$venv/bin/afriend" doctor >/dev/null); then
-  echo "error: 'afriend doctor' failed from outside the checkout" >&2
-  exit 1
-fi
+# Doctor reads the packaged adapters. From /tmp there is no checkout to fall
+# back on, so a missing adapter file shows up here rather than at a user's
+# first run.
+#
+# Its exit code is deliberately NOT the assertion: `doctor` returns 3 when
+# no agent CLI is installed, which is correct and is exactly what a CI
+# runner reports. What proves the package data shipped is that it can name
+# every adapter -- those names exist only in the packaged .toml files.
+doctor_out="$(cd /tmp && "$venv/bin/afriend" doctor || true)"
+for adapter in agy claude codex ollama opencode; do
+  if ! grep -q "^$adapter " <<<"$doctor_out"; then
+    echo "error: 'afriend doctor' did not report adapter '$adapter' from outside the checkout" >&2
+    echo "$doctor_out" >&2
+    exit 1
+  fi
+done
 
 # The no-install entry point, which the README documents separately.
 (cd /tmp && "$venv/bin/python" -m adversarial_friends --help >/dev/null)
