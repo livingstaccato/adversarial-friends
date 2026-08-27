@@ -7,7 +7,7 @@ round: each friend receives the still-contested claims it did not write
 
 The decisions this file makes are all IO and bookkeeping. Every rule that
 decides an outcome -- who may judge, what settles, what deadlocks, what is
-discarded, what a late amendment becomes -- lives in verdicts.py as pure
+discarded, what an amendment becomes -- lives in verdicts.py as pure
 functions, and is tested there without a subprocess in sight.
 """
 
@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 from .. import verdicts as vd
-from ..adapters import Adapter, FriendSpec
+from ..adapters import Adapter, FriendSpec, friend_key
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
@@ -28,18 +28,6 @@ from ..ledger import Claim, Verdict
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
-
-
-def friend_key(spec: FriendSpec) -> str:
-    """The identity a claim's `origin` records -- see commands/run.py, which
-    writes `origin=[f"{spec.cli}/{spec.lens}"]`.
-
-    Judging is decided by matching this against `Claim.origin`, so it must
-    stay exactly what round 1 wrote. It is deliberately NOT `spec.name`:
-    names carry a positional index (`codex-ops-0`) that the ledger does not,
-    and a ledger record has to mean the same thing when read back.
-    """
-    return f"{spec.cli}/{spec.lens}"
 
 
 @dataclass
@@ -55,32 +43,6 @@ class CrossexamOutcome:
     rounds_run: int = 1
     ceiling_hit: str | None = None
     incomplete: bool = False
-
-
-def _duplicate_key_downgrade(specs: list[FriendSpec]) -> str | None:
-    """Two friends sharing a (cli, lens) pair share an `origin` value.
-
-    `--friend codex:ops --friend codex:ops` produces two distinct friends
-    with one ledger identity, so each is excluded from judging the other's
-    claims as though it had written them. That is a real reduction in the
-    number of independent judges, and it must be visible rather than
-    silently shrinking every claim's judge set.
-    """
-    seen: set[str] = set()
-    collisions: set[str] = set()
-    for spec in specs:
-        key = friend_key(spec)
-        if key in seen:
-            collisions.add(key)
-        seen.add(key)
-    if not collisions:
-        return None
-    return (
-        f"two or more friends share the ledger identity {sorted(collisions)}: "
-        "claims from either are treated as written by both, so each is "
-        "excluded from judging the other's claims and this run has fewer "
-        "independent judges than it has friends."
-    )
 
 
 def _parse_verdicts(payload: dict[str, Any], judge: str, round_no: int) -> list[Verdict]:
@@ -166,9 +128,6 @@ def run_rounds(
     iteration's in the run directory or the ledger.
     """
     outcome = CrossexamOutcome(claims=list(claims))
-    duplicate_note = _duplicate_key_downgrade(specs)
-    if duplicate_note:
-        outcome.downgrades.append(duplicate_note)
 
     # A claim starts unjudged. `contested` is the non-terminal set, so
     # seeding every claim as contested is what puts it in round 2's slice.
@@ -298,34 +257,11 @@ def run_rounds(
                 _never_reported(missing, spec, _slice_for(spec, contested))
                 continue
             cast = _parse_verdicts(result.result.payload or {}, friend_key(spec), round_no)
-            # Both spec-mandated rewrites, applied before anything counts the
-            # verdict: an unverifiable dispositive verdict is not dispositive
-            # (§6.5), and a final-round amendment cannot create a successor
-            # nobody can judge (§7.2).
-            downgraded = [vd.apply_downgrades(v, round_no, max_rounds) for v in cast]
-            # §7.2: "the report flags it as a late amendment the operator may
-            # want to run again". The rewrite records its proposal in
-            # `reasoning`, but a claim that ends settled-upheld never has its
-            # reasoning rendered -- so without this the flag existed only in
-            # the ledger, which is the one place an operator does not look.
-            # `upheld` is what the late-amendment rewrite produces and
-            # nothing else does: the evidence rule rewrites `amended` to
-            # `unproven`, in any round, and `!= "amended"` could not tell
-            # the two apart -- so a judge whose amendment merely cited
-            # unverifiable evidence in round 2 was reported as having
-            # amended "in the final round", and told to add rounds that
-            # would change nothing. Settled-upheld by two judges of a real
-            # crossexam.
-            for before, after in zip(cast, downgraded, strict=True):
-                if before.verdict == "amended" and after.verdict == "upheld":
-                    outcome.notes.append(
-                        f"{before.claim_id}: {friend_key(spec)} proposed an amendment in "
-                        f"the final round, too late to judge a successor, so it was "
-                        f"counted as `upheld`. Proposed wording: "
-                        f"{before.amended_claim!r}. Re-run with a higher "
-                        "--max-rounds to have it judged."
-                    )
-            cast = downgraded
+            # §6.5's rewrite, applied before anything counts the verdict: an
+            # unverifiable dispositive verdict is not dispositive. There is no
+            # final-round rewrite of `amended` to `upheld` any more -- see
+            # `_settle_round`'s successor handling for what replaced it.
+            cast = [vd.downgrade_unverifiable(v) for v in cast]
             # A judge may only rule on what it was actually shown. Anything
             # else is a verdict on a claim it never saw -- or on its own.
             shown = {c.id for c in _slice_for(spec, contested)}
@@ -433,5 +369,22 @@ def _settle_round(
             store.ledger.append(successor)
             outcome.claims.append(successor)
             outcome.states[successor.id] = vd.CONTESTED
+            if round_no >= max_rounds:
+                # Created by the last judging round, so nothing will judge
+                # it. It stays non-terminal and the run says so. The rule
+                # this replaced rewrote a final-round `amended` to `upheld`
+                # so that no unjudgeable successor could exist -- and on a
+                # real crossexam turned two judges' "the headline is false,
+                # here is the rewrite" into `settled-upheld`, reported as
+                # "judges unanimously agreed the claim stands". A rewrite
+                # nobody could judge is the honest outcome; it blocks a
+                # gate, as a defect two judges called real should.
+                outcome.states[successor.id] = vd.INCOMPLETE
+                outcome.incomplete = True
+                outcome.downgrades.append(
+                    f"{successor.id}: created by an amendment in round {round_no}, "
+                    "the last; no round was left to judge it. Re-run with a higher "
+                    "--max-rounds to have it judged."
+                )
 
         outcome.states[claim.id] = state

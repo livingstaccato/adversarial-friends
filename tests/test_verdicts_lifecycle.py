@@ -9,10 +9,14 @@ excluding it meant a single genuine disagreement -- precisely the outcome
 this tool exists to surface -- disabled termination permanently.
 """
 
+import dataclasses
+from types import SimpleNamespace
+
 import pytest
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
+from adversarial_friends.commands.runmeta import non_advisory_states
 
 # --- §7.2 discard rule -----------------------------------------------------
 
@@ -64,26 +68,6 @@ def test_signature_ignores_ordering():
 # --- §7.2 late amendments --------------------------------------------------
 
 
-def test_late_amendment_is_downgraded_to_upheld():
-    """A successor produced in the final round has no round left to judge
-    it, which would leave both versions non-terminal forever."""
-    v = verdict("claude-security", "amended", amended="the guard is weak")
-    out = verdicts.downgrade_late_amendment(v, round_no=3, max_rounds=3)
-    assert out.verdict == "upheld"
-    assert "the guard is weak" in out.reasoning  # the proposal is preserved
-    assert "late amendment" in out.reasoning
-
-
-def test_amendment_before_the_final_round_is_untouched():
-    v = verdict("claude-security", "amended", amended="the guard is weak")
-    assert verdicts.downgrade_late_amendment(v, round_no=2, max_rounds=3) == v
-
-
-def test_a_non_amendment_is_never_rewritten():
-    v = verdict("claude-security", "refuted")
-    assert verdicts.downgrade_late_amendment(v, round_no=3, max_rounds=3) == v
-
-
 # --- §6.5 evidence symmetry ------------------------------------------------
 
 
@@ -120,36 +104,6 @@ def test_two_unverifiable_judges_cannot_settle_a_claim():
         for j in ("claude-security", "agy-assumptions")
     ]
     assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.UNPROVEN
-
-
-def test_both_rules_firing_at_once_still_ends_unproven():
-    """A final-round `amended` whose evidence was unverifiable triggers both
-    rewrites. Whichever runs first, a judge that could not verify the
-    evidence must not end up casting a dispositive vote."""
-    v = verdict("claude-security", "amended", amended="reworded", assessment="unverifiable")
-    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == verdicts.UNPROVEN
-
-
-def test_the_note_names_the_verdict_the_judge_actually_cast():
-    """This is what the rule order buys, and the only observable difference
-    between the two orders: running the evidence rule first means the
-    recorded reasoning says the judge cast `amended`, not the `upheld` that
-    an internal rewrite would otherwise have substituted for it first."""
-    v = verdict(
-        "claude-security", "amended", amended="reworded", assessment="unverifiable", reasoning=""
-    )
-    note = verdicts.apply_downgrades(v, round_no=3, max_rounds=3).reasoning
-    assert "'amended' to 'unproven'" in note
-
-
-def test_apply_downgrades_still_performs_the_late_amendment_rewrite():
-    v = verdict("claude-security", "amended", amended="reworded", assessment="confirmed")
-    assert verdicts.apply_downgrades(v, round_no=3, max_rounds=3).verdict == "upheld"
-
-
-def test_apply_downgrades_leaves_an_ordinary_verdict_alone():
-    v = verdict("claude-security", "refuted", assessment="confirmed")
-    assert verdicts.apply_downgrades(v, round_no=2, max_rounds=3) == v
 
 
 # --- §6.1 successors from a unanimous amendment ----------------------------
@@ -238,31 +192,6 @@ def test_termination_needs_both_a_streak_and_terminal_claims():
     assert verdicts.loop_should_terminate(2, [verdicts.CONTESTED]) is False
 
 
-# --- Gate ------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "state,blocks",
-    [
-        (verdicts.SETTLED_REFUTED, False),
-        # Exempt, not cleared: the successor carries the question.
-        (verdicts.SUPERSEDED, False),
-        # Nobody could check it -- two rounds of judges unable to verify the
-        # evidence. Passing on that is passing on nobody having looked.
-        (verdicts.DISCARDED, True),
-        (verdicts.SETTLED_UPHELD, True),
-        (verdicts.CONTESTED, True),
-        (verdicts.DEADLOCKED, True),
-        (verdicts.UNPROVEN, True),
-        (verdicts.INCOMPLETE, True),
-    ],
-)
-def test_gate_blocking_per_state(state, blocks):
-    """settled-upheld blocks: the judges agreed the defect is real, which
-    needs a Resolution rather than a pass."""
-    assert verdicts.gate_blocked([state]) is blocks
-
-
 # --- Findings from running the tool on verdicts.py -------------------------
 
 
@@ -304,3 +233,46 @@ def test_loop_termination_ignores_advisory_claims():
     assert verdicts.loop_should_terminate(2, non_advisory_only) is True
     # And with the advisory claim's state included, it would not have.
     assert verdicts.loop_should_terminate(2, [*non_advisory_only, verdicts.UNPROVEN]) is False
+
+
+# --- What the third crossexam of verdicts.py found ---------------------------
+
+
+def test_an_empty_signature_never_discards():
+    """A claim nobody judged -- every friend in its origin -- has signature
+    `()` every round, and `() == ()`: it went `discarded`, "judges looked
+    twice and could not verify", when no judge was ever shown it."""
+    assert verdicts.should_discard((), ()) is False
+    assert verdicts.should_discard(None, ()) is False
+
+
+def test_a_lone_judges_unanimous_amendment_supersedes():
+    """Before this a lone judge's `amended` was contested every round and,
+    in the final round, rewritten to `upheld` -- the judge reported as
+    agreeing with wording it had just rejected."""
+    c = claim(origin=("codex/ops",))
+    v = verdict("claude/security", "amended")
+    roster = ["codex/ops", "claude/security"]
+    assert verdicts.state_for(c, [v], roster, 2, 3) == verdicts.SUPERSEDED
+    assert verdicts.state_for(c, [v], roster, 3, 3) == verdicts.SUPERSEDED
+
+
+def test_judges_for_counts_each_identity_once():
+    """`latest_per_judge` keeps one verdict per identity, so quorum must not
+    count an identity twice or it becomes unreachable."""
+    c = claim(origin=("codex/ops",))
+    roster = ["claude/security", "claude/security", "agy/assumptions", "codex/ops"]
+    assert verdicts.judges_for(c, roster) == ["claude/security", "agy/assumptions"]
+    assert verdicts.quorum_for(verdicts.judges_for(c, roster)) == 2
+
+
+def test_non_advisory_states_excludes_advisory_claims():
+    """The filter `loop_should_terminate` relies on, tested on its own -- the
+    only test of the rule used to pre-filter by hand."""
+    blocking = claim()
+    advisory = dataclasses.replace(claim(), id="c-0002@1", advisory=True)
+    cross = SimpleNamespace(
+        states={"c-0001@1": verdicts.SETTLED_UPHELD, "c-0002@1": verdicts.UNPROVEN}
+    )
+    assert non_advisory_states([blocking, advisory], cross) == [verdicts.SETTLED_UPHELD]
+    assert non_advisory_states([blocking, advisory], None) == []

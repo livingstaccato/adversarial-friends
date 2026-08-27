@@ -58,3 +58,15 @@ def test_a_contested_round_in_between_resets_the_comparison():
     assert _settle(outcome, signatures, 2, ("out-of-scope", "out-of-scope")) == vd.UNPROVEN
     assert _settle(outcome, signatures, 3, ("upheld", "refuted")) == vd.CONTESTED
     assert _settle(outcome, signatures, 4, ("out-of-scope", "out-of-scope")) == vd.UNPROVEN
+
+
+def test_a_claim_nobody_can_judge_is_never_discarded():
+    """Every friend in its origin: no slice contains it, so nothing is
+    `missing`, its signature is `()` every round, and until `should_discard`
+    learned that an empty signature is not evidence, `() == ()` made it
+    `discarded` on the second round."""
+    outcome, signatures = CrossexamOutcome(), {}
+    everyone = [claim(origin=("codex/ops", "claude/security", "agy/assumptions"))]
+    for round_no in (2, 3, 4):
+        _settle_round(outcome, everyone, signatures, SPECS, None, round_no, 6, {})
+        assert outcome.states["c-0001@1"] == vd.UNPROVEN, round_no

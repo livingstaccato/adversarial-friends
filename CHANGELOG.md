@@ -104,6 +104,40 @@ process found along the way each turned into a fix.
   900 s ceiling and left orphans -- its problem, but a fifteen-minute round
   is the cost.
 
+### What the third crossexam found
+
+Run again after those fixes, same roster, same file. Every friend succeeded
+in every round; nine claims, twenty verdicts, seven settled-upheld, none
+garbage, none discarded. Two of the upheld claims changed rules that were in
+the spec.
+
+- **A final-round amendment was rewritten to `upheld`.** The rule existed so
+  no successor could be created with no round left to judge it. On this run
+  both judges of one claim said its headline was false, amended it in the
+  final round, and the rule turned their rewrites into `settled-upheld` --
+  "judges unanimously agreed the claim stands". It was also wrong in loop
+  mode (claims carry into the next iteration) and for a lone judge (whose
+  amendment could never produce a successor). Gone: an amendment is a
+  rewrite in any round, a lone judge's included; a successor created by the
+  last round stays `incomplete`, is named in the report, and blocks a gate.
+- **The ledger identity dropped the model.** `codex:ops:gpt-5` and
+  `codex:ops:gpt-5-mini` shared `codex/ops`: quorum counted two judges,
+  one verdict survived, and which one depended on `--friend` flag order --
+  flag order could clear a gate. The identity is the roster unit now
+  (`cli/lens`, then `@model` and `+effort` when set; existing ledgers are
+  unchanged), a repeated entry is refused up front in any mode that judges,
+  and `judges_for` counts each identity once.
+- **A claim nobody could judge was `discarded` after two rounds**, because
+  its verdict signature was `()` both times and `() == ()`. "Judges looked
+  twice and could not verify" was being said of a claim no judge was shown.
+  An empty signature never discards.
+- `gate_blocked` and `summarize` had no callers -- the gate is
+  `resolutions.blocking_claims`, whose docstring still said `discarded`
+  clears. Both deleted, docstring fixed. `loop_should_terminate` now states
+  the precondition its caller meets, and the filter that meets it has a
+  test. The judge prompt says an amendment must leave the claim's evidence
+  standing, since a successor inherits it.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier

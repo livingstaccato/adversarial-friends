@@ -308,24 +308,53 @@ def test_an_unrelated_friends_failure_does_not_mark_other_claims_incomplete(tmp_
     assert meta["incomplete"] is True
 
 
-# --- The late-amendment note fires only for late amendments ----------------
+# --- Amendments are rewrites, in any round ---------------------------------
 
 
-def test_an_unverifiable_amendment_in_an_early_round_is_not_reported_as_late(tmp_path):
-    """Settled-upheld by two judges of a real crossexam: the evidence rule
-    rewrites `amended` to `unproven` in any round, and the detector's
-    `!= "amended"` could not tell that from the final-round rewrite -- so a
-    round-2 amendment was reported as having come "in the final round" and
-    "counted as upheld", both false, with advice to add rounds that would
-    change nothing."""
+def test_a_final_round_amendment_supersedes_and_leaves_the_successor_incomplete(tmp_path):
+    """Seen on a real crossexam: both judges said a claim's headline was
+    false and amended it in the final round; the rule this replaced rewrote
+    their amendments to `upheld` and reported "judges unanimously agreed the
+    claim stands". A successor created by the last round has nobody left to
+    judge it, and the run says so instead of settling something."""
+    result = _crossexam(
+        tmp_path, "fake:judge_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "2")
+    )
+    meta = _run_json(tmp_path)
+    states = meta["claim_states"]
+    assert "superseded" in states.values(), states
+    successors = [cid for cid in states if cid.endswith("@2")]
+    assert successors and all(states[c] == "incomplete" for c in successors), states
+    assert meta["incomplete"] is True
+    assert any("no round was left to judge it" in d for d in meta["downgrades"]), meta
+    assert result.returncode == 1
+
+
+def test_an_unverifiable_amendment_is_not_a_rewrite(tmp_path):
+    """The evidence rule turns it into `unproven` (§6.5): a judge that could
+    not check the evidence has not rewritten anything either."""
     _crossexam(
         tmp_path, "fake:judge_shaky_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "4")
     )
-    notes = _run_json(tmp_path)["amendment_notes"]
-    assert not any("too late to judge" in n for n in notes), notes
+    states = _run_json(tmp_path)["claim_states"]
+    assert "superseded" not in states.values(), states
 
 
-def test_an_amendment_in_the_final_round_is_reported_as_late(tmp_path):
-    _crossexam(tmp_path, "fake:judge_amend_a", "fake:judge_uphold_b", extra=("--max-rounds", "2"))
-    notes = _run_json(tmp_path)["amendment_notes"]
-    assert any("too late to judge a successor" in n for n in notes), notes
+# --- One identity per roster entry ----------------------------------------
+
+
+def test_a_roster_entry_repeated_verbatim_is_refused(tmp_path):
+    """Two entries with the same (cli, lens, model, effort) would be one
+    ledger identity casting two verdicts; which one counted depended on
+    flag order. Refused before anything is spent."""
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good",
+        mode="crossexam",
+    )
+    assert result.returncode == 2, result.stderr
+    assert "same friend" in result.stderr

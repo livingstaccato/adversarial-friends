@@ -252,3 +252,26 @@ def build_argv(
     if adapter.prompt_mode == "flag-value":
         return [*argv, adapter.prompt_flag, prompt], None, capability
     raise UsageError(f"unknown prompt_mode {adapter.prompt_mode!r}")
+
+
+def friend_key(spec: FriendSpec) -> str:
+    """A friend's ledger identity: what round 1 writes into a claim's
+    `origin`, and what judging matches against to decide who may judge
+    what.
+
+    Deliberately NOT `spec.name`: names carry a positional index
+    (`codex-ops-0`) that the ledger does not, and a resumed or looped run
+    must recognise its own earlier claims. The roster unit is
+    `(cli, model, effort, lens)` (§8.1), so model and effort are part of the
+    identity whenever they are set: two models on one CLI under one lens
+    are two judges. They were one until a crossexam of verdicts.py showed
+    what that cost -- quorum counted both, `latest_per_judge` kept one, and
+    the order of `--friend` flags decided which, and so whether a gate
+    cleared.
+    """
+    key = f"{spec.cli}/{spec.lens}"
+    if spec.model:
+        key += f"@{spec.model}"
+    if spec.effort:
+        key += f"+{spec.effort}"
+    return key

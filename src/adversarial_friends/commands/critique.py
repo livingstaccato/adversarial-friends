@@ -17,7 +17,7 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from ..adapters import Adapter, FriendSpec
+from ..adapters import Adapter, FriendSpec, friend_key
 from ..dispatch import PROMPT_ARGV_WARN_BYTES
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
@@ -193,7 +193,7 @@ def run_critique(
                 Claim(
                     id=format_claim_id(counter),
                     supersedes=None,
-                    origin=[f"{spec.cli}/{spec.lens}"],
+                    origin=[friend_key(spec)],
                     lens=spec.lens,
                     round=round_no,
                     advisory=advisory_for[spec.name],

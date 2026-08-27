@@ -892,7 +892,7 @@ as upheld and fixed in §5.1.
 | H5 doc scope is cwd containment | §12.2 OS-level sandbox or refusal; §12.3 states the residual risk |
 | M6 repair re-prompt contradicts §4.1 | §14.2 repair is a pure transformation, no model call |
 | M7 exit-10 halt breaks the standalone CLI | §4.2 `--merge=exact` default; orchestrator halt opt-in |
-| M8 amendment originator undefined | §6.1 `origin` is a list; §7.2 final-round amendments downgrade |
+| M8 amendment originator undefined | §6.1 `origin` is a list; §7.2 final-round amendments downgrade -- the downgrade has since been removed, see the §7.2 M8 note below |
 | M9 `--max-calls 60` below default fan-out | §7.4 derived from the resolved roster |
 | M10 dry-round counting contradictory | §7.3 pseudocode |
 | M11 hash check satisfied by any edit | §6.4 per-location verification; resolutions labeled attestations |
@@ -1090,3 +1090,42 @@ successor is the live claim and carries the question, and blocking the original
 too would demand two resolutions for one defect. `superseded` is also entered the
 moment judges unanimously amend, not when the successor reaches a terminal state
 as the §7.2 row reads; the successor's own state is what the gate looks at.
+
+### §7.2 M8 — a final-round amendment is not rewritten to `upheld`
+
+The body says a final-round `amended` is downgraded to `upheld` so that no
+successor exists with no round left to judge it. A third crossexam of
+`verdicts.py` showed the rule doing the opposite of its intent, on itself: both
+judges of a claim said its headline was false and amended it in the final round,
+the rule rewrote both amendments to `upheld`, and the claim ended
+`settled-upheld` — "judges unanimously agreed the claim stands". The same run
+established that the rule was wrong in `loop` mode, where claims carry into the
+next iteration and are judged again, and for a lone judge, whose `amended`
+could never produce a successor at all.
+
+An amendment is a rewrite, in any round. Unanimous `amended` produces a
+successor; a lone judge's unanimous `amended` does too. A successor created by
+the last judging round has nobody left to judge it: it stays `incomplete`, the
+run is marked incomplete and says which claim and why, and under `gate` it
+blocks — a defect the judges called real, in words they chose, is the opposite
+of a pass. Raising `--max-rounds` then does what the old note claimed it would.
+
+Amendments are rewrites of wording only. The verdict schema carries
+`amended_claim` and nothing else, so a successor inherits its ancestor's
+evidence, location, severity, failure scenario and fix unchanged; the judge
+prompt says so and tells a judge whose rewrite would invalidate them to refute
+instead.
+
+### §8.1 — the ledger identity is the roster unit
+
+A claim's `origin` entries, and the identity judging matches against, were
+`cli/lens`. §8.1 makes the roster unit `(cli, model, effort, lens)`, and the gap
+showed up as two defects at once: two models on one CLI under one lens counted
+as two judges for quorum while `latest_per_judge` kept one verdict per
+identity, so their claims could never settle — and which of the two verdicts
+survived depended on `--friend` flag order, which is to say flag order could
+clear a gate. The identity is now `cli/lens`, with `@model` and `+effort`
+appended when set. Existing ledgers, written without models, are unchanged. A
+roster entry repeated verbatim is refused before any run that judges starts,
+rather than downgraded into a run that cannot settle its claims; `report` has no
+judging and still allows it.

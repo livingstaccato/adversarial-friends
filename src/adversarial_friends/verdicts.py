@@ -20,7 +20,6 @@ surface -- disabled loop termination permanently and forced every run to a
 ceiling.
 """
 
-from collections import Counter
 from collections.abc import Iterable
 import dataclasses
 
@@ -73,9 +72,18 @@ def judges_for(claim: Claim, roster: Iterable[str]) -> list[str]:
     `origin` is a list because an amended claim carries both its author and
     its amender, and corroborated claims accumulate every friend that raised
     them -- all of them are excluded, not just the first.
+
+    One entry per identity. A roster entry repeated verbatim is refused
+    before a run starts, but the count here must never exceed what
+    `latest_per_judge` can keep -- one verdict per identity -- or quorum
+    becomes unreachable and every such claim ends `unproven`.
     """
     origins = set(claim.origin)
-    return [friend for friend in roster if friend not in origins]
+    judges: list[str] = []
+    for friend in roster:
+        if friend not in origins and friend not in judges:
+            judges.append(friend)
+    return judges
 
 
 def quorum_for(judges: Iterable[str]) -> int:
@@ -167,6 +175,16 @@ def state_for(
         # on its own claim is that it stands -- i.e. `upheld`.
         if unanimous and kinds == {"upheld"}:
             return SETTLED_UPHELD
+        if unanimous and kinds == {"amended"}:
+            # "Real, but wrongly worded" from the only judge there is: the
+            # rewrite becomes a successor like any other unanimous
+            # amendment, even though that successor -- authored by both
+            # friends of a two-friend roster -- will have no judge left,
+            # which the run reports. The alternative, deadlocking every
+            # round and then counting the final round's amendment as
+            # `upheld`, reported the judge as agreeing with wording it had
+            # just rejected.
+            return SUPERSEDED
         return DEADLOCKED if round_no >= max_rounds else CONTESTED
 
     if unanimous:
@@ -208,21 +226,16 @@ def should_discard(previous_signature: _Signature | None, current_signature: _Si
     with an unchanged verdict set makes it terminal `discarded`, reported
     separately because "no judge could verify this" is worth seeing and is
     not the same as "refuted".
-    """
-    return previous_signature is not None and previous_signature == current_signature
 
-
-def downgrade_late_amendment(verdict: Verdict, round_no: int, max_rounds: int) -> Verdict:
-    """§7.2: an `amended` verdict in the final round produces a successor
-    with no round left to judge it, leaving both versions non-terminal
-    forever. In the final round it becomes `upheld`, with the proposed
-    wording preserved in `reasoning` so nothing the judge wrote is lost.
+    Only the caller knows the claim's state: `_settle_round` consults this
+    for a claim `state_for` has just called `unproven`, and clears the
+    stored signature for every other state. An empty signature -- a claim
+    nobody judged, because every friend is in its origin -- never discards:
+    "judges looked twice and could not verify" must not be said of a claim
+    no judge was ever shown. It was, until a crossexam of this file noticed
+    that `() == ()`.
     """
-    if verdict.verdict != "amended" or round_no < max_rounds:
-        return verdict
-    note = f"[late amendment, downgraded to upheld] proposed: {verdict.amended_claim}"
-    reasoning = f"{verdict.reasoning}\n{note}" if verdict.reasoning else note
-    return dataclasses.replace(verdict, verdict="upheld", reasoning=reasoning)
+    return bool(previous_signature) and previous_signature == current_signature
 
 
 def downgrade_unverifiable(verdict: Verdict) -> Verdict:
@@ -244,26 +257,6 @@ def downgrade_unverifiable(verdict: Verdict) -> Verdict:
     )
     reasoning = f"{verdict.reasoning}\n{note}" if verdict.reasoning else note
     return dataclasses.replace(verdict, verdict=UNPROVEN, reasoning=reasoning)
-
-
-def apply_downgrades(verdict: Verdict, round_no: int, max_rounds: int) -> Verdict:
-    """Every per-verdict rewrite the spec requires, applied in one place.
-
-    `downgrade_unverifiable` runs first. Both orders currently produce the
-    same *verdict* for the one input where both rules fire (a final-round
-    `amended` whose evidence was unverifiable): the late-amendment rewrite
-    preserves `evidence_assessment`, so its dispositive `upheld` is still
-    caught by the evidence rule afterwards. The order is fixed here for two
-    reasons that are real even though the outcome currently matches:
-
-    * The recorded `reasoning` differs. Evidence-first names `amended` --
-      the verdict the judge actually cast -- rather than the `upheld` an
-      internal rewrite had already substituted for it.
-    * It does not depend on the amendment rewrite preserving the
-      assessment. Evidence-first stays correct if that ever changes;
-      amendment-first would silently stop applying the evidence rule.
-    """
-    return downgrade_late_amendment(downgrade_unverifiable(verdict), round_no, max_rounds)
 
 
 def build_successor(
@@ -349,22 +342,12 @@ def next_streak(previous: int, failed: bool, dry: bool) -> int:
 def loop_should_terminate(streak: int, claim_states: Iterable[str]) -> bool:
     """§7.3: two dry rounds AND every non-advisory claim terminal.
 
+    `claim_states` must already exclude advisory claims: this sees only
+    state strings and cannot tell. The runner filters through
+    `runmeta.non_advisory_states`, tested on its own. A caller that forgets
+    drives the loop to its iteration ceiling, not into a hang.
+
     Deadlocked counts as terminal here -- see this module's docstring for
     why excluding it broke termination entirely.
     """
     return streak >= 2 and all(state in TERMINAL_STATES for state in claim_states)
-
-
-def summarize(states: Iterable[str]) -> Counter[str]:
-    """Counts per state, for the report header and the gate decision."""
-    return Counter(states)
-
-
-def gate_blocked(states: Iterable[str]) -> bool:
-    """A gate passes only when nothing is left that needs a human.
-
-    Non-terminal states block because the run has not finished deciding
-    them; `settled-upheld` blocks because the judges agreed the defect is
-    real and it needs a Resolution, not a pass.
-    """
-    return any(state not in GATE_CLEARING_STATES | GATE_EXEMPT_STATES for state in states)

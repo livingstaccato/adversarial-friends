@@ -20,7 +20,7 @@ from pathlib import Path
 import shutil
 
 from .. import rosterfile
-from ..adapters import Adapter, FriendSpec
+from ..adapters import Adapter, FriendSpec, friend_key
 from ..cliargs import _specs_from_flags
 from ..errors import NoFriendsError, UsageError
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
@@ -93,6 +93,24 @@ def resolve_friends(
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
+    # Two entries that are the same (cli, lens, model, effort) are one
+    # ledger identity (§8.1). Where friends judge, that identity would cast
+    # two verdicts: quorum would count both, `latest_per_judge` keep one,
+    # and flag order decide which. Refused here, before anything is spent,
+    # rather than downgraded into a run that cannot settle those claims. A
+    # `report` run has no judging, and asking the same friend twice there
+    # is a legitimate way to sample its variance.
+    seen: dict[str, str] = {}
+    for spec in specs if args.mode != "report" else []:
+        key = friend_key(spec)
+        if key in seen:
+            raise UsageError(
+                f"friends {seen[key]!r} and {spec.name!r} are the same friend -- "
+                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
+                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
+                "give one a different lens, model, or effort"
+            )
+        seen[key] = spec.name
 
     # The preset fills effort only where nothing stronger set it, so a roster
     # entry's own `effort` wins -- that is what makes preset weaker than

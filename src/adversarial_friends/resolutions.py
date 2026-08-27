@@ -171,9 +171,10 @@ def blocking_claims(
 ) -> list[Claim]:
     """The claims standing between this run and a clear gate -- §7.5.
 
-    Three things clear a claim: a terminal state that needs no human
-    (`settled-refuted`, `superseded`, `discarded`), an explicit Resolution,
-    or being advisory. Advisory claims never block, because their lens
+    Three things take a claim off the gate: `settled-refuted` (the judges
+    agreed it was wrong), `superseded` (its successor carries the question),
+    or an explicit Resolution. `discarded` blocks -- nobody could check it.
+    Advisory claims never block either, because their lens
     deliberately does not demand a failure scenario -- "this is more than you
     need" is judgment, and gating on it would silence the lens entirely.
 
