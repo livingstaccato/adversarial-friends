@@ -347,3 +347,30 @@ def test_resume_judges_with_the_roster_the_ledger_was_written_against(tmp_path):
     after = _run_json(tmp_path)["roster"]
     assert [s["name"] for s in after] == [s["name"] for s in before]
     assert [s["cli"] for s in after] == [s["cli"] for s in before]
+
+
+def test_a_second_resume_of_the_same_run_is_refused(tmp_path):
+    """A fresh run is protected by the "already exists" refusal, but a
+    resume deliberately reopens a directory that has one. Two CI workers
+    that both notice the same RESPONSE.json reconstructed the same state,
+    dispatched the same round twice, appended duplicate aliases and verdicts
+    to one ledger, and overwrote each other's run.json -- the surviving
+    metadata describing one execution while the ledger held both.
+
+    The lock is advisory and process-scoped, so the way to observe it is to
+    hold it from another process while a resume runs."""
+    import fcntl
+
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    _respond(tmp_path, [])
+
+    with (_run_dir(tmp_path) / ".lock").open("w", encoding="utf-8") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = _resume(tmp_path)
+
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    assert "locked by another process" in result.stderr, result.stderr
+
+    # Released: the same resume now works, so the lock gates concurrency
+    # rather than permanently poisoning the run directory.
+    assert _resume(tmp_path).returncode == 0

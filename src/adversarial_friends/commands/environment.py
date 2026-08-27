@@ -8,12 +8,16 @@ loop itself.
 from collections.abc import Callable
 import concurrent.futures
 import contextlib
+import dataclasses
 from pathlib import Path
 import signal
 import subprocess
 import threading
 from types import FrameType
 from typing import Any
+
+from .. import isolation
+from ..runstore import RunStore
 
 # The type signal.signal() both accepts and returns, per typeshed: a handler
 # callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
@@ -32,8 +36,16 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
     regardless of what directory `afriend` itself happens to be invoked
     from.
     """
+    # `artifact.parent.resolve()`, not `artifact.resolve().parent`: the
+    # directory the user named, with the final artifact symlink NOT
+    # followed. Following it decided the repository from the symlink's
+    # target, so `repo-A/docs/spec.md -> repo-B/spec.md` snapshotted repo-B
+    # and repo-scope friends read a codebase the operator never named --
+    # and a link to a file outside any repository silently downgraded the
+    # whole run to doc scope. The invocation path picks the context; the
+    # link's target supplies only the bytes.
     result = subprocess.run(
-        ["git", "-C", str(artifact.resolve().parent), "rev-parse", "--show-toplevel"],
+        ["git", "-C", str(artifact.parent.resolve()), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
     )
@@ -99,3 +111,65 @@ def install_abort_handlers(
         with contextlib.suppress(ValueError):
             installed[sig] = signal.signal(sig, _handle_abort)
     return installed
+
+
+@dataclasses.dataclass(frozen=True)
+class Revision:
+    """The exact bytes an iteration reviews, and the commit behind them."""
+
+    frozen: Path
+    digest: str
+    text: str
+    snapshot_sha: str | None
+    downgrade: str | None
+
+
+def freeze_revision(
+    store: "RunStore",
+    artifact: Path,
+    frozen: Path,
+    digest: str,
+    resuming: bool,
+    last_digest: str | None,
+    repo_root: Path | None,
+    snapshot_sha: str | None,
+    iteration: int,
+) -> Revision:
+    """Freeze what this iteration will review, and say if it changed.
+
+    §4.1 lists "the frozen artifact" among a friend's three inputs, and
+    `artifact_hash` in run.json attests to exactly those bytes. Reading the
+    live path at dispatch instead made the frozen copy dead weight: an
+    artifact edited between a halt and a resume was judged while run.json
+    still reported the original hash, and `afriend resolve` compared named
+    locations against a copy nobody had reviewed.
+
+    A `loop` still picks up a revision (§7.3) -- it re-freezes, so the copy,
+    the hash and what friends read stay the same bytes. A resumed run reads
+    the copy its ledger was written against and re-freezes nothing.
+
+    When the bytes changed, two things follow. Terminal states decided
+    against the old text are not decisions about the new one, so the caller
+    drops what it was carrying. And the repository has to move with the
+    text: the snapshot was taken once before the loop, so re-reading the
+    artifact each iteration asked friends to judge NEW wording while
+    repo-scope friends were checked out at the OLD commit -- claim and
+    evidence from two revisions, in one verdict.
+    """
+    if not resuming:
+        frozen, digest = store.artifact_copy(artifact)
+    text = frozen.read_text(encoding="utf-8")
+    if last_digest is None or digest == last_digest:
+        return Revision(frozen, digest, text, snapshot_sha, None)
+    if repo_root is not None:
+        snapshot_sha = isolation.snapshot_commit(repo_root)
+    return Revision(
+        frozen,
+        digest,
+        text,
+        snapshot_sha,
+        f"the artifact changed before iteration {iteration}; claims settled against "
+        "the earlier text were re-opened and judged again, since a revision can "
+        "decide them differently, and the repository was re-snapshotted so friends "
+        "read the same revision the prompt quotes.",
+    )

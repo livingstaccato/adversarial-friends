@@ -22,6 +22,7 @@ from typing import Any
 
 from . import isolation
 from .adapters import Adapter, Capability, FriendSpec
+from .ceilings import DEFAULT_MAX_CONCURRENCY
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .dispatch import _UNKNOWN_CAPABILITY, _dispatch, _exception_outcome, _stderr_tail
@@ -64,6 +65,7 @@ def dispatch_round(
     keep: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> list[RoundResult]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -165,7 +167,12 @@ def dispatch_round(
             dispatch_specs = [s for s in specs if s.name in cwd_for]
             if not dispatch_specs:
                 return []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(dispatch_specs)) as pool:
+            # Bounded: see ceilings.DEFAULT_MAX_CONCURRENCY. `pool.map`
+            # still returns results in `dispatch_specs` order, so a round's
+            # aggregation is unchanged -- only how many friends are in
+            # flight at once.
+            workers = max(1, min(max_concurrency, len(dispatch_specs)))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
                 on_pool(pool)
                 try:
                     results = list(pool.map(_run_one, dispatch_specs))

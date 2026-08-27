@@ -5,12 +5,13 @@ would let `codex review --uncommitted` -- "staged, unstaged, and untracked" --
 review the tool's own scratch files as part of the diff under review.
 """
 
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import IO, Any
 
 from .errors import UsageError
 from .ids import validate_friend_name
@@ -23,7 +24,15 @@ def default_root() -> Path:
     return Path(state) / "adversarial-friends" / "runs"
 
 
+class RunLocked(UsageError):
+    """Another process is writing this run directory."""
+
+
 class RunStore:
+    # The exclusive lock this process holds on its run directory, kept for
+    # the process's lifetime (see `lock`).
+    _lock_handle: "IO[str] | None" = None
+
     def __init__(self, root: Path, run_id: str, resume: bool = False) -> None:
         self.root = Path(root)
         self.run_id = run_id
@@ -55,6 +64,36 @@ class RunStore:
             # unhandled traceback out of cmd_run.
             raise UsageError(f"cannot create run directory {self.run_dir}: {exc}") from exc
         self.ledger = Ledger(self.run_dir / "claims.jsonl")
+
+    def lock(self) -> None:
+        """Take the run directory's exclusive lock for the rest of the process.
+
+        A fresh run is protected by the "already exists" refusal below, but
+        a resume deliberately reopens a directory that has one -- so two
+        CI workers that both notice the same RESPONSE.json could reconstruct
+        the same state, dispatch the same round twice, append duplicate
+        aliases and verdicts to one ledger, and overwrite each other's
+        round files and run.json. The last writer's metadata then describes
+        one of the two executions while the ledger holds both.
+
+        `flock` is advisory and process-scoped, released by the OS when this
+        process exits however it exits -- including a kill that gives no
+        `finally` a chance to run. The handle is kept on the instance for
+        exactly that lifetime.
+        """
+        self._lock_handle = (self.run_dir / ".lock").open("w", encoding="utf-8")
+        try:
+            fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            self._lock_handle.close()
+            self._lock_handle = None
+            raise RunLocked(
+                f"run directory is locked by another process: {self.run_dir}. "
+                "Two runs writing one directory duplicate ledger records and "
+                "overwrite each other's output; wait for the other to finish."
+            ) from exc
+        self._lock_handle.write(f"{os.getpid()}\n")
+        self._lock_handle.flush()
 
     def round_dir(self, round_no: int) -> Path:
         path = self.run_dir / f"round-{round_no}"

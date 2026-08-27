@@ -60,13 +60,16 @@ running under. The runner itself is **stdlib-only** — zero runtime
 dependencies.
 
 ```bash
-uv tool install git+https://github.com/livingstaccato/adversarial-friends
+uv tool install adversarial-friends
 ```
 
 <details>
 <summary>Other install methods</summary>
 
 ```bash
+# From git, for a version that is not yet released
+uv tool install git+https://github.com/livingstaccato/adversarial-friends
+
 # From a local checkout
 git clone https://github.com/livingstaccato/adversarial-friends
 cd adversarial-friends

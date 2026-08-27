@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+The rest of the fifth crossexam's findings -- the eight the 0.1.2 batch left
+open -- plus two defects that surfaced while testing them.
+
+- **Friends reviewed the live file, not the frozen copy.** §4.1 lists "the
+  frozen artifact" among a friend's three inputs and `artifact_hash`
+  attests to those bytes, but every dispatch re-read the live path, which
+  made the frozen read dead code. An artifact edited between a halt and a
+  resume was judged while run.json still reported the original hash, and
+  `afriend resolve` compared locations against a copy nobody had reviewed.
+  A loop re-freezes per iteration instead, so the copy, the hash and what
+  friends read are the same bytes.
+- **A `fixed` resolution could be accepted for a file nobody touched.** The
+  snapshot was taken only for repo-scope friends or `gate`, but `afriend
+  resolve` accepts any run directory and never reads the mode -- so a
+  doc-scope crossexam recorded no snapshot, every location verified as
+  `unverifiable`, and `unverifiable` does not refuse `fixed`. The snapshot
+  is taken whenever there is a repository; it is a commit object built from
+  the index, with no worktree and no checkout.
+- **A symlinked artifact reviewed the wrong repository.** Repository
+  selection resolved the artifact before asking git which repo enclosed it,
+  so `repo-A/docs/spec.md -> repo-B/spec.md` snapshotted repo-B. The path
+  the operator names picks the context; the link's target supplies only the
+  bytes.
+- **Two concurrent resumes shared one run directory.** A fresh run is
+  protected by the "already exists" refusal, but a resume deliberately
+  reopens a directory that has one, so two CI workers could dispatch the
+  same round twice, append duplicate records to one ledger, and overwrite
+  each other's run.json. An advisory lock now refuses the second with an
+  explanation.
+- **The fan-out was unbounded**: one thread, one process and one worktree
+  per friend, all at once. A large generated roster could exhaust file
+  descriptors or a provider's rate limit before repeat detection saw a
+  single failure. Bounded at eight, which a hand-written roster never
+  reaches.
+- **The wall-clock ceiling bounded the gaps between rounds, not the run.** A
+  friend dispatched a second before it expired ran its own full timeout
+  past it -- 900 seconds by default -- and a run that finished in that
+  round reported no ceiling hit at all. Every friend's timeout is capped at
+  what is left.
+- **Nothing had ever executed the wall-clock branch.** `Budget.out_of_time`
+  had a unit test; the code that calls it did not, because an end-to-end
+  run cannot wait two hours and the check read the clock directly.
+  `AF_CLOCK_OFFSET_S` moves the clock the run reads, so the same arithmetic
+  runs against a clock a test can advance.
+
+Two more, both found by writing that test:
+
+- The first clock injection cancelled itself out -- the offset was added to
+  the run's start as well as to each reading -- so the ceiling could never
+  be reached however far the clock was moved.
+- A ceiling hit in the iteration loop exited **1**, not 11: `ceiling_hit`
+  was only ever read off the crossexam outcome, and a budget exhausted
+  before any crossexam existed left the operator with a plain failure and
+  no mention of the ceiling they had set.
+
+Also: dead comments and a dead type alias left by the `commands/` split are
+gone, `JUDGING_MODES` is defined once rather than twice, `cmd_run` crossed
+the line cap again and the revision an iteration reviews now lives in one
+function (`environment.freeze_revision`), and the README installs from PyPI.
+
 ## 0.1.3
 
 **The first release published to PyPI.** 0.1.2 was tagged but never

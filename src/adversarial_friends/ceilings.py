@@ -21,6 +21,15 @@ import math
 DEFAULT_MAX_ROUNDS = 3
 DEFAULT_MAX_LOOP_ITERATIONS = 5
 DEFAULT_MAX_WALL_CLOCK_S = 7200
+# How many friends may be dispatched at once. Every one of them costs a
+# thread, a child process (or HTTP request), and an isolation directory --
+# a `git worktree add` for a repo-scope friend. Unbounded, a large generated
+# roster started all of them at once and could exhaust file descriptors,
+# memory, or a provider's rate limit before repeat detection saw a single
+# failure. Eight is deliberately conservative: a hand-written roster never
+# reaches it, so the bound only ever engages where it is the difference
+# between a slow round and a failed one.
+DEFAULT_MAX_CONCURRENCY = 8
 
 # The headroom factor in §7.4's derivation. Above 1.0 because a friend
 # process invocation counts even when it is a re-invocation after a resume,
@@ -76,6 +85,18 @@ class Budget:
 
     def out_of_time(self, now: float) -> bool:
         return now - self.started >= self.max_wall_clock_s
+
+    def seconds_left(self, now: float) -> float:
+        """What remains of the wall-clock ceiling, never below zero.
+
+        The ceiling was sampled only between rounds, so a friend dispatched
+        one second before it expired ran for its own full timeout -- 900
+        seconds by default, plus the kill grace -- and a run that finished
+        in that round reported no ceiling hit at all. Capping each friend's
+        timeout at what is left makes the ceiling bound the run rather than
+        the gaps between its rounds.
+        """
+        return max(0.0, self.started + self.max_wall_clock_s - now)
 
     def exhaust(self, reason: str) -> None:
         # First ceiling hit wins: it is the one that actually truncated the

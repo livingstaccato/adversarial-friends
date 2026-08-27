@@ -13,6 +13,7 @@ functions, and is tested there without a subprocess in sight.
 
 from collections.abc import Callable
 import concurrent.futures
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -93,6 +94,14 @@ def _slice_for(spec: FriendSpec, contested: list[Claim]) -> list[Claim]:
     still open, and it is simply not dispatched this round."""
     key = friend_key(spec)
     return [claim for claim in contested if key not in claim.origin]
+
+
+def _within_deadline(specs: list[FriendSpec], seconds_left: float) -> list[FriendSpec]:
+    """Every spec, with its timeout capped at what remains of the run's
+    wall-clock ceiling. A friend dispatched just under the ceiling used to
+    run for its own full timeout past it."""
+    remaining = int(seconds_left)
+    return [dataclasses.replace(s, timeout=min(s.timeout, remaining)) for s in specs]
 
 
 def _never_reported(missing: dict[str, set[str]], spec: FriendSpec, claims: list[Claim]) -> None:
@@ -254,6 +263,8 @@ def run_rounds(
         if budget.out_of_time(now()):
             budget.exhaust(f"--max-wall-clock reached before round {round_no}")
             break
+        # A friend may not outlive the ceiling it was dispatched under.
+        judge_specs = _within_deadline(judge_specs, budget.seconds_left(now()))
 
         results = dispatch_round(
             judge_specs,

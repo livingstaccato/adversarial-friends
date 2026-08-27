@@ -36,8 +36,7 @@ from ..orchestrator import (
 from ..runstore import RunStore
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
-
-JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+from .runmeta import JUDGING_MODES
 
 
 def _question_asked(round_dir: Path) -> str:

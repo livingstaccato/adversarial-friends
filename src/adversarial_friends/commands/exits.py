@@ -24,6 +24,7 @@ def decide_exit(
     mode: str,
     cross: CrossexamOutcome | None,
     blocking: list[Claim],
+    ceiling_hit: str | None = None,
 ) -> int:
     if abort_signum is not None:
         # Distinct from both branches below: a run cancelled by signal
@@ -38,8 +39,14 @@ def decide_exit(
     # §7.6's exit precedence. A ceiling outranks every outcome below it
     # because a truncated run has not evaluated anything: a CI wrapper
     # can then treat 11 as "retry" and 1 as "block" without ambiguity.
-    if cross is not None and cross.ceiling_hit is not None:
-        print(f"afriend: {cross.ceiling_hit}", file=sys.stderr)
+    # `ceiling_hit` is the run-level one: a budget exhausted in the
+    # iteration loop, before any crossexam existed to record it. Read only
+    # from the crossexam outcome, that run reported a plain exit 1 -- a
+    # ceiling the operator set, hit, and never told about. Found while
+    # writing the first test that actually reaches the wall-clock branch.
+    hit = ceiling_hit or (cross.ceiling_hit if cross is not None else None)
+    if hit is not None:
+        print(f"afriend: {hit}", file=sys.stderr)
         return CeilingError.exit_code
     # A run where not one friend produced a usable result (every round
     # failed/timed out) is not a success -- exit 1 ("gate blocked or

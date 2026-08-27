@@ -5,23 +5,20 @@ Split out of cli.py.
 """
 
 import argparse
-from collections.abc import Callable
 import concurrent.futures
 import dataclasses
-import hashlib
 import json
 import os
 from pathlib import Path
 import signal
 import threading
 import time
-from types import FrameType
 from typing import Any
 import uuid
 
 from .. import isolation
 from ..adapters import friend_key, load_adapters
-from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
+from ..ceilings import BUDGET_EXHAUSTED, Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
 from ..ledger import Alias, Claim
@@ -39,19 +36,11 @@ from ..verdictschema import schema_path as verdict_schema_path
 from .confinement import confinement_downgrades
 from .critique import run_critique
 from .crossexam import run_rounds
-from .environment import _resolve_repo_root, install_abort_handlers
+from .environment import _resolve_repo_root, freeze_revision, install_abort_handlers
 from .exits import decide_exit
 from .friends import roster_for_run
 from .resume import resume_round_one
 from .runmeta import JUDGING_MODES, _base_meta, unresolved_loop_states, validate_run_args
-
-# Every mode that judges claims after critiquing them. `report` stops at the
-# critique round; the rest all run cross-examination and differ only in what
-# they do with its result.
-
-# The type signal.signal() both accepts and returns, per typeshed: a
-# handler callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
-_SignalHandler = Callable[[int, FrameType | None], Any] | int | None
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -130,6 +119,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             specs = [dataclasses.replace(s, scope="doc") for s in specs]
 
+        # Injectable so an end-to-end test can reach the wall-clock branch
+        # without hanging a worker for two hours: AF_CLOCK_OFFSET_S is added
+        # to every reading this run takes. Nothing else changes -- the
+        # arithmetic under test is the same arithmetic -- and with the
+        # variable unset `now()` is `time.monotonic` exactly.
+        offset = float(os.environ.get("AF_CLOCK_OFFSET_S", "0") or 0)
+
+        def now() -> float:
+            return time.monotonic() + offset
+
+        # Raw, deliberately: the offset represents time that has ALREADY
+        # passed, so it must not be added to the start as well or it would
+        # cancel out and the ceiling would never be reached.
         run_started = time.monotonic()
         resume_dir = getattr(args, "_resume_dir", None)
         if resume_dir is not None:
@@ -141,6 +143,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
             store = RunStore(Path(args.out) if args.out else default_root(), run_id)
             frozen, digest = store.artifact_copy(artifact)
+        # One writer per run directory (see RunStore.lock). Taken before
+        # anything is read from it or written to it.
+        store.lock()
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
 
@@ -159,8 +164,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         # index, with no worktree and no checkout, so the cost is small and
         # confined to the mode that benefits.
         snapshot_sha = None
-        needs_snapshot = any(s.scope == "repo" for s in specs) or args.mode == "gate"
-        if repo_root is not None and needs_snapshot:
+        # Taken whenever there is a repository, not only for repo-scope
+        # friends or `gate`. `afriend resolve` accepts any run directory and
+        # never reads the mode, so a doc-scope crossexam with no snapshot
+        # made every location `unverifiable` -- and an `unverifiable` check
+        # does not refuse a `fixed` disposition, so the ledger recorded a
+        # verified-looking fix for a file nobody had touched. The cost is a
+        # commit object built from the index: no worktree, no checkout.
+        if repo_root is not None:
             snapshot_sha = isolation.snapshot_commit(repo_root)
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
@@ -229,48 +240,41 @@ def cmd_run(args: argparse.Namespace) -> int:
                         f"{iteration}'s critique round"
                     )
                     break
-                if budget.out_of_time(time.monotonic()):
+                if budget.out_of_time(now()):
                     budget.exhaust(f"--max-wall-clock reached before iteration {iteration}")
                     break
+                # §7.4: a friend may not outlive the ceiling it was
+                # dispatched under. Without this the ceiling only bounded
+                # the gaps between rounds, and a friend started a second
+                # before it expired ran its own full timeout past it.
+                round_specs = [
+                    dataclasses.replace(s, timeout=min(s.timeout, int(budget.seconds_left(now()))))
+                    for s in specs
+                ]
 
-                # Re-read on every iteration. The runner never edits an artifact
-                # (§7.5), so a `loop` picks up a revision only if something else
-                # made one between iterations; when nothing did, the identical
-                # artifact produces identical claims, they all alias, and the
-                # dry-round streak is what ends the loop.
-                artifact_text = artifact.read_text(encoding="utf-8")
-                # Terminal states are only terminal for the text they were
-                # decided against. A loop exists to pick up a revision, and
-                # a claim settled against the old text is not settled
-                # against the new one -- carried across an edit, the report
-                # goes on naming a defect the edit may have removed. So the
-                # carry stops at the edit and every claim is judged again.
-                iteration_digest = hashlib.sha256(artifact_text.encode("utf-8")).hexdigest()
-                if last_digest is not None and iteration_digest != last_digest:
+                revision = freeze_revision(
+                    store,
+                    artifact,
+                    frozen,
+                    digest,
+                    resume_dir is not None,
+                    last_digest,
+                    repo_root,
+                    snapshot_sha,
+                    iteration,
+                )
+                frozen, digest = revision.frozen, revision.digest
+                artifact_text, snapshot_sha = revision.text, revision.snapshot_sha
+                if revision.downgrade is not None:
+                    downgrades.append(revision.downgrade)
                     carry_over = None
-                    # The prompt text and the repository the friends read
-                    # have to be the same revision. `snapshot_sha` was taken
-                    # once, before the loop, so re-reading the artifact each
-                    # iteration asked friends to judge NEW wording while
-                    # repo-scope friends were checked out at the OLD commit
-                    # -- evidence and claim from two different revisions, in
-                    # one verdict. Re-snapshot with the text.
-                    if repo_root is not None and needs_snapshot:
-                        snapshot_sha = isolation.snapshot_commit(repo_root)
-                    downgrades.append(
-                        f"the artifact changed before iteration {iteration}; claims "
-                        "settled against the earlier text were re-opened and judged "
-                        "again, since a revision can decide them differently, and the "
-                        "repository was re-snapshotted so friends read the same "
-                        "revision the prompt quotes."
-                    )
-                last_digest = iteration_digest
+                last_digest = revision.digest
 
                 if resume_dir is not None and iteration == 1:
                     resumed = resume_round_one(
                         args,
                         store,
-                        specs,
+                        round_specs,
                         registry,
                         fake_cmd,
                         artifact,
@@ -293,7 +297,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     break
 
                 critique, all_claims, counter = run_critique(
-                    specs,
+                    round_specs,
                     base_round,
                     all_claims,
                     counter,
@@ -343,7 +347,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # fan-out to decide nothing. A critique report is the honest
                     # result.
                     cross = run_rounds(
-                        specs,
+                        round_specs,
                         all_claims,
                         store,
                         registry,
@@ -435,11 +439,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.mode == "gate":
             meta["gate_blocked"] = bool(blocking)
             meta["gate_blocking_claims"] = [c.id for c in blocking]
+        if budget.exhausted_by and not meta.get("ceiling_hit"):
+            # Same spelling crossexam uses: the label names the ceiling, the
+            # downgrade says which one and when.
+            meta["ceiling_hit"] = BUDGET_EXHAUSTED
+            reason = f"{BUDGET_EXHAUSTED}: {budget.exhausted_by}"
+            if reason not in downgrades:
+                downgrades.append(reason)
         if cross is not None:
             meta["rounds_run"] = max(rounds_reached, cross.rounds_run)
             meta["claim_states"] = cross.states
             meta["amendment_notes"] = cross.notes
-            meta["ceiling_hit"] = cross.ceiling_hit
+            meta["ceiling_hit"] = cross.ceiling_hit or (
+                BUDGET_EXHAUSTED if budget.exhausted_by else None
+            )
             meta["incomplete"] = cross.incomplete
         store.write_run_json(meta)
         store.write_report(
@@ -458,7 +471,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             print(store.run_dir)
 
-        return decide_exit(abort_signum["value"], any_success, args.mode, cross, blocking)
+        return decide_exit(
+            abort_signum["value"],
+            any_success,
+            args.mode,
+            cross,
+            blocking,
+            ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
+        )
     finally:
         # A distinct loop variable name from the `for sig in (...)` loop
         # above: reusing `sig` here would bind it to a different type

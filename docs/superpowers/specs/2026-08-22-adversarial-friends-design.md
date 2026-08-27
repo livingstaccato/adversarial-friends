@@ -1200,3 +1200,52 @@ cost: with one friend no judge is independent of any claim, so a `gate` run
 settles nothing, blocks on nothing, and exits 0 — a cleared gate from a run
 that could not check anything. `roster.DEGRADED_MODES` is the constant that
 decides it.
+
+### §4.1 / §7.3 — the frozen artifact is what friends actually read
+
+A friend's inputs include the frozen artifact, and `artifact_hash` attests to
+those bytes, so dispatch reads the copy in the run directory rather than the
+path on disk. A `loop` re-freezes at the top of each iteration: that is how it
+picks up a revision (§7.3) while keeping the copy, the hash and what friends
+read identical. A resumed run reads the copy its ledger was written against
+and re-freezes nothing, so an artifact edited during a halt cannot be judged
+under the halted run's hash.
+
+### §6.4 — the snapshot is taken whenever there is a repository
+
+§7.5's resolutions compare a named location against the snapshot, and `afriend
+resolve` accepts any run directory without consulting its mode. Taking the
+snapshot only for repo-scope friends or `gate` therefore left a doc-scope
+crossexam with none, every location `unverifiable`, and `unverifiable` does
+not refuse a `fixed` disposition — so the ledger could record a verified-
+looking fix for a file nobody had touched. It is taken whenever `repo_root`
+exists: a commit object built from the index, no worktree, no checkout.
+
+### §12.1 — a symlinked artifact keeps its own repository
+
+The repository is chosen from the directory the operator named, with the final
+artifact symlink not followed. Resolving first chose the repository from the
+link's target, so a link into another repository snapshotted that one and
+repo-scope friends read a codebase nobody had asked about.
+
+### §7.4 — the ceilings bound the run
+
+The wall-clock ceiling was sampled between rounds, which bounded the gaps
+rather than the run: a friend dispatched just under it ran its own full
+timeout past it. Every friend's timeout is capped at what remains. A ceiling
+reached anywhere — including in the iteration loop, before any
+cross-examination exists to record it — is reported as `budget-exhausted` and
+exits 11.
+
+Concurrency has a default ceiling too (`DEFAULT_MAX_CONCURRENCY`): every
+dispatched friend costs a thread, a process and an isolation directory, and
+an unbounded roster could exhaust the host before repeat detection saw a
+failure.
+
+### §12.1 — one writer per run directory
+
+A run directory takes an advisory `flock` for the life of the process. The
+"already exists" refusal covers a fresh run; a resume reopens a directory that
+has one, so two workers acting on the same halt could dispatch the same round
+twice and append duplicate records to one ledger. The second is refused with
+an explanation rather than silently interleaved.

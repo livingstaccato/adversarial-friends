@@ -157,6 +157,10 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
 
 
 IMPLEMENTED_MODES = frozenset({"report", "crossexam", "gate", "loop"})
+# Every mode that judges claims after critiquing them. `report` stops at the
+# critique round; the rest all run cross-examination and differ only in what
+# they do with its result. (The explanation lived in commands/run.py, above
+# the import, after the constant itself moved here.)
 JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
 
 
