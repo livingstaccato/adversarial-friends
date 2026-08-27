@@ -175,14 +175,22 @@ def test_ndjson_stream_with_a_benign_error_event_and_real_findings_still_succeed
 # --- claude / codex: real captured stdout through declared envelopes ------
 
 
-def test_claude_captured_stdout_normalizes_successfully():
-    """Real claude 2.1.240 stdout, captured verbatim. The answer lives in
-    `result` as a JSON-escaped string, so this only passes if the declared
-    json_path envelope actually unwraps it -- the bare-object scan alone
-    cannot reach inside a JSON string."""
+def test_claude_pre_schema_stdout_fails_legibly():
+    """Real claude 2.1.240 stdout, captured verbatim on 2026-08-23 WITHOUT
+    --json-schema: the answer lives in `result` as a JSON-escaped string and
+    there is no `structured_output` key at all.
+
+    This used to assert success, when the envelope targeted `result`. The
+    adapter always passes a schema now, and the envelope targets the object
+    claude validated (`structured_output`, see the fixture test above), so
+    this shape can only mean the CLI ignored the schema -- and the right
+    outcome for that is the legible envelope-path failure, not a silent
+    success on a copy that nothing validated. Kept so that fallback stays
+    legible rather than turning into "no parseable JSON"."""
     result = _normalize_fixture("claude", "claude_stdout_captured.json")
-    assert result.succeeded is True
-    assert result.payload == {"no_findings": True}
+    assert result.succeeded is False
+    assert result.payload is not None  # the wrapper itself parsed as JSON
+    assert any("envelope path" in e for e in result.errors)
 
 
 def test_codex_captured_stdout_normalizes_successfully():
@@ -193,3 +201,23 @@ def test_codex_captured_stdout_normalizes_successfully():
     result = _normalize_fixture("codex", "codex_stdout_captured.jsonl")
     assert result.succeeded is True
     assert result.payload == {"no_findings": True}
+
+
+# --- claude under --json-schema: captured 2026-08-26 ------------------------
+
+
+def test_claude_structured_output_fixture_unwraps_to_the_real_findings():
+    """Captured verbatim from `afriend run --friend claude:security` after
+    the schema fix. Under --json-schema claude puts the validated object in
+    `structured_output` (an OBJECT) and a serialized copy in `result` (a
+    string). The envelope now targets the object, which needed
+    _unwrap_json_path to accept a dict target -- it accepted only strings,
+    so the first run after the schema fix still failed with "structured JSON
+    but contained no findings". This fixture pins the whole path through
+    the real adapter TOML."""
+    result = _normalize_fixture("claude", "claude_structured_output_captured.json")
+    assert result.succeeded is True, result.errors
+    findings = result.payload["findings"]
+    assert len(findings) >= 3
+    assert findings[0]["severity"] == "high"
+    assert "Logout" in findings[0]["claim"]

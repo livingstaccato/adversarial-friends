@@ -26,3 +26,16 @@ high = ["--effort", "high"]
 [envelope]
 kind = "json_path"
 path = "response"
+
+# Captured verbatim from a real failure: a crossexam run on 2026-08-26 whose
+# agy login had lapsed. Exit status was 1 and stdout empty, so this sentence
+# is the only place the failure is legible. The substring stops short of the
+# trailing ", then retry." so a minor rewording of the tail cannot silently
+# turn the marker off.
+#
+# NOT the marker: "Error: authentication timed out." -- that is what agy
+# says when it cannot REACH the auth endpoint, and matching it would abort
+# every network-denied run as an auth failure. See failures.py.
+[auth]
+stderr_contains = ["authentication required. Run 'agy' to log in"]
+remediation = "run `agy` interactively to log in, then re-run"

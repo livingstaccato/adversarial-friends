@@ -149,6 +149,14 @@ def _unwrap_json_path(raw: str, envelope: Envelope) -> str | None:
     if not isinstance(parsed, dict):
         return None
     value = _dotted_get(parsed, envelope.path)
+    if isinstance(value, dict) and value:
+        # The target is the answer itself, not a string holding it. claude
+        # under --json-schema puts the validated object in
+        # `structured_output` and a serialized copy in `result`; pointing
+        # the envelope at the object rather than the copy means the thing
+        # the CLI validated is the thing we parse. Re-serialized so the rest
+        # of normalize() sees the same text it would have unwrapped.
+        return json.dumps(value)
     if not isinstance(value, str) or not value.strip():
         return None
     return value

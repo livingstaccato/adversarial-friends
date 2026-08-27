@@ -4,6 +4,13 @@ base_argv = ["--print", "--output-format", "json"]
 prompt_mode = "trailing-arg"
 readonly_argv = ["--tools", "Read,Grep,Glob"]
 schema_flag = "--json-schema"
+# --json-schema takes the schema JSON itself, not a path. Passed a path,
+# claude fails before the model sees anything:
+#   Error: --json-schema is not valid JSON: JSON Parse error: Unrecognized token '/'
+# Found by a crossexam that produced zero verdicts. claude had never once
+# produced output under a schema -- the third of three native-schema
+# adapters shipped this way, after codex and agy in 0.1.1.
+schema_inline = true
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
@@ -13,9 +20,12 @@ effort_kind = "native"
 # JSON-escaped string, alongside session_id/usage/total_cost_usd.
 structured_output = true
 
+# Under --json-schema the validated object is `structured_output`; `result`
+# holds the same thing serialized as a STRING, and is where prose lands
+# when the model does not manage structured output at all.
 [envelope]
 kind = "json_path"
-path = "result"
+path = "structured_output"
 
 [effort]
 low = ["--effort", "low"]

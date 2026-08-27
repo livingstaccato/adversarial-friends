@@ -28,10 +28,17 @@ class AuthMarkers:
 
     paths: tuple[tuple[str, str], ...] = ()
     exit_codes: tuple[int, ...] = ()
+    # Substrings of stderr that mean auth failure. Allowed ONLY as a string
+    # captured verbatim from a real failure of that CLI, never a guess at
+    # what it might say: the first real capture (agy) carried the marker
+    # nowhere else -- exit 1, shared with unrelated errors, and empty
+    # stdout. See failures.py for why the substring must be the specific
+    # one and not "auth".
+    stderr: tuple[str, ...] = ()
     remediation: str = ""
 
     def declared(self) -> bool:
-        return bool(self.paths or self.exit_codes)
+        return bool(self.paths or self.exit_codes or self.stderr)
 
 
 def parse_auth(data: dict[str, Any] | None) -> AuthMarkers:
@@ -44,7 +51,10 @@ def parse_auth(data: dict[str, Any] | None) -> AuthMarkers:
         if isinstance(rule, dict) and "path" in rule and "equals" in rule
     )
     codes = tuple(int(c) for c in data.get("exit_codes", []) if isinstance(c, int))
-    return AuthMarkers(paths=paths, exit_codes=codes, remediation=str(data.get("remediation", "")))
+    stderr = tuple(str(s) for s in data.get("stderr_contains", []) if isinstance(s, str) and s)
+    return AuthMarkers(
+        paths=paths, exit_codes=codes, stderr=stderr, remediation=str(data.get("remediation", ""))
+    )
 
 
 @dataclass(frozen=True)
@@ -59,6 +69,13 @@ class Adapter:
     model_flag: str
     internal_timeout_flag: str
     effort_kind: str  # native | unverified | none
+    # Whether schema_flag takes the schema TEXT rather than a path to it.
+    # claude's `--json-schema <schema>` wants the JSON itself; handed a
+    # path it fails before the model sees anything ("--json-schema is not
+    # valid JSON: Unrecognized token '/'"). Declared, not inferred, for the
+    # same reason as everything else here: the two forms are
+    # indistinguishable from the flag's spelling.
+    schema_inline: bool = False
     effort: dict[str, list[str]] = field(default_factory=dict)
     transport: str = "exec"  # exec | http
     endpoint: str = ""
@@ -145,6 +162,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             prompt_flag=data.get("prompt_flag", ""),
             readonly_argv=list(data.get("readonly_argv", [])),
             schema_flag=data.get("schema_flag", ""),
+            schema_inline=bool(data.get("schema_inline", False)),
             model_flag=data.get("model_flag", ""),
             internal_timeout_flag=data.get("internal_timeout_flag", ""),
             effort_kind=data.get("effort_kind", "none"),
@@ -200,7 +218,12 @@ def build_argv(
 
     schema_emitted = bool(adapter.schema_flag)
     if schema_emitted:
-        argv += [adapter.schema_flag, str(schema_file)]
+        schema_value = (
+            Path(schema_file).read_text(encoding="utf-8")
+            if adapter.schema_inline
+            else str(schema_file)
+        )
+        argv += [adapter.schema_flag, schema_value]
 
     if spec.model and adapter.model_flag:
         argv += [adapter.model_flag, spec.model]

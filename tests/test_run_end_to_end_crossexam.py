@@ -243,3 +243,27 @@ def test_skipped_claims_never_become_discarded(tmp_path):
     _crossexam(tmp_path, "fake:judge_partial_a", "fake:judge_partial_b", "fake:judge_uphold_c")
     states = set(_run_json(tmp_path)["claim_states"].values())
     assert "discarded" not in states
+
+
+def test_a_disabled_judge_leaves_claims_incomplete_not_discarded(tmp_path):
+    """Seen in a real run: two judges failed identically twice and were
+    disabled, after which two more rounds ran with NOBODY dispatched and
+    every claim ended `discarded` -- "judges looked twice and could not
+    verify" -- when no judge had looked at all.
+
+    The tracker's filter was local to dispatch_round, so an empty result set
+    read as "nothing failed this round"; below-quorum claims then went
+    `unproven`, and two identical empty rounds tripped the discard rule.
+    """
+    result = _crossexam(
+        tmp_path, "fake:judge_uphold_a", "fake:judge_fail_b", extra=("--max-rounds", "6")
+    )
+    meta = _run_json(tmp_path)
+    states = meta["claim_states"]
+    assert "discarded" not in states.values(), states
+    assert "incomplete" in states.values(), states
+    assert meta["incomplete"] is True
+    assert result.returncode == 1
+    # Round 2 fails, round 3 fails again, round 4 finds no judge it may
+    # dispatch. Anything past that is a fan-out that decides nothing.
+    assert meta["rounds_run"] <= 4, meta["rounds_run"]

@@ -274,3 +274,32 @@ def test_duplicate_adapter_name_raises(tmp_path):
     (tmp_path / "b.toml").write_text('name = "dup"\nbinary = "y"\n')
     with pytest.raises(UsageError):
         adapters.load_adapters(tmp_path)
+
+
+def test_claude_schema_is_passed_inline_not_as_a_path(registry, files):
+    """`claude --json-schema <schema>` takes the JSON itself. Every adapter
+    used to get the schema FILE PATH, so claude rejected it before the model
+    saw anything: "--json-schema is not valid JSON: Unrecognized token '/'".
+
+    The third of three native-schema adapters found broken the same way --
+    codex and agy in 0.1.1, claude here -- and for the same reason: no test
+    ran a real CLI under a schema. Found by a crossexam that produced zero
+    verdicts."""
+    import json
+
+    prompt, schema = files
+    argv, _, cap = adapters.build_argv(
+        registry["claude"], spec(cli="claude", scope="repo"), prompt_file=prompt, schema_file=schema
+    )
+    assert cap.schema is True
+    value = argv[argv.index("--json-schema") + 1]
+    assert value != str(schema)
+    assert json.loads(value) == json.loads(schema.read_text())
+
+
+def test_path_schema_adapters_still_receive_the_path(registry, files):
+    prompt, schema = files
+    argv, _, _ = adapters.build_argv(
+        registry["codex"], spec(cli="codex", scope="repo"), prompt_file=prompt, schema_file=schema
+    )
+    assert str(schema) in argv

@@ -22,6 +22,37 @@ defects, found by finally running it:
   have turned "fails to start" into "starts able to write anywhere", so the
   two ship together.
 
+### A crossexam that produced zero verdicts
+
+Pointed `--mode crossexam` at `verdicts.py` with codex, agy, and claude. Two of
+three friends failed every round; the failures were worth more than the
+verdicts would have been.
+
+- **claude had never produced output under a schema.** `--json-schema` takes
+  the JSON itself; every adapter was handed a file path, so claude failed
+  before the model saw anything. The third of three native-schema adapters
+  found broken the same way, after codex and agy in 0.1.1 — and for the same
+  reason: no test ran a real CLI under a schema. Adapters can now declare
+  `schema_inline`, and claude's envelope reads `structured_output`.
+- **Discard fired on nothing.** Once the repeat tracker disabled both other
+  judges, two more rounds ran with nobody dispatched and every claim ended
+  `discarded` — "judges looked twice and could not verify" — when no judge
+  had looked at all. A judge the tracker withholds now counts as one that
+  never reported (§7.2 M12), those claims read `incomplete`, and a round in
+  which every judge is withheld ends the run instead of burning the rest.
+- **Discard compared non-consecutive rounds.** `unproven` in round 2,
+  `contested` in round 3, `unproven` again in round 4 was compared against
+  round 2 and discarded — closing a claim with live disagreement on the
+  record. codex raised this while reviewing the file; a reachability test
+  confirmed it before it was fixed.
+- **The first real auth marker.** agy's login had lapsed, and it said so only
+  on stderr: `Error: authentication required. Run 'agy' to log in, then
+  retry.` §14's marker kinds could not express that, so adapters may now
+  declare `stderr_contains` — restricted to a sentence captured verbatim from
+  a real failure (recorded as a divergence in the spec's §20). Beside it,
+  the near-miss that must not be adopted: `authentication timed out` is what
+  agy says when it cannot *reach* the auth endpoint.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier
@@ -136,13 +167,11 @@ repository does not get to choose who reviews it.
 
 ### Known gaps
 
-- No adapter declares auth markers yet — none has been captured from a real
-  auth failure, and guessing at stderr is what the design rejects. Repeat
-  detection covers the cost of it meanwhile: a friend that fails identically
-  twice stops being dispatched. One near-miss is recorded in `failures.py`:
-  agy says `Error: authentication timed out` when it cannot REACH the auth
-  endpoint, so adopting that as the marker would classify every
-  network-denied run as an auth failure and abort it.
+- Only agy declares an auth marker (captured from a real failure; see
+  Unreleased). The others stay unclassified until theirs is captured —
+  guessing at stderr is what the design rejects. Repeat detection covers the
+  cost meanwhile: a friend that fails identically twice stops being
+  dispatched.
 - A doc-scope friend of a read-only-capable CLI is not OS-confined. Its own
   read-only mode is now engaged there (see Unreleased), so it is no longer
   unrestrained — but OS-level confinement still needs verified credential

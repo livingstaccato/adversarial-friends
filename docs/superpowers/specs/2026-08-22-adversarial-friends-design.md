@@ -947,6 +947,7 @@ listed here with which side is authoritative.
 | §12.2 | Confinement keys on "friends **without** a `readonly` capability" | Confinement keys on adapters that declare no `readonly_argv` at all | **Code**, with a stated residual gap |
 | §7.4, §17 | `--max-spend-usd`, "native where supported, estimated elsewhere" | Not implemented at all | **Code** |
 | §17 | `af run ... [--rounds N]` | `--max-rounds N` | **Code** — §7.4 of the same spec already says `--max-rounds` |
+| §14 | Auth markers come from the CLI's structured output, "never by stderr substring" | An adapter may also declare `stderr_contains`, restricted to a sentence captured verbatim from a real failure | **Code**, with the spec's reasoning kept as the condition |
 
 ### §11.1 — capability must not be derived by reading argv
 
@@ -1038,3 +1039,26 @@ friend that always fails. The honest outcome is what the code does now — no
 adapter, and `--friend gemini:*` rejected as an unknown cli (exit 2) with the
 known adapters listed. Users looking for the Google path are pointed at `agy`
 by the README's "What's implemented" table.
+
+### §14 — a captured stderr sentence is a marker, a guessed word is not
+
+§14 forbids classifying auth from stderr because gemini-family CLIs write
+unrelated noise there on every run, so matching "auth" or "unauthorized" has a
+real false-positive rate, and a false auth classification aborts the whole
+run. That reasoning is right and is kept.
+
+What the rule did not anticipate is a CLI whose auth failure is legible
+**nowhere else**. The first real capture was agy with a lapsed login during a
+crossexam on 2026-08-26: exit status 1, which it shares with unrelated errors;
+empty stdout; and on stderr exactly
+
+    Error: authentication required. Run 'agy' to log in, then retry.
+
+Neither of §14's permitted marker kinds -- a path into structured output, or an
+exit code used exclusively for auth -- can express that. So `AuthMarkers` gains
+`stderr_contains`, under the condition that preserves §14's intent: the
+substring must be that CLI's own sentence, captured verbatim from a real
+failure, never a word it might plausibly use. `agy.toml` records the capture
+and, beside it, the near-miss that must not be adopted -- `"authentication
+timed out"`, which is what agy says when it cannot *reach* the auth endpoint,
+and which would classify every network-denied run as an auth failure.

@@ -245,8 +245,29 @@ def run_rounds(
         budget.spend(len(results))
         outcome.rounds_run = round_no
 
+        # A judge the repeat tracker refused to dispatch is a judge that
+        # never reported -- §7.2's M12, the same as one that failed. The
+        # tracker filters inside dispatch_round, so from here a withheld
+        # judge is simply absent from `results`; before this was counted, a
+        # round in which EVERY judge was withheld looked like a round in
+        # which nothing failed. Below-quorum claims then went `unproven`,
+        # and two such rounds -- identical, since nobody spoke -- tripped
+        # the discard rule. Seen in a real run: five claims `discarded`,
+        # "judges looked twice and could not verify", when no judge had
+        # been dispatched at all.
+        dispatched = {spec.name for spec, _capability, _result in results}
+        withheld = [s.name for s in judge_specs if s.name not in dispatched]
+        if not results and withheld and not abort_event.is_set():
+            outcome.downgrades.append(
+                f"round {round_no}: every judge with claims left to judge is "
+                f"disabled ({', '.join(withheld)}); no judging round could be run."
+            )
+            outcome.incomplete = True
+            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, True)
+            break
+
         round_verdicts: list[Verdict] = []
-        any_failed = False
+        any_failed = bool(withheld)
         for spec, capability, result in results:
             outcome.friends_meta.append(persist_result(store, round_no, spec, capability, result))
             if result.failure_reason is not None:
@@ -352,6 +373,15 @@ def _settle_round(
             if vd.should_discard(signatures.get(claim.id), signature):
                 state = vd.DISCARDED
             signatures[claim.id] = signature
+        else:
+            # "Two consecutive rounds" means consecutive. A claim that was
+            # unproven in round 2, contested in round 3 (judges engaged and
+            # split) and unproven again in round 4 was, until this reset,
+            # compared against round 2 and discarded -- closing a claim
+            # with live disagreement on the record as though nobody had
+            # ever been able to look. Raised by codex reviewing this file;
+            # reachability confirmed by test_discard_consecutive.
+            signatures.pop(claim.id, None)
 
         if state == vd.SUPERSEDED:
             # Latest per judge, not every amendment ever cast. `verdicts`

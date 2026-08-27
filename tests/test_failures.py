@@ -150,3 +150,48 @@ def test_the_abort_message_carries_adapter_remediation():
 def test_the_abort_message_says_nothing_extra_without_remediation():
     message = failures.auth_abort_message("codex-ops", adapter(exit_codes=(1,)))
     assert message.endswith("spending them.")
+
+
+# --- stderr markers ----------------------------------------------------------
+
+AGY_CAPTURED = "Error: authentication required. Run 'agy' to log in, then retry.\n"
+
+
+def _with_stderr(text, **kw):
+    import dataclasses
+
+    return dataclasses.replace(outcome(**kw), stderr=text)
+
+
+def test_a_declared_stderr_marker_classifies_auth():
+    """The first marker captured from a REAL auth failure was agy's, and it
+    lives only on stderr: exit 1 (shared with unrelated errors) and empty
+    stdout. Payload paths and exclusive exit codes could not express it."""
+    a = adapter(stderr=("authentication required. Run 'agy' to log in",))
+    assert failures.classify(_with_stderr(AGY_CAPTURED), a) == failures.AUTH
+
+
+def test_the_network_timeout_string_is_not_an_auth_failure():
+    """The trap recorded in failures.py: with the network unreachable agy
+    says "authentication timed out". Under the real marker that must stay
+    UNKNOWN, or every network-denied run aborts as an auth failure."""
+    a = adapter(stderr=("authentication required. Run 'agy' to log in",))
+    blocked = _with_stderr(
+        "Error: authentication timed out.\nError: authentication failed or timed out\n"
+    )
+    assert failures.classify(blocked, a) == failures.UNKNOWN
+
+
+def test_timeout_still_outranks_a_stderr_marker():
+    a = adapter(stderr=("authentication required",))
+    assert failures.classify(_with_stderr(AGY_CAPTURED, timed_out=True), a) == failures.UNKNOWN
+
+
+def test_agy_ships_the_captured_marker():
+    from adversarial_friends.adapters import load_adapters
+    from adversarial_friends.paths import ADAPTER_DIR
+
+    agy = load_adapters(ADAPTER_DIR)["agy"]
+    assert agy.auth.declared()
+    assert failures.classify(_with_stderr(AGY_CAPTURED), agy) == failures.AUTH
+    assert "agy" in agy.auth.remediation

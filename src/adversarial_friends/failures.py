@@ -9,13 +9,24 @@ cannot possibly succeed.
 
 Two mechanisms here, and the difference between them matters:
 
-**Classification (§14) is by adapter-declared marker, never by stderr
-substring.** The spec is explicit, and its reason is concrete: gemini emits
-extension-loader errors, a true-color warning and a ripgrep notice to stderr
-on *every* invocation, so matching "auth" or "unauthorized" against stderr
-has a real false-positive rate. A false auth classification is expensive --
-it aborts the whole run. So a marker must appear in the CLI's own structured
-output, and anything unrecognised is `UNKNOWN` rather than guessed at.
+**Classification (§14) is by adapter-declared marker, never by inference.**
+The spec's reason is concrete: gemini emits extension-loader errors, a
+true-color warning and a ripgrep notice to stderr on *every* invocation, so
+matching "auth" or "unauthorized" against stderr has a real false-positive
+rate. A false auth classification is expensive -- it aborts the whole run.
+
+The spec went one step further and forbade stderr entirely, requiring the
+marker in the CLI's structured output. That was relaxed (recorded in the
+spec's divergences) when the first real capture arrived and lived nowhere
+else: agy on a lapsed login exits 1 -- a status it shares with unrelated
+errors -- prints nothing to stdout, and says on stderr exactly
+
+    Error: authentication required. Run 'agy' to log in, then retry.
+
+So a stderr marker is allowed, on the condition that keeps the spec's
+reasoning intact: it must be that CLI's own sentence, captured verbatim
+from a real failure, not a word the CLI might plausibly use. Anything
+unrecognised is still `UNKNOWN` rather than guessed at.
 
 **Repeat detection needs no markers at all.** A friend that failed the same
 way on two consecutive rounds is not going to succeed on the third, whatever
@@ -25,11 +36,10 @@ failures nobody has captured a marker for. It disables the friend for the
 rest of the run instead of aborting it, because unlike auth it is inferred
 rather than declared, and inference should cost less when it is wrong.
 
-No adapter ships populated auth markers yet: none has been captured from a
-real auth failure, and inventing one would be exactly the stderr-guessing
-the spec rejects. The mechanism is here and the fallback is honest -- the
-same order the envelope work followed, where shapes were declared only once
-someone had run the CLI and saved its output.
+agy is the only adapter with a populated marker, captured from a real
+failure during a crossexam whose other two friends broke for unrelated
+reasons. The others stay empty until someone captures theirs; inventing one
+would be exactly the guessing the spec rejects.
 
 One trap, found while probing whether the CLIs honor HTTPS_PROXY: with the
 network unreachable, agy prints
@@ -84,6 +94,9 @@ def classify(outcome: SpawnResult, adapter: Adapter | None) -> str:
     payload = outcome.result.payload
     for path, expected in markers.paths:
         if _dotted(payload, path) == expected:
+            return AUTH
+    for needle in markers.stderr:
+        if needle in outcome.stderr:
             return AUTH
     return UNKNOWN
 

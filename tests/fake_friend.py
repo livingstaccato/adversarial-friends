@@ -204,7 +204,18 @@ _JUDGEMENTS = {
     # claims it skipped would look merely unproven, and the discard rule
     # would then close them as terminal without anyone having judged them.
     "judge_partial": lambda: _judge_first_only(),
+    # Critiques normally in round 1, then fails the same way in every
+    # judging round -- what a real friend did when its login lapsed
+    # mid-run. Two identical failures get it disabled by the repeat tracker;
+    # the claims it was supposed to judge must then read `incomplete`, not
+    # `discarded` as though it had looked twice and failed.
+    "judge_fail": lambda: _fail_judging(),
 }
+
+
+def _fail_judging() -> None:
+    print("Error: scripted judging failure", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _judge_first_only() -> None:
