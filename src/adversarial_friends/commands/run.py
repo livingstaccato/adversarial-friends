@@ -19,7 +19,7 @@ from typing import Any
 import uuid
 
 from .. import isolation
-from ..adapters import load_adapters
+from ..adapters import friend_key, load_adapters
 from ..ceilings import Budget, derive_max_calls, warn_if_unreachable
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
@@ -43,7 +43,7 @@ from .environment import _resolve_repo_root, install_abort_handlers
 from .exits import decide_exit
 from .friends import resolve_friends
 from .resume import resume_round_one
-from .runmeta import JUDGING_MODES, _base_meta, non_advisory_states, validate_run_args
+from .runmeta import JUDGING_MODES, _base_meta, unresolved_loop_states, validate_run_args
 
 # Every mode that judges claims after critiquing them. `report` stops at the
 # critique round; the rest all run cross-examination and differ only in what
@@ -217,6 +217,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         cross = None
         streak = 0
         iterations_run = 0
+        # The highest round number the run reached, across every loop
+        # iteration. Not the last iteration's own count: once a loop stops
+        # re-judging what an earlier iteration already settled, its final
+        # iteration can run no judging round at all, and reporting that
+        # iteration's count said "Rounds run: 1" for a run that had just
+        # spent eight.
+        rounds_reached = 0
 
         # Any halt for the orchestrator must leave a resumable run behind.
         # A resumed run rebuilds its whole configuration from run.json, so
@@ -300,6 +307,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 )
                 budget.spend(critique.calls)
                 iterations_run = iteration
+                rounds_reached = max(rounds_reached, base_round)
                 friends_meta.extend(critique.friends_meta)
                 downgrades.extend(critique.downgrades)
                 all_aliases.extend(critique.aliases)
@@ -346,8 +354,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                         keep=args.keep,
                         extra_args=extra_args,
                         pass_env=tuple(args.pass_env),
+                        prior_states=cross.states if cross is not None else None,
+                        final_block=(args.mode != "loop" or iteration == max_iterations),
                     )
                     all_claims = cross.claims
+                    rounds_reached = max(rounds_reached, cross.rounds_run)
                     friends_meta.extend(cross.friends_meta)
                     downgrades.extend(cross.downgrades)
 
@@ -359,7 +370,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # convergence.
                 dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
                 streak = next_streak(streak, failed=critique.any_failed, dry=dry)
-                if loop_should_terminate(streak, non_advisory_states(all_claims, cross)):
+                roster_keys = [friend_key(s) for s in specs]
+                if loop_should_terminate(
+                    streak, unresolved_loop_states(all_claims, cross, roster_keys)
+                ):
                     break
                 if budget.exhausted_by:
                     break
@@ -411,7 +425,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             meta["gate_blocked"] = bool(blocking)
             meta["gate_blocking_claims"] = [c.id for c in blocking]
         if cross is not None:
-            meta["rounds_run"] = cross.rounds_run
+            meta["rounds_run"] = max(rounds_reached, cross.rounds_run)
             meta["claim_states"] = cross.states
             meta["amendment_notes"] = cross.notes
             meta["ceiling_hit"] = cross.ceiling_hit

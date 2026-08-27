@@ -173,9 +173,9 @@ def state_for(
         # is a deadlock rather than a settlement (§7.1). Agreement with the
         # originator's position is required, and the originator's position
         # on its own claim is that it stands -- i.e. `upheld`.
-        if unanimous and kinds == {"upheld"}:
+        if kinds == {"upheld"}:
             return SETTLED_UPHELD
-        if unanimous and kinds == {"amended"}:
+        if kinds == {"amended"}:
             # "Real, but wrongly worded" from the only judge there is: the
             # rewrite becomes a successor like any other unanimous
             # amendment, even though that successor -- authored by both
@@ -344,7 +344,7 @@ def loop_should_terminate(streak: int, claim_states: Iterable[str]) -> bool:
 
     `claim_states` must already exclude advisory claims: this sees only
     state strings and cannot tell. The runner filters through
-    `runmeta.non_advisory_states`, tested on its own. A caller that forgets
+    `runmeta.unresolved_loop_states`, tested on its own. A caller that forgets
     drives the loop to its iteration ceiling, not into a hang.
 
     Deadlocked counts as terminal here -- see this module's docstring for

@@ -20,6 +20,7 @@ from typing import Any
 from ..adapters import FriendSpec
 from ..errors import UsageError
 from ..runstore import default_root
+from ..verdicts import judges_for
 
 # Everything a resumed run must restore rather than re-read from a second
 # command line. §4.2 requires that the same response produce the same run;
@@ -37,6 +38,15 @@ _RESUMABLE_ARGS = (
     "max_calls",
     "max_wall_clock",
     "max_loop_iterations",
+    # The ledger identity is (cli, lens, model, effort) (§8.1), so these
+    # decide what a claim's `origin` says. Left out, a run resumed without
+    # `--model` re-resolved its friends under different identities than the
+    # ones frozen in the ledger -- and a claim's own author, no longer
+    # matching its origin, was handed its own claim to judge.
+    "model",
+    "effort",
+    "roster",
+    "lens",
 )
 
 
@@ -93,7 +103,7 @@ def _base_meta(
         "invocation": {
             "artifact": str(artifact),
             "friend": list(args.friend),
-            **{name: getattr(args, name) for name in _RESUMABLE_ARGS},
+            **{name: getattr(args, name, None) for name in _RESUMABLE_ARGS},
         },
         "roster": [dataclasses.asdict(s) for s in specs],
         # Names of environment variables withheld from confined friends.
@@ -179,16 +189,35 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
     return args, artifact
 
 
-def non_advisory_states(claims: list[Any], cross: Any) -> list[str]:
+def unresolved_loop_states(claims: list[Any], cross: Any, roster: list[str]) -> list[str]:
     """Claim states §7.3 actually terminates on.
 
-    Advisory claims are excluded because their lens deliberately does not
-    demand a failure scenario -- including them would let one advisory claim
-    stuck at `unproven` block termination forever and force every loop to its
-    ceiling, which is the failure §7.3's H4 correction exists to prevent,
-    arriving through a different door.
+    Two kinds of claim are excluded, both for the same reason: a further
+    iteration cannot change them, so waiting on them forces every loop to
+    its ceiling -- the failure §7.3's H4 correction exists to prevent,
+    arriving through two more doors.
+
+    Advisory claims, because their lens deliberately does not demand a
+    failure scenario. And claims with no independent judge on the roster,
+    which stay `unproven` however many iterations run.
     """
     if cross is None:
         return []
     advisory = {c.id for c in claims if c.advisory}
-    return [state for cid, state in cross.states.items() if cid not in advisory]
+    by_id = {c.id: c for c in claims}
+    states = []
+    for cid, state in cross.states.items():
+        if cid in advisory:
+            continue
+        claim = by_id.get(cid)
+        # A claim every friend co-authored has no independent judge, so no
+        # further iteration can move it off `unproven` -- waiting for it is
+        # waiting forever, and the loop ran to its iteration ceiling doing
+        # exactly that. It is still reported, and still blocks a gate; it
+        # just cannot be what a loop is waiting for. (An amended claim's
+        # successor inherits both the author's and the amenders' origins,
+        # which on a two-friend roster is the whole roster.)
+        if claim is not None and not judges_for(claim, roster):
+            continue
+        states.append(state)
+    return states

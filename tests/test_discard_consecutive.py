@@ -35,7 +35,7 @@ def _cast(outcome, round_no, kinds):
 def _settle(outcome, signatures, round_no, kinds, max_rounds=6):
     _cast(outcome, round_no, kinds)
     contested = [claim(origin=("codex/ops",))]
-    _settle_round(outcome, contested, signatures, SPECS, None, round_no, max_rounds, {})
+    _settle_round(outcome, contested, signatures, SPECS, None, round_no, max_rounds, {}, True)
     return outcome.states["c-0001@1"]
 
 
@@ -68,5 +68,5 @@ def test_a_claim_nobody_can_judge_is_never_discarded():
     outcome, signatures = CrossexamOutcome(), {}
     everyone = [claim(origin=("codex/ops", "claude/security", "agy/assumptions"))]
     for round_no in (2, 3, 4):
-        _settle_round(outcome, everyone, signatures, SPECS, None, round_no, 6, {})
+        _settle_round(outcome, everyone, signatures, SPECS, None, round_no, 6, {}, True)
         assert outcome.states["c-0001@1"] == vd.UNPROVEN, round_no

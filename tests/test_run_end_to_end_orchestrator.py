@@ -306,3 +306,24 @@ def test_exact_merge_never_halts_for_extraction(tmp_path):
     result = run_af(tmp_path, _artifact(tmp_path), "--friend", "fake:offtopic")
     assert result.returncode == 1, result.stderr
     assert not (_run_dir(tmp_path) / "round-1" / "REQUEST.json").exists()
+
+
+# --- Resume must not re-resolve friends under new identities ---------------
+
+
+def test_resume_restores_the_model_the_ledger_identities_were_written_with(tmp_path):
+    """The ledger identity is (cli, lens, model, effort) (§8.1), so `--model`
+    decides what a claim's `origin` says. It was not among the arguments a
+    resume restores, so a run resumed without it re-resolved its friends
+    under different identities than the ledger held -- and a claim whose
+    author no longer matched its origin was handed its own claim to judge."""
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b", extra=("--model", "gpt-5"))
+    origins = {o for r in _ledger(tmp_path) if r["type"] == "claim" for o in r["origin"]}
+    assert origins and all(o.endswith("@gpt-5") for o in origins), origins
+
+    _respond(tmp_path, [])
+    result = _resume(tmp_path)
+    assert result.returncode == 0, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["invocation"]["model"] == "gpt-5"
+    assert {s["model"] for s in meta["roster"]} == {"gpt-5"}

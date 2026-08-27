@@ -325,8 +325,10 @@ def test_a_final_round_amendment_supersedes_and_leaves_the_successor_incomplete(
     assert "superseded" in states.values(), states
     successors = [cid for cid in states if cid.endswith("@2")]
     assert successors and all(states[c] == "incomplete" for c in successors), states
-    assert meta["incomplete"] is True
-    assert any("no round was left to judge it" in d for d in meta["downgrades"]), meta
+    # NOT the run-level flag: that means "a required friend failed" (§7.2
+    # M12) and the report says so in those words. No friend failed here.
+    assert meta["incomplete"] is False
+    assert any("no round was left to judge" in d for d in meta["downgrades"]), meta
     assert result.returncode == 1
 
 

@@ -16,7 +16,7 @@ import pytest
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
-from adversarial_friends.commands.runmeta import non_advisory_states
+from adversarial_friends.commands.runmeta import unresolved_loop_states
 
 # --- §7.2 discard rule -----------------------------------------------------
 
@@ -63,9 +63,6 @@ def test_signature_ignores_ordering():
         "c-0001@1",
     )
     assert a == b
-
-
-# --- §7.2 late amendments --------------------------------------------------
 
 
 # --- §6.5 evidence symmetry ------------------------------------------------
@@ -266,7 +263,7 @@ def test_judges_for_counts_each_identity_once():
     assert verdicts.quorum_for(verdicts.judges_for(c, roster)) == 2
 
 
-def test_non_advisory_states_excludes_advisory_claims():
+def test_unresolved_loop_states_excludes_advisory_claims():
     """The filter `loop_should_terminate` relies on, tested on its own -- the
     only test of the rule used to pre-filter by hand."""
     blocking = claim()
@@ -274,5 +271,26 @@ def test_non_advisory_states_excludes_advisory_claims():
     cross = SimpleNamespace(
         states={"c-0001@1": verdicts.SETTLED_UPHELD, "c-0002@1": verdicts.UNPROVEN}
     )
-    assert non_advisory_states([blocking, advisory], cross) == [verdicts.SETTLED_UPHELD]
-    assert non_advisory_states([blocking, advisory], None) == []
+    assert unresolved_loop_states([blocking, advisory], cross, ROSTER) == [verdicts.SETTLED_UPHELD]
+    assert unresolved_loop_states([blocking, advisory], None, ROSTER) == []
+
+
+def test_unresolved_loop_states_excludes_claims_no_friend_can_judge():
+    """A claim every friend co-authored can never leave `unproven`, so a loop
+    that waits for it runs to its iteration ceiling -- which is what a
+    two-friend roster did as soon as a lone judge's amendment could build a
+    successor carrying both friends' origins."""
+    unjudgeable = dataclasses.replace(claim(), origin=tuple(ROSTER))
+    cross = SimpleNamespace(states={"c-0001@1": verdicts.UNPROVEN})
+    assert unresolved_loop_states([unjudgeable], cross, ROSTER) == []
+
+
+def test_the_downgrade_records_the_verdict_the_judge_actually_cast():
+    """§6.5 rewrites the verdict; the reasoning is the only place the
+    judge's actual word survives. The assertions on that wording went with
+    the deleted apply_downgrades tests."""
+    out = verdicts.downgrade_unverifiable(
+        verdict("claude/security", "refuted", assessment="unverifiable")
+    )
+    assert out.verdict == verdicts.UNPROVEN
+    assert "downgraded from 'refuted' to 'unproven'" in out.reasoning

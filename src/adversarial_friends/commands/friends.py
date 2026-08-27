@@ -93,25 +93,6 @@ def resolve_friends(
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
-    # Two entries that are the same (cli, lens, model, effort) are one
-    # ledger identity (§8.1). Where friends judge, that identity would cast
-    # two verdicts: quorum would count both, `latest_per_judge` keep one,
-    # and flag order decide which. Refused here, before anything is spent,
-    # rather than downgraded into a run that cannot settle those claims. A
-    # `report` run has no judging, and asking the same friend twice there
-    # is a legitimate way to sample its variance.
-    seen: dict[str, str] = {}
-    for spec in specs if args.mode != "report" else []:
-        key = friend_key(spec)
-        if key in seen:
-            raise UsageError(
-                f"friends {seen[key]!r} and {spec.name!r} are the same friend -- "
-                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
-                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
-                "give one a different lens, model, or effort"
-            )
-        seen[key] = spec.name
-
     # The preset fills effort only where nothing stronger set it, so a roster
     # entry's own `effort` wins -- that is what makes preset weaker than
     # roster in §10.1's order rather than merely different.
@@ -155,4 +136,36 @@ def resolve_friends(
             for s in specs
         ]
 
+    _refuse_duplicate_identities(specs, args.mode)
     return ResolvedRoster(specs=specs, preset=preset, source=roster_source)
+
+
+def _refuse_duplicate_identities(specs: list[FriendSpec], mode: str) -> None:
+    """Two entries that are the same (cli, lens, model, effort) are one
+    ledger identity (§8.1). Where friends judge, that identity would cast
+    two verdicts: quorum would count both, `latest_per_judge` keep one, and
+    flag order decide which -- so it is refused before anything is spent,
+    rather than downgraded into a run that cannot settle those claims. A
+    `report` run has no judging, and asking the same friend twice there is a
+    legitimate way to sample its variance.
+
+    Called LAST, on the roster the run will actually use. Called before the
+    preset filled efforts and before §10.1 layer 4's `--model`/`--effort`
+    override, it missed every collision those layers create -- `--friend
+    codex:ops:gpt-5 --friend codex:ops --model gpt-5` resolves to two
+    friends with one identity -- and refused rosters whose duplicate entry
+    `--max-friends` would have dropped before the run.
+    """
+    if mode == "report":
+        return
+    seen: dict[str, str] = {}
+    for spec in specs:
+        key = friend_key(spec)
+        if key in seen:
+            raise UsageError(
+                f"friends {seen[key]!r} and {spec.name!r} are the same friend -- "
+                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
+                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
+                "give one a different lens, model, or effort"
+            )
+        seen[key] = spec.name

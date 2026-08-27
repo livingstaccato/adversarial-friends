@@ -221,7 +221,17 @@ def _render_verdict_sections(
             if claim is not None:
                 lines.append(f"**Claim:** {_escape_block(claim.claim)}")
                 lines.append("")
-            for verdict in [v for v in verdicts if v.claim_id == cid]:
+            cast = [v for v in verdicts if v.claim_id == cid]
+            if not cast:
+                # The heading above promises both sides quoted verbatim.
+                # Nothing is quoted here, so say why rather than leaving a
+                # bare state under that promise.
+                lines.append(
+                    "*No verdict was cast on this claim: no friend on the roster "
+                    "was independent of it, or none reported.*"
+                )
+                lines.append("")
+            for verdict in cast:
                 lines.append(
                     f"- **{_escape_cell(verdict.verdict)}** "
                     f"(confidence {_escape_cell(verdict.confidence)}, "

@@ -338,3 +338,15 @@ def test_two_friends_with_identical_cli_and_lens_get_distinct_names(tmp_path):
     meta = json.loads((runs[0] / "run.json").read_text())
     names = [f["name"] for f in meta["friends"]]
     assert len(names) == len(set(names)) == 2
+
+
+def test_report_mode_allows_the_same_friend_twice(tmp_path):
+    """A judging mode refuses two friends that share one ledger identity --
+    one identity casting two verdicts breaks quorum, and flag order decides
+    which survives. `report` has no judging, and asking the same friend
+    twice there is a legitimate way to sample its variance, so the guard
+    exempts it."""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nA design with a missing guard.\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good", "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr

@@ -19,7 +19,7 @@ Corroboration -- several friends independently raising the same claim -- is
 the strongest signal this tool produces, and exact-match dedup is exactly
 where it would otherwise be lost: without tracking it, a duplicate collapses
 into a single alias record and the fact that N friends agreed is gone. Every
-claim's `origin` field names which (cli, lens) pairs raised it; when a claim
+claim's `origin` field names which (cli, lens, model, effort) identities -- see adapters.friend_key raised it; when a claim
 is aliased away, its origin is merged into whichever claim it aliased so
 that claim's `origin` list still reflects everyone who actually raised it.
 """

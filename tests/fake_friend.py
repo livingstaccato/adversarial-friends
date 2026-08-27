@@ -257,8 +257,10 @@ def _judgement_for(mode: str):
 
     A fake friend's mode travels in the LENS slot of `--friend fake:<mode>`,
     and a claim's ledger identity is `cli/lens` -- so two friends with the
-    same mode would be one identity, which the runner refuses before any
-    run that judges (§8.1: a roster entry must be distinct). Matching by prefix means `judge_uphold_a` and `judge_uphold_b` behave
+    same mode would be one identity, which the runner refuses before any run
+    that judges (§8.1: a roster entry must be distinct).
+
+    Matching by prefix means `judge_uphold_a` and `judge_uphold_b` behave
     identically while remaining two distinct friends.
     """
     for key, behaviour in _JUDGEMENTS.items():

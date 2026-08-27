@@ -138,6 +138,52 @@ the spec.
   test. The judge prompt says an amendment must leave the claim's evidence
   standing, since a successor inherits it.
 
+### What a review of that batch found
+
+The amendment and identity changes above were right about `crossexam` and
+wrong about `loop`, where claims carry from one iteration to the next.
+Reproduced by running the tool, all three:
+
+- **A superseded claim was re-judged every iteration.** Each iteration
+  re-seeded every claim `contested`, so a claim an earlier iteration had
+  already settled was judged again -- and an amended one produced a
+  successor under the same id each time, since claim ids count versions
+  rather than records. A three-iteration loop wrote `c-0002@2` into the
+  ledger three times. Terminal is terminal across iterations now.
+- **A claim no friend could judge held the loop open forever.** An amended
+  claim's successor inherits both the author's and the amenders' origins,
+  which on a two-friend roster is the whole roster: no independent judge,
+  `unproven` for good. Since the empty-signature fix above (correctly)
+  stopped discarding it, the loop waited for it and ran to its iteration
+  ceiling -- twelve judging rounds where three would do. A loop no longer
+  waits on what no further iteration could change; the claim is still
+  reported and still blocks a gate.
+- **"No round was left to judge it" was told to the operator once per
+  iteration**, for a successor the next iteration went on to carry. That
+  ceiling is per iteration; the message now waits for the last one.
+
+Three more from the same review, none loop-specific:
+
+- The run-level `incomplete` flag was being set for an unjudgeable
+  successor. It means "a required friend failed" (§7.2 M12) and the report
+  says so in those words; no friend had failed.
+- The duplicate-identity guard ran before the preset filled efforts and
+  before `--model`/`--effort` (§10.1 layer 4), so it missed the collisions
+  those create -- `--friend codex:ops:gpt-5 --friend codex:ops --model
+  gpt-5` resolves to two friends with one identity -- and it refused
+  rosters whose duplicate entry `--max-friends` would have dropped. It runs
+  last now, on the roster the run will actually use.
+- **`--model` and `--effort` were not restored on resume.** Now that they
+  are part of the ledger identity, a run resumed without them re-resolved
+  its friends under identities the ledger did not hold, and a claim whose
+  author no longer matched its origin was handed its own claim to judge.
+
+Also: an unsettled claim with no verdicts says why instead of sitting under
+a heading promising both sides quoted, and `Rounds run:` counts the highest
+round the run reached rather than the last iteration's -- which, once a
+final iteration could legitimately run no judging round, read "1" for a run
+that had just spent eight.
+
 A duplicated block in `cmd_run` also ran the resolve/validate/downgrade
 sequence three times over, calling `resolve_friends` three times and
 reassigning `specs` *after* confinement had been computed from an earlier

@@ -119,6 +119,8 @@ def run_rounds(
     keep: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
+    prior_states: dict[str, str] | None = None,
+    final_block: bool = True,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -126,12 +128,24 @@ def run_rounds(
     `loop` iteration passes a higher number: each iteration owns a distinct
     block of round numbers so its rounds never collide with an earlier
     iteration's in the run directory or the ledger.
+
+    `prior_states` carries what an earlier loop iteration already decided.
+    Terminal is terminal (§7.2): without it every iteration re-seeded every
+    claim `contested` and re-judged claims it had already settled -- and a
+    claim re-amended each iteration produced a successor with the SAME id
+    each time, since `bump_claim_id` counts versions rather than records.
+    A three-iteration loop wrote `c-0002@2` into the ledger three times.
+
+    `final_block` says this is the last block of rounds the run will
+    schedule. It is False for every loop iteration but the last, where
+    another iteration will judge what this one leaves contested.
     """
     outcome = CrossexamOutcome(claims=list(claims))
 
     # A claim starts unjudged. `contested` is the non-terminal set, so
     # seeding every claim as contested is what puts it in round 2's slice.
-    outcome.states = {claim.id: vd.CONTESTED for claim in outcome.claims}
+    carried = prior_states or {}
+    outcome.states = {claim.id: carried.get(claim.id, vd.CONTESTED) for claim in outcome.claims}
     signatures: dict[str, vd._Signature] = {}
 
     round_no = first_round
@@ -173,7 +187,9 @@ def run_rounds(
             # "judges disagreed" -- the opposite of what happened, which is
             # that no judge existed. state_for returns `unproven` for a claim
             # with no judges, which is the honest answer.
-            _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, {})
+            _settle_round(
+                outcome, contested, signatures, specs, store, round_no, max_rounds, {}, final_block
+            )
             break
 
         if budget.would_exceed_calls(len(judge_specs)):
@@ -242,7 +258,15 @@ def run_rounds(
             )
             outcome.incomplete = True
             _settle_round(
-                outcome, contested, signatures, specs, store, round_no, max_rounds, missing
+                outcome,
+                contested,
+                signatures,
+                specs,
+                store,
+                round_no,
+                max_rounds,
+                missing,
+                final_block,
             )
             break
 
@@ -298,7 +322,9 @@ def run_rounds(
             store.ledger.append(verdict)
         outcome.verdicts.extend(round_verdicts)
 
-        _settle_round(outcome, contested, signatures, specs, store, round_no, max_rounds, missing)
+        _settle_round(
+            outcome, contested, signatures, specs, store, round_no, max_rounds, missing, final_block
+        )
         round_no += 1
 
     if budget.exhausted_by:
@@ -316,6 +342,7 @@ def _settle_round(
     round_no: int,
     max_rounds: int,
     missing: dict[str, set[str]],
+    final_block: bool,
 ) -> None:
     """Recompute every contested claim's state and grow the claim list with
     any successors a unanimous amendment produced. `missing` maps a claim
@@ -368,23 +395,29 @@ def _settle_round(
             # records while the successor itself exists nowhere.
             store.ledger.append(successor)
             outcome.claims.append(successor)
-            outcome.states[successor.id] = vd.CONTESTED
-            if round_no >= max_rounds:
-                # Created by the last judging round, so nothing will judge
-                # it. It stays non-terminal and the run says so. The rule
-                # this replaced rewrote a final-round `amended` to `upheld`
-                # so that no unjudgeable successor could exist -- and on a
-                # real crossexam turned two judges' "the headline is false,
-                # here is the rewrite" into `settled-upheld`, reported as
-                # "judges unanimously agreed the claim stands". A rewrite
-                # nobody could judge is the honest outcome; it blocks a
-                # gate, as a defect two judges called real should.
-                outcome.states[successor.id] = vd.INCOMPLETE
-                outcome.incomplete = True
+            # Created by the run's last judging round, so nothing will judge
+            # it: it stays non-terminal and the run says so. The rule this
+            # replaced rewrote a final-round `amended` to `upheld` so that
+            # no unjudgeable successor could exist -- and on a real
+            # crossexam turned two judges' "the headline is false, here is
+            # the rewrite" into `settled-upheld`, reported as "judges
+            # unanimously agreed the claim stands". A rewrite nobody could
+            # judge is the honest outcome; it blocks a gate, as a defect two
+            # judges called real should.
+            #
+            # `final_block` is what keeps this from firing on every loop
+            # iteration: `max_rounds` there is the iteration's own ceiling,
+            # and a successor the next iteration will judge is not one
+            # nobody could judge. The run-level `incomplete` flag is NOT set
+            # -- it means "a required friend failed" (§7.2 M12), which the
+            # report says in those words, and no friend failed here.
+            last_block_round = round_no >= max_rounds and final_block
+            outcome.states[successor.id] = vd.INCOMPLETE if last_block_round else vd.CONTESTED
+            if last_block_round:
                 outcome.downgrades.append(
                     f"{successor.id}: created by an amendment in round {round_no}, "
-                    "the last; no round was left to judge it. Re-run with a higher "
-                    "--max-rounds to have it judged."
+                    "the last this run will schedule; no round was left to judge "
+                    "it. Re-run with a higher --max-rounds to have it judged."
                 )
 
         outcome.states[claim.id] = state

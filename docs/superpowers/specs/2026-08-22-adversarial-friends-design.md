@@ -1129,3 +1129,22 @@ appended when set. Existing ledgers, written without models, are unchanged. A
 roster entry repeated verbatim is refused before any run that judges starts,
 rather than downgraded into a run that cannot settle its claims; `report` has no
 judging and still allows it.
+
+### §7.3 — what a loop iteration inherits, and what it may stop waiting for
+
+The body describes a loop as repeated crossexam over a possibly-revised
+artifact, without saying what an iteration inherits from the one before. It
+inherits claim states: terminal is terminal (§7.2) across iterations, and an
+iteration re-judges only what is still open. Re-seeding every claim
+`contested` each iteration re-judged settled claims and, for an amended one,
+wrote a fresh successor under an id that already existed.
+
+§7.3's termination rule waits on "every non-advisory claim terminal". Two
+kinds of claim are excluded from that wait, because no further iteration can
+change them: advisory claims (already stated), and claims with no
+independent judge on the roster — an amended claim's successor inherits its
+author's and its amenders' origins, which on a two-friend roster is
+everyone. Such a claim is still reported and still blocks a gate; it just
+cannot be what a loop waits for. Waiting on one ran every such loop to its
+iteration ceiling, which is the failure §7.3's H4 correction exists to
+prevent.

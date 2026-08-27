@@ -160,3 +160,44 @@ def test_a_friend_that_recovers_is_not_disabled(tmp_path):
     assert result.returncode == 0, result.stderr
     downgrades = " ".join(_run_json(tmp_path)["downgrades"])
     assert "not be dispatched again" not in downgrades
+
+
+# --- What an iteration must not redo ---------------------------------------
+
+
+def test_a_superseded_claim_is_not_re_judged_every_iteration(tmp_path):
+    """Terminal is terminal (§7.2), across iterations too. Each iteration
+    used to re-seed every claim `contested`, so a claim the last iteration
+    had already superseded was judged and amended again -- and since
+    `bump_claim_id` counts versions rather than records, every iteration
+    wrote a successor under the SAME id. A three-iteration loop put
+    `c-0002@2` in the ledger three times."""
+    _loop(
+        tmp_path,
+        "fake:judge_amend_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "3"),
+    )
+    ids = [r["id"] for r in _ledger(tmp_path) if r["type"] == "claim"]
+    assert len(ids) == len(set(ids)), ids
+    states = _run_json(tmp_path)["claim_states"]
+    assert "superseded" in states.values(), states
+
+
+def test_a_claim_no_friend_can_judge_does_not_hold_the_loop_open(tmp_path):
+    """An amended claim's successor inherits both the author's and the
+    amenders' origins, which on a two-friend roster is the whole roster: no
+    independent judge, `unproven` for good. Waiting for it to turn terminal
+    ran every loop to its iteration ceiling -- the failure §7.3's H4
+    correction exists to prevent, arriving through one more door."""
+    result = _loop(
+        tmp_path,
+        "fake:judge_amend_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "3", "--max-loop-iterations", "6"),
+    )
+    meta = _run_json(tmp_path)
+    # Six iterations of three rounds would reach round 16.
+    assert meta["rounds_run"] < 16, meta["rounds_run"]
+    assert not any("no round was left to judge" in d for d in meta["downgrades"]), meta
+    assert result.returncode in (0, 1), result.stderr
