@@ -366,3 +366,29 @@ def test_a_roster_entry_repeated_verbatim_is_refused(tmp_path):
     )
     assert result.returncode == 2, result.stderr
     assert "same friend" in result.stderr
+
+
+def test_a_disabled_judge_does_not_consume_the_call_budget_it_will_not_spend(tmp_path):
+    """The precheck counted every eligible judge, but the repeat tracker
+    drops disabled ones before dispatch -- so a run could stop
+    `budget-exhausted` with room for the judges it would actually have sent.
+
+    Three friends, because with two the surviving judge's slice empties and
+    the precheck never sees a dead judge beside a live one. c fails twice
+    and is disabled; a and b disagree about c's claim, which keeps rounds
+    running. Measured: 9 calls are spent by the end of round 3, and round 4
+    dispatches the two live judges. With `--max-calls 11` those two fit and
+    a third would not, so counting the dead judge is the difference between
+    round 4 happening and the run stopping a round early. Both spellings
+    reach the ceiling at round 5; the round actually reached is what
+    separates them."""
+    result = _crossexam(
+        tmp_path,
+        "fake:judge_uphold_a",
+        "fake:judge_refute_b",
+        "fake:judge_fail_c",
+        extra=("--max-rounds", "5", "--max-calls", "11"),
+    )
+    meta = _run_json(tmp_path)
+    assert meta["rounds_run"] == 4, (meta["rounds_run"], meta["ceiling_hit"])
+    assert result.returncode == 11, result.stderr

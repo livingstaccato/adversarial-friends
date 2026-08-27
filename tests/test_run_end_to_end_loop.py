@@ -261,3 +261,19 @@ def test_a_revised_artifact_reopens_what_the_earlier_text_settled(tmp_path):
     assert "the guard was added." in artifact.read_text()
     downgrades = _run_json(tmp_path)["downgrades"]
     assert any("the artifact changed before iteration" in d for d in downgrades), downgrades
+
+
+def test_a_successor_deferred_to_the_next_iteration_says_so(tmp_path):
+    """A successor created at the last round of a non-final block is left
+    `contested` for the next iteration to judge. The loop can stop first --
+    a dry streak, or a ceiling -- and such a successor cannot even hold it
+    open, so without a note the report says "judges disagreed" about a
+    rewrite no judge has seen."""
+    _loop(
+        tmp_path,
+        "fake:judge_amend_a",
+        "fake:judge_uphold_b",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "3"),
+    )
+    downgrades = _run_json(tmp_path)["downgrades"]
+    assert any("the last of this iteration" in d for d in downgrades), downgrades
