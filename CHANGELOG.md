@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.1.4
+
+**Upgrade from 0.1.1–0.1.3 if you run `codex`, `claude` or `agy`.** Two holes
+in the confinement boundary were open in every one of those releases, and one
+of them was announced as closed when it was not:
+
+- **Those three friends inherited every secret you export.** Environment
+  filtering was gated on the same condition as filesystem confinement, so the
+  three CLIs that confine themselves received no filtering at all. A read-only
+  flag stops a CLI writing files; it does nothing about what it can read out
+  of its own environment, and an artifact that talks a friend into echoing
+  `env` sends every exported token to a model provider. The allowlist 0.1.1
+  introduced — and whose arrival that release announced as closing this hole —
+  only ever applied to `opencode`.
+- **A binary in `~/bin` granted the whole home directory.** A CLI installed as
+  a real file in `~/bin` or `~/.local/bin` — the normal shape for a
+  curl-installer — was granted `(subpath "/Users/<you>")`, read. That is the
+  exact thing this module's docstring says confinement removes.
+
+The rest of this release is the tool being run against its own source, which
+is how all of it was found: `opencode` had never once been dispatched
+successfully, and a cross-examination of `normalize.py` returned six defects
+including a regression introduced three commits earlier.
 
 ### A timeout bounded how long a friend ran, not what it cost
 
