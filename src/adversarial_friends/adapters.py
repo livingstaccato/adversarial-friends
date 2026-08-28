@@ -105,9 +105,10 @@ class Adapter:
     # its isolation directory. Empty for every shipped adapter, and that is
     # the point: opencode earned one by dying without a writable log
     # directory, and then stopped needing it once `childenv.private_dirs`
-    # pointed its state at the isolation directory instead. Redirecting a
-    # CLI's own notion of where state lives beats punching a hole in the
-    # boundary, so reach for this only when redirection has failed.
+    # pointed its state at a private directory beside the isolation
+    # directory instead. Redirecting a CLI's own notion of where state
+    # lives beats punching a hole in the boundary, so reach for this only
+    # when redirection has failed.
     sandbox_write: tuple[str, ...] = ()
     # Opt in to OS confinement even though this CLI has a read-only mode of
     # its own. A read-only flag stops a friend WRITING; it does nothing about

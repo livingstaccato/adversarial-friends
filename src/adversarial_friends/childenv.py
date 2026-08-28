@@ -61,23 +61,52 @@ BASE_PASS = (
 )
 
 
-def private_dirs(workdir: Path) -> dict[str, str]:
-    """Environment pointing a friend's scratch and state at its own
-    isolation directory.
+def private_root_for(workdir: Path) -> Path:
+    """Where a friend's scratch and state go, given its working directory.
+
+    A sibling, never a child. For a repo-scope friend the working directory
+    IS the git worktree of the code under review, so scratch written inside
+    it dirties the tree the snapshot exists to keep pristine.
+
+    Not the parent either: that is the round's isolation root, which holds
+    every other friend's tree. Granting one friend write access to it is the
+    mistake the original `$TMPDIR` grant made, one level down.
+
+    A function rather than an expression at the call site because the choice
+    is the fix -- an earlier version passed the working directory straight
+    in, and nothing named the decision or could test it.
+    """
+    return workdir.parent / f"{workdir.name}.private"
+
+
+def private_dirs(private_root: Path) -> dict[str, str]:
+    """Environment pointing a friend's scratch and state at `private_root`.
 
     A CLI that keeps a cache in `$TMPDIR` or a log under `$XDG_DATA_HOME`
     otherwise needs those real locations, and granting them is worse than it
     sounds: `$TMPDIR` holds every other friend's isolation tree and every
     other same-user temporary file, and a home state directory outlives the
     run. opencode needed both until it was given these instead -- it now
-    writes its log inside the directory that is deleted when the round ends,
+    writes its log inside a directory that is deleted when the round ends,
     and reads nothing outside it.
+
+    **`private_root` is a sibling of the friend's working directory, never
+    inside it.** The earlier version wrote `.af-scratch/` and `.af-data/`
+    into the working directory, which for a repo-scope friend IS the git
+    worktree of the code under review -- so the runner dirtied the tree it
+    had just snapshotted to keep pristine. A friend running `git status` to
+    orient itself saw two untracked directories that were not in the commit
+    it was reviewing, and the CLI's own config landed among the files it was
+    asked to critique. Raised as a deadlocked claim; the layout settles it.
+
+    The caller places `private_root` under the round's isolation root, so it
+    is torn down with everything else and needs no cleanup of its own.
 
     The directories are created here because a CLI that finds `$TMPDIR`
     missing falls back to the real one, which is the hole this closes.
     """
-    scratch = workdir / ".af-scratch"
-    data = workdir / ".af-data"
+    scratch = private_root / "tmp"
+    data = private_root / "state"
     for path in (scratch, data):
         path.mkdir(parents=True, exist_ok=True)
     return {

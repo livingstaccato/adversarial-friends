@@ -40,9 +40,9 @@ field = "error.data.message"
 [sandbox]
 # Its own configuration and binary. opencode also keeps a bun cache in
 # `$TMPDIR` and a log under `$XDG_DATA_HOME`, and needed both granted until
-# `childenv.private_dirs` pointed those at its isolation directory instead:
-# granting the real ones exposed every other friend's isolation tree and a
-# state directory that outlives the run.
+# `childenv.private_dirs` pointed those at a private directory beside its
+# working directory instead: granting the real ones exposed every other
+# friend's isolation tree and a state directory that outlives the run.
 read = [
   "~/.config/opencode",
   "~/.local/share/opencode",

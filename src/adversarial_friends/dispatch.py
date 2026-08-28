@@ -362,22 +362,38 @@ def _dispatch(
                 # "Failed to read output schema file". opencode never hit it
                 # because it declares no schema flag.
                 inputs = tuple(str(f) for f in (prompt_file, schema_file) if f and Path(f).exists())
+                # Created before the policy is built: the write grant below
+                # resolves the path, and on macOS an isolation directory is
+                # reached through a symlink -- resolving a path whose leaf
+                # does not exist yet would grant the unresolved form the
+                # kernel never sees.
+                private_root = childenv.private_root_for(cwd)
+                private_env = childenv.private_dirs(private_root)
                 policy = sandbox.policy_for(
                     cwd,
                     adapter.binary,
                     adapter.sandbox_read + inputs,
-                    adapter.sandbox_write,
+                    (*adapter.sandbox_write, str(private_root)),
                 )
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
                 # Confining the filesystem while handing over every exported
                 # secret would leave the boundary open straight through the
                 # middle: a friend could read another service's token
                 # without touching a forbidden path.
-                # Scratch and state inside the isolation directory, not the
-                # user's. Without this opencode needed a read grant over the
-                # whole of $TMPDIR -- which holds every other friend's
+                # Scratch and state inside the round's isolation root, not
+                # the user's. Without this opencode needed a read grant over
+                # the whole of $TMPDIR -- which holds every other friend's
                 # isolation tree -- and a write grant over its own home
                 # state directory, which outlives the run.
+                #
+                # BESIDE the working directory, not inside it: for a
+                # repo-scope friend the working directory is the git
+                # worktree of the code under review, and writing scratch
+                # there dirties the tree the snapshot exists to keep clean.
+                # Granted as the one directory rather than its parent -- the
+                # parent is the isolation root, which holds every other
+                # friend's tree, and that is the mistake the $TMPDIR grant
+                # already made once.
                 #
                 # Applied to every friend reaching this branch, including one
                 # that also confines itself: redirecting the generic scratch
@@ -387,7 +403,7 @@ def _dispatch(
                 # sandbox cannot reach at all. An earlier version of this
                 # comment said self-confining CLIs were excluded here, which
                 # stopped being true the moment one of them opted in.
-                child_env.update(childenv.private_dirs(cwd))
+                child_env.update(private_env)
     if extra_args and spec.cli != "fake":
         # §13: their presence forces readonly False in the header regardless
         # of what the argv appears to say. The runner cannot know what an

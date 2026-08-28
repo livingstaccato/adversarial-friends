@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased
+
+### A friend's scratch no longer lands in the tree it is reviewing
+
+`c-0009`, the one claim from the `dispatch.py` cross-examination that
+deadlocked. Judges split on what "scratch inside the isolation directory"
+meant, and neither ran it. It means the git worktree: for a repo-scope
+friend the working directory IS the snapshot of the code under review, so
+pointing `$TMPDIR` and the `$XDG_*` variables at it made the runner dirty
+the tree it had just taken a snapshot to keep pristine. A friend running
+`git status` to orient itself saw two untracked directories that were not in
+the commit it was reviewing, and the CLI's own config sat among the files it
+had been asked to critique.
+
+Scratch now goes to a sibling — `<friend>.private` beside `<friend>` under
+the round's isolation root — granted to the sandbox as that one directory.
+Not the parent: the parent is the isolation root, which holds every other
+friend's worktree, and granting it would repeat the `$TMPDIR` mistake one
+level down. Torn down with the isolation root, so it needs no cleanup of its
+own.
+
+The fix is in the caller. `private_dirs` was never wrong — it wrote under
+whatever root it was handed, and `_dispatch` handed it `cwd`. The choice is
+now a named function, `childenv.private_root_for`, because nothing named it
+before and so nothing could test it. `tests/test_scratch_placement.py` pins
+it at both levels, and three of its cases run a real sandboxed process:
+the friend can still write to its redirected `$TMPDIR`, the reviewed
+worktree is left byte-for-byte as it was found, and a write aimed at a
+neighbouring friend's tree is refused.
+
+### The spec's §12.2 divergence said the gap was still open
+
+It recorded that closing confinement "needs verified credential-path
+declarations for `claude`, `codex` and `agy`, which this project does not
+have". codex's were captured and verified by running it confined in 0.1.5;
+codex opts in through `[sandbox] os_confine`, and the doc-scope hole closed
+when `readonly_argv` started being emitted in both scopes. Three statements
+about the code had stopped being true. The residual gap is now stated as
+what it is: `claude` and `agy`, each with the reason it is still out.
+
+The guard that exists to catch exactly this — a doc calling an implemented
+feature absent — had a blind spot the shape of a text wrap. It scanned
+single lines, and every doc here is hard-wrapped prose, so "not in this
+build" and the flag it disclaims routinely land on different lines. It was
+strictest on the one formatting these docs never use. Now scans paragraphs,
+verified against the wrapped case it previously let through.
+
 ## 0.1.5
 
 **The first release published since 0.1.3, and 0.1.3 is what PyPI still
