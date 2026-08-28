@@ -31,7 +31,7 @@ from ..report import render
 from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
 from ..trust import parse_unsafe_extra_args
-from ..verdicts import loop_should_terminate, next_streak, round_is_dry
+from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .confinement import confinement_downgrades
 from .critique import run_critique
@@ -39,8 +39,8 @@ from .crossexam import run_rounds
 from .environment import _resolve_repo_root, freeze_revision, install_abort_handlers
 from .exits import decide_exit
 from .friends import roster_for_run
-from .resume import resume_round_one
-from .runmeta import JUDGING_MODES, _base_meta, unresolved_loop_states, validate_run_args
+from .resume import loop_position, resume_round_one, write_halt
+from .runmeta import JUDGING_MODES, _base_meta, loop_is_done, validate_run_args
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -174,6 +174,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         if repo_root is not None:
             snapshot_sha = isolation.snapshot_commit(repo_root)
 
+        def run_meta() -> dict[str, Any]:
+            # Built the same way whether the run finishes or halts: a halted
+            # directory a resume cannot read is worse than no halt at all.
+            return _base_meta(
+                args,
+                artifact,
+                digest,
+                friends_meta,
+                downgrades,
+                specs,
+                repo_root,
+                snapshot_sha,
+                preset=resolved.preset,
+                roster_source=resolved.source,
+                env_withheld=env_withheld,
+            )
+
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
             active_pool[0] = pool
 
@@ -212,6 +229,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         last_digest: str | None = None
         streak = 0
         iterations_run = 0
+        # Where a resumed loop re-enters, and what it inherits.
+        first_iteration, streak, carry_over = loop_position(args, store, resume_dir is not None)
         # The highest round number the run reached, across every loop
         # iteration. Not the last iteration's own count: once a loop stops
         # re-judging what an earlier iteration already settled, its final
@@ -226,7 +245,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # continued -- which is how the extraction halt first shipped, and
         # why this is caught here rather than at each raise site.
         try:
-            for iteration in range(1, max_iterations + 1):
+            for iteration in range(first_iteration, max_iterations + 1):
                 if abort_event.is_set():
                     break
                 # Each iteration owns a distinct block of round numbers, so a
@@ -270,7 +289,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     carry_over = None
                 last_digest = revision.digest
 
-                if resume_dir is not None and iteration == 1:
+                if resume_dir is not None and iteration == first_iteration:
                     resumed = resume_round_one(
                         args,
                         store,
@@ -290,11 +309,23 @@ def cmd_run(args: argparse.Namespace) -> int:
                     all_aliases.extend(resumed.aliases)
                     friends_meta.extend(resumed.friends_meta)
                     downgrades.extend(resumed.downgrades)
-                    cross = resumed.cross
+                    cross = resumed.cross or carry_over
+                    carry_over = cross
                     counter = len(all_claims)
                     any_success = True
-                    iterations_run = 1
-                    break
+                    iterations_run = iteration
+                    rounds_reached = max(rounds_reached, base_round)
+                    if args.mode != "loop":
+                        break
+                    # The resumed iteration is now complete. Fall through to
+                    # the same streak arithmetic every other iteration runs,
+                    # and let the loop decide whether another is due; the
+                    # next one will halt for its own adjudication.
+                    streak = next_streak(streak, failed=False, dry=round_is_dry(False, True))
+                    if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
+                        break
+                    resume_dir = None
+                    continue
 
                 critique, all_claims, counter = run_critique(
                     round_specs,
@@ -385,31 +416,22 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # convergence.
                 dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
                 streak = next_streak(streak, failed=critique.any_failed, dry=dry)
-                roster_keys = [friend_key(s) for s in specs]
-                if loop_should_terminate(
-                    streak, unresolved_loop_states(all_claims, cross, roster_keys)
-                ):
+                if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
                     break
                 if budget.exhausted_by:
                     break
 
         except NeedsOrchestrator:
-            halt_meta = _base_meta(
+            write_halt(
                 args,
-                artifact,
-                digest,
-                friends_meta,
-                downgrades,
-                specs,
-                repo_root,
-                snapshot_sha,
-                preset=resolved.preset,
-                roster_source=resolved.source,
-                env_withheld=env_withheld,
+                store,
+                run_meta(),
+                all_claims,
+                all_aliases,
+                iteration,
+                streak,
+                carry_over,
             )
-            store.write_run_json(halt_meta)
-            store.write_report(render(all_claims, all_aliases, halt_meta))
-            print(store.run_dir)
             raise
 
         # §7.5's gate. Evaluated against the run's own (empty) resolution
@@ -420,19 +442,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.mode == "gate":
             blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
 
-        meta: dict[str, Any] = _base_meta(
-            args,
-            artifact,
-            digest,
-            friends_meta,
-            downgrades,
-            specs,
-            repo_root,
-            snapshot_sha,
-            preset=resolved.preset,
-            roster_source=resolved.source,
-            env_withheld=env_withheld,
-        )
+        meta: dict[str, Any] = run_meta()
         if args.mode == "loop":
             meta["iterations_run"] = iterations_run
             meta["dry_streak"] = streak

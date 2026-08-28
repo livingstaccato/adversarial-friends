@@ -208,13 +208,64 @@ def test_resuming_an_unknown_run_is_a_usage_error(tmp_path):
     assert "no such run" in result.stderr
 
 
-def test_loop_with_orchestrator_merge_is_refused(tmp_path):
-    """A loop would halt once per iteration and resume into mid-iteration
-    state this build does not reconstruct. Refusing beats resuming into a
-    state nobody has verified."""
-    result = _halt(tmp_path, "judge_uphold_a", mode="loop")
-    assert result.returncode == 2
-    assert "not supported with --mode loop" in result.stderr
+def test_orchestrator_merge_runs_with_loop_mode(tmp_path):
+    """It was refused: a loop halts once per iteration and would resume into
+    mid-flight state -- a budget, a dry-round streak, a claim set -- that the
+    build had never reconstructed. All of it was already on disk (states and
+    notes in run.json, verdicts in the ledger, signatures derivable from
+    them), so it is reconstructed rather than refused."""
+    result = _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="loop",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "2"),
+    )
+    assert result.returncode == 10, result.stderr
+    assert "RESPONSE.json" in result.stderr
+
+
+def test_a_resumed_loop_carries_on_into_its_next_iteration(tmp_path):
+    """The failure this guards: resuming as though the run were one
+    iteration long silently drops the iterations the operator asked for.
+    Iteration 2 halts for its own adjudication, which is the proof it was
+    entered at all."""
+    _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="loop",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "2"),
+    )
+    _respond(tmp_path, [])
+    result = _resume(tmp_path)
+
+    # Iteration 2 critiques in round 3 and halts there for its own merge
+    # adjudication -- exit 10 again, not a completed run.
+    assert result.returncode == 10, (result.returncode, result.stderr)
+    assert (_run_dir(tmp_path) / "round-3" / "REQUEST.json").is_file()
+    assert _run_json(tmp_path)["iterations_run"] == 2
+
+
+def test_a_resumed_loop_does_not_re_judge_what_it_already_settled(tmp_path):
+    """§7.3: an iteration inherits states, verdicts and notes. None of that
+    survives a halt in memory, and all of it survives on disk -- rebuilt
+    rather than recomputed by spending another fan-out."""
+    _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="loop",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "2"),
+    )
+    _respond(tmp_path, [])
+    _resume(tmp_path)
+
+    states = _run_json(tmp_path)["claim_states"]
+    assert states, states
+    # Whatever the first iteration settled is still settled, not re-seeded
+    # as contested by the resume.
+    assert any(v.startswith("settled") for v in states.values()), states
 
 
 # --- §14.2 parse-halt extraction -------------------------------------------

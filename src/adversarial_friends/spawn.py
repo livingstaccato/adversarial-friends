@@ -58,7 +58,7 @@ import warnings
 
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
-from .normalize import Envelope, NormalizeResult, normalize
+from .normalize import Envelope, NormalizeResult, answer_is_complete, normalize
 
 # Wait windows for group escalation: this long for the group to exit after
 # SIGTERM, then (if anything is still alive) this long for it to actually
@@ -87,6 +87,11 @@ class SpawnResult:
     result: NormalizeResult
     failure_reason: str | None
     orphans_suspected: bool
+    # The friend had already written its whole answer and had not exited.
+    # Recorded because the run stopped it deliberately, and a reader
+    # comparing durations should not have to guess why one friend's wall
+    # clock is shorter than the CLI's own report of itself.
+    stopped_after_answer: bool = False
 
 
 def _pump_stdin(process: subprocess.Popen[bytes], stdin_text: str | None) -> None:
@@ -313,7 +318,17 @@ def run_process(
             env=env,
         )
     except FileNotFoundError:
-        return _early_failure(argv, time.monotonic() - started, f"binary not found: {argv[0]}")
+        # Popen raises the same error for a missing executable and a missing
+        # working directory, and reporting both as "binary not found" sends
+        # a reader hunting for a CLI that is installed. A missing agent CLI
+        # is this tool's most common setup problem, so the message has to
+        # name the right thing.
+        missing = (
+            f"binary not found: {argv[0]}"
+            if cwd is not None and Path(cwd).is_dir()
+            else f"working directory not found: {cwd}"
+        )
+        return _early_failure(argv, time.monotonic() - started, missing)
     except PermissionError:
         return _early_failure(argv, time.monotonic() - started, f"binary not executable: {argv[0]}")
     except OSError as exc:
@@ -342,12 +357,16 @@ def run_process(
     deadline = started + timeout_s
     timed_out = False
     aborted = False
+    answered = False
     while process.poll() is None:
         if time.monotonic() >= deadline:
             timed_out = True
             break
         if abort_event is not None and abort_event.is_set():
             aborted = True
+            break
+        if envelope is not None and answer_is_complete("".join(stdout_chunks), envelope):
+            answered = True
             break
         time.sleep(_POLL_INTERVAL_S)
 
@@ -411,6 +430,7 @@ def run_process(
             NormalizeResult(None, ["killed on timeout"], False),
             "timeout",
             orphans_suspected,
+            stopped_after_answer=answered,
         )
     # An abort is not a timeout (timed_out stays False -- nothing here
     # timed out on its own) and, like a timeout, its output is never a
@@ -427,6 +447,7 @@ def run_process(
             NormalizeResult(None, ["aborted"], False),
             "aborted",
             orphans_suspected,
+            stopped_after_answer=answered,
         )
 
     result = normalize(
@@ -447,4 +468,5 @@ def run_process(
         result,
         failure_reason,
         orphans_suspected,
+        stopped_after_answer=answered,
     )

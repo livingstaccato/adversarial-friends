@@ -20,7 +20,7 @@ from typing import Any
 from ..adapters import FriendSpec
 from ..errors import UsageError
 from ..runstore import default_root
-from ..verdicts import judges_for
+from ..verdicts import judges_for, loop_should_terminate
 
 # Everything a resumed run must restore rather than re-read from a second
 # command line. §4.2 requires that the same response produce the same run;
@@ -153,6 +153,12 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta
+    # Where in a `loop` this run stopped. An orchestrator halt happens once
+    # per iteration, so a resumed loop has to re-enter the iteration it
+    # halted in and then carry on -- iteration 1 of 5 resuming as though it
+    # were the whole run would silently drop four.
+    restored._resume_iteration = int(meta.get("iterations_run", 1) or 1)
+    restored._resume_streak = int(meta.get("dry_streak", 0) or 0)
     return restored
 
 
@@ -183,18 +189,6 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
     artifact = Path(args.artifact)
     if not artifact.is_file():
         raise UsageError(f"artifact not found: {artifact}")
-    if args.merge == "orchestrator" and args.mode == "loop":
-        # A loop halts once per iteration and would have to resume into the
-        # middle of one, restoring a budget, a dry-round streak and a claim
-        # set mid-flight. That state is reconstructible in principle and is
-        # not reconstructed here; refusing is better than resuming into a
-        # state this build has not verified.
-        raise UsageError(
-            "--merge orchestrator is not supported with --mode loop in this "
-            "build: a loop would halt once per iteration and resume into "
-            "mid-iteration state that is not reconstructed. Use --mode "
-            "crossexam or gate, or --merge exact."
-        )
     if args.mode not in IMPLEMENTED_MODES:
         raise UsageError(
             f"mode {args.mode!r} is not implemented yet; "
@@ -243,3 +237,10 @@ def unresolved_loop_states(claims: list[Any], cross: Any, roster: list[str]) -> 
             continue
         states.append(state)
     return states
+
+
+def loop_is_done(streak: int, claims: list[Any], cross: Any, roster: list[str]) -> bool:
+    """§7.3's termination test, asked the same way from both places a loop
+    iteration can end -- a normal one, and one resumed after an orchestrator
+    halt. They drifted apart while there was a copy in each."""
+    return loop_should_terminate(streak, unresolved_loop_states(claims, cross, roster))

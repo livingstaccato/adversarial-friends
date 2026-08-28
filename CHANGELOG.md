@@ -88,6 +88,47 @@ a host with no sandbox now reports that the filesystem is unconfined *while
 the environment is still filtered*. The previous wording understated the
 protection as badly as the original overstated it.
 
+### Waiting twelve minutes for an answer already in the pipe
+
+agy, on its error path, writes its JSON and then does not exit until its own
+`--print-timeout` elapses. Measured across seven cross-examinations: eleven
+successful runs exited about 2.5 seconds after the work they reported, and
+all three hangs exited at 906 seconds having reported 163, 372 and 482 — up
+to twelve minutes spent waiting for a process that had already answered.
+
+Nothing on this side was wrong: stdin is closed, and §11.3's timeout
+reconciliation was doing exactly what it says. So the fix is narrow. A
+`json_path` adapter's contract is that stdout **is** one JSON object, so
+once it parses, the answer is in hand and the run stops waiting. Restricted
+to that envelope kind on purpose: an NDJSON friend streams events and codex
+emits a schema-shaped progress message *before* its real findings, so the
+same check there would truncate the thing it is waiting for. The run records
+`stopped_after_answer`, because a reader comparing a friend's wall clock
+against the CLI's own report of itself should not have to guess.
+
+Found while testing it: `cwd=str(cwd)` turned `None` into a literal
+directory named `None`, and Popen's `FileNotFoundError` was reported as
+**"binary not found"** — sending a reader to hunt for a CLI that is
+installed. It now names whichever is actually missing.
+
+### `--merge orchestrator` works with `--mode loop`
+
+It was refused, and the refusal was honest about why: a loop halts once per
+iteration and would resume into mid-flight state — a budget, a dry-round
+streak, a claim set — that the build had never reconstructed.
+
+All of it was already on disk. States and notes in `run.json`, verdicts in
+the ledger, discard signatures derivable from those, iteration and streak in
+the metadata. The one thing genuinely missing was that **the halt path
+recorded none of it**: the completion path wrote `iterations_run`,
+`dry_streak` and `claim_states`, so a resumed loop re-entered knowing only
+that it had been interrupted. Both paths build the run's metadata the same
+way now — a halted directory a resume cannot read is worse than no halt.
+
+A resumed loop re-enters the iteration it halted in, inherits what earlier
+iterations decided, and carries on; the next iteration halts for its own
+adjudication.
+
 ### A binary in `~/bin` granted the whole home directory
 
 From the same crossexam, and confirmed by running it before it was fixed: a

@@ -461,3 +461,32 @@ def normalize(
             _normalize_text(raw, structured_output, contract), raw, envelope
         )
     return _normalize_text(raw, structured_output, contract)
+
+
+def answer_is_complete(text: str, envelope: Envelope) -> bool:
+    """Whether a `json_path` friend has already said everything it will say.
+
+    Only for that envelope kind, and the restriction is the whole argument:
+    its contract is that stdout IS one JSON object, so a parseable object
+    means the answer is in hand. An NDJSON friend streams events and a later
+    line carries the answer, so the same check there would truncate it.
+
+    This exists because agy, on its error path, writes its JSON and then does
+    not exit until its own `--print-timeout` elapses. Measured across three
+    occurrences against eleven clean ones: every successful run exits about
+    2.5 seconds after the work it reports, and every hang exits at 906
+    seconds having reported 163, 372 and 482 -- between seven and twelve
+    minutes of waiting for a process that had already answered.
+
+    The cheap guard first: a complete object ends with `}`, so the parse is
+    attempted only when the buffer looks finished rather than on every poll.
+    """
+    if envelope.kind != "json_path":
+        return False
+    text = text.strip()
+    if not text.endswith("}"):
+        return False
+    try:
+        return isinstance(json.loads(text), dict)
+    except (ValueError, RecursionError):
+        return False

@@ -21,10 +21,11 @@ from pathlib import Path
 import threading
 from typing import Any
 
+from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec
 from ..ceilings import Budget
 from ..ids import format_claim_id
-from ..ledger import Alias, Claim
+from ..ledger import Alias, Claim, Verdict
 from ..merge import canonical_claims
 from ..orchestrator import (
     QUESTION_EXTRACT,
@@ -33,6 +34,7 @@ from ..orchestrator import (
     read_response,
     request_path,
 )
+from ..report import render
 from ..runstore import RunStore
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
@@ -159,3 +161,86 @@ def resume_round_one(
     resumed.friends_meta.extend(resumed.cross.friends_meta)
     resumed.downgrades.extend(resumed.cross.downgrades)
     return resumed
+
+
+def carried_outcome(store: RunStore, meta: dict[str, Any]) -> "CrossexamOutcome | None":
+    """The previous iteration's outcome, rebuilt from what the run recorded.
+
+    A `loop` iteration inherits states, verdicts, notes and discard
+    signatures (§7.3). None of that survives in memory across an
+    orchestrator halt, and all of it survives on disk: states and notes in
+    `run.json`, verdicts in the ledger, and signatures are a pure function
+    of the verdicts. Rebuilt rather than re-derived by re-judging, which
+    would spend a fan-out to recompute something already written down.
+
+    Returns None when there is nothing to carry -- a halt in iteration 1,
+    before any judging round ran.
+    """
+    states = meta.get("claim_states") or {}
+    if not states:
+        return None
+    outcome = CrossexamOutcome()
+    outcome.states = dict(states)
+    outcome.notes = list(meta.get("amendment_notes") or [])
+    outcome.incomplete = bool(meta.get("incomplete"))
+    outcome.verdicts = [r for r in store.ledger.records() if isinstance(r, Verdict)]
+    outcome.signatures = {
+        claim_id: vd.verdict_set_signature(outcome.verdicts, claim_id)
+        for claim_id, state in outcome.states.items()
+        if state == vd.UNPROVEN
+    }
+    return outcome
+
+
+def loop_position(
+    args: argparse.Namespace, store: RunStore, resuming: bool
+) -> tuple[int, int, "CrossexamOutcome | None"]:
+    """Where a resumed `loop` re-enters: iteration, dry-round streak, and
+    what that iteration inherits.
+
+    (1, 0, None) for a fresh run and for any mode that does not loop. An
+    orchestrator halt happens once per iteration, so a resumed loop that
+    started over at iteration 1 would repeat work already adjudicated, and
+    one that treated itself as finished would silently drop the iterations
+    the operator asked for.
+    """
+    if not resuming or args.mode != "loop":
+        return 1, 0, None
+    meta = getattr(args, "_resume_meta", {}) or {}
+    return (
+        int(getattr(args, "_resume_iteration", 1) or 1),
+        int(getattr(args, "_resume_streak", 0) or 0),
+        carried_outcome(store, meta),
+    )
+
+
+def write_halt(
+    args: argparse.Namespace,
+    store: RunStore,
+    meta: dict[str, Any],
+    claims: list[Claim],
+    aliases: list[Alias],
+    iteration: int,
+    streak: int,
+    carry_over: "CrossexamOutcome | None",
+) -> None:
+    """Leave behind a run directory a resume can actually continue from.
+
+    A halt in a `loop` must record everything the resumed iteration
+    inherits, or it re-enters knowing only that it was interrupted: which
+    iteration it was in, the dry-round streak, and whatever earlier
+    iterations already decided. The completion path writes these; the halt
+    path did not, which is what made `--merge orchestrator` unusable with
+    `--mode loop` and is why that combination was refused rather than
+    supported.
+    """
+    if args.mode == "loop":
+        meta["iterations_run"] = iteration
+        meta["dry_streak"] = streak
+    if carry_over is not None:
+        meta["claim_states"] = carry_over.states
+        meta["amendment_notes"] = carry_over.notes
+        meta["incomplete"] = carry_over.incomplete
+    store.write_run_json(meta)
+    store.write_report(render(claims, aliases, meta))
+    print(store.run_dir)
