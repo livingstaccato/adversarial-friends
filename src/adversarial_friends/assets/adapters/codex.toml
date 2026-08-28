@@ -55,3 +55,50 @@ low = ["--config", "model_reasoning_effort=low"]
 medium = ["--config", "model_reasoning_effort=medium"]
 high = ["--config", "model_reasoning_effort=high"]
 xhigh = ["--config", "model_reasoning_effort=xhigh"]
+
+# §14 auth markers, captured verbatim from a real failure on 2026-08-28
+# against codex 0.150.1. Provoked without touching real credentials: point
+# CODEX_HOME at an empty directory, so the CLI finds no auth of its own and
+# ~/.codex is neither read nor written.
+#
+#   ERROR: unexpected status 401 Unauthorized: Missing bearer or basic
+#   authentication in header, url: https://api.openai.com/v1/responses
+#
+# NOT the marker, and each for a specific reason:
+#
+#   exit 1 -- codex exits 1 for essentially every failure, including a
+#     rejected sandbox write and a refused git-repo check. Claiming it here
+#     would classify every one of those as an auth failure.
+#   "Reconnecting... n/5" -- codex retries the same 401 five times over both
+#     transports, so this appears on any transport trouble at all.
+#   "failed to connect to websocket" -- printed for a plain network failure
+#     too. The 401 inside that line is what distinguishes the two.
+#
+# 401 is safe to match on its own because it is the HTTP status reserved for
+# authentication: a rate limit is 429 and a server fault is 5xx, so neither
+# reaches this string. The longer sentence is kept first because it is
+# unambiguous even if OpenAI ever reuses 401 for something else.
+[auth]
+stderr_contains = [
+  "Missing bearer or basic authentication in header",
+  "401 Unauthorized",
+]
+remediation = "run `codex login`, or set CODEX_HOME to a directory holding valid credentials"
+
+# §12.2. codex has its own `--sandbox read-only`, which stops it writing and
+# does nothing about what it can read -- a friend told to open
+# ~/.ssh/id_ed25519 under read-only mode simply succeeds. Opting in adds the
+# read protection its own flag does not provide.
+#
+# Only codex opts in among the self-confining CLIs. claude keeps credentials
+# in the macOS Keychain and reports "Not logged in" under any profile that
+# does not grant ~/Library/Keychains -- and granting that would hand a friend
+# every credential the operator has, which is worse than the gap. agy is
+# untested here on purpose: provoking its re-authentication has already cost
+# one login.
+[sandbox]
+os_confine = true
+read = ["~/.codex"]
+# codex writes session state, logs and its own sqlite files under CODEX_HOME
+# on every run, and exits if it cannot.
+write = ["~/.codex"]

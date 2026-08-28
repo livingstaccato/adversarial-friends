@@ -253,7 +253,14 @@ def _dispatch(
         # files under HOME rather than variables.
         child_env = childenv.build(adapter.env_pass, pass_env)
         binary_present = bool(adapter.binary and shutil.which(adapter.binary))
-        if not adapter.readonly_argv and binary_present:
+        # A read-only mode of its own stops a friend WRITING and says
+        # nothing about what it may READ, so a self-confining CLI can still
+        # open ~/.ssh. `sandbox_confine` is how an adapter opts into OS
+        # confinement anyway, once someone has verified that CLI actually
+        # runs under it -- see the field's comment for why this is per
+        # adapter and not blanket.
+        self_confines = bool(adapter.readonly_argv)
+        if binary_present and (not self_confines or adapter.sandbox_confine):
             # §12.2. This CLI enforces nothing on its own, and cwd is not
             # containment -- an artifact telling it to read
             # ~/.ssh/id_ed25519 would simply work. Confined by the OS, or
@@ -276,11 +283,32 @@ def _dispatch(
             # section rather than left implied.
             mechanism = sandbox.detect()
             if mechanism is None:
-                if not allow_unsandboxed:
+                # Refusal is only right for a CLI that enforces NOTHING on
+                # its own. One that opted in still has its own read-only
+                # mode to fall back on, so a host without sandbox-exec or
+                # bwrap costs it read protection, not all protection --
+                # refusing it there would ground a friend that is no worse
+                # off than it was before the opt-in existed.
+                if not self_confines and not allow_unsandboxed:
                     return spec, capability, _refused_unsandboxed(argv, spec, adapter)
             else:
+                # The prompt and schema are written to the RUN directory,
+                # not the friend's isolation directory, so a confined friend
+                # cannot read its own inputs without a grant. Granted as the
+                # two exact files rather than their directory: that directory
+                # also holds every other friend's prompt and captured output,
+                # and handing one friend the round's whole working area is
+                # the same mistake the $TMPDIR grant made.
+                #
+                # Found the first time codex ran confined: it died with
+                # "Failed to read output schema file". opencode never hit it
+                # because it declares no schema flag.
+                inputs = tuple(str(f) for f in (prompt_file, schema_file) if f and Path(f).exists())
                 policy = sandbox.policy_for(
-                    cwd, adapter.binary, adapter.sandbox_read, adapter.sandbox_write
+                    cwd,
+                    adapter.binary,
+                    adapter.sandbox_read + inputs,
+                    adapter.sandbox_write,
                 )
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
                 # Confining the filesystem while handing over every exported

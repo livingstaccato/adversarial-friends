@@ -33,3 +33,40 @@ medium = ["--effort", "medium"]
 high = ["--effort", "high"]
 xhigh = ["--effort", "xhigh"]
 max = ["--effort", "max"]
+
+# §14 auth marker, captured 2026-08-28 from a real failure. Provoked without
+# touching credentials at all: claude keeps them in the macOS Keychain, so
+# running it under this runner's own sandbox WITHOUT a ~/Library/Keychains
+# grant makes it unable to read them. Nothing is logged out and nothing is
+# written -- read access is denied for one child process, and the operator's
+# session is unaffected. (Copying credentials somewhere else, the obvious
+# first idea, cannot work here: there is no file to copy, and a copy would
+# authenticate rather than fail.)
+#
+# Under the adapter's real flags claude reports this as structured output
+# rather than on stderr:
+#
+#   {"is_error":true,"terminal_reason":"api_error",
+#    "result":"Not logged in · Please run /login", ...}
+#
+# A `paths` marker rather than a stderr substring, because this CLI states
+# the failure in its own structured output -- the shape §14 prefers, and the
+# same form opencode's marker takes.
+#
+# NOT the marker:
+#   is_error / terminal_reason "api_error" -- set for every API failure,
+#     including a rate limit and a 5xx. Matching either would classify a
+#     transient outage as an auth failure and stop dispatching the friend.
+#   api_error_status -- present in the object but null on this failure, so
+#     there is no status code to key on.
+#   exit 1 -- claude's exit code for any error.
+#
+# Exact equality is deliberate. If the wording changes, this stops matching
+# and classification degrades to UNKNOWN, which is the safe direction:
+# repeat detection still stops a friend that fails identically twice.
+[auth]
+remediation = "run `claude /login`; if the friend is OS-confined, its credentials are in the macOS Keychain and the sandbox cannot reach them"
+
+[[auth.markers]]
+path = "result"
+equals = "Not logged in · Please run /login"

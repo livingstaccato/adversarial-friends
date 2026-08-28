@@ -109,6 +109,15 @@ class Adapter:
     # CLI's own notion of where state lives beats punching a hole in the
     # boundary, so reach for this only when redirection has failed.
     sandbox_write: tuple[str, ...] = ()
+    # Opt in to OS confinement even though this CLI has a read-only mode of
+    # its own. A read-only flag stops a friend WRITING; it does nothing about
+    # what it can read, so a self-confining CLI can still open ~/.ssh. The
+    # opt-in is per adapter rather than blanket because confinement breaks a
+    # CLI whose credentials the sandbox cannot reach -- claude keeps its own
+    # in the macOS Keychain, and granting that would hand a friend every
+    # credential the operator has. Set only for a CLI verified to run
+    # confined with the grants above.
+    sandbox_confine: bool = False
     # §14: where this CLI's own structured output says "not authenticated".
     # Empty means unclassifiable, which is the honest default until someone
     # captures a real auth failure -- guessing at stderr substrings is what
@@ -179,6 +188,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             endpoint=data.get("endpoint", ""),
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
             sandbox_write=tuple(data.get("sandbox", {}).get("write", [])),
+            sandbox_confine=bool(data.get("sandbox", {}).get("os_confine", False)),
             auth=parse_auth(data.get("auth")),
             env_pass=tuple(data.get("env", {}).get("pass", [])),
             doc_argv=tuple(data.get("doc_argv", [])),

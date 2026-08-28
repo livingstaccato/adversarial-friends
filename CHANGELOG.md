@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Every adapter now says how it fails to authenticate, and codex is confined
+
+Four gaps closed, three of which had been sitting behind "nobody has captured
+a real failure yet".
+
+- **codex declares auth markers**, captured verbatim from a real 401 on
+  2026-08-28. Provoked without touching credentials: point `CODEX_HOME` at an
+  empty directory and the CLI finds no auth of its own while `~/.codex` is
+  neither read nor written. Not the marker, each for its own reason: `exit 1`
+  (codex uses it for a rejected sandbox write and a refused git-repo check
+  too), the five-retry reconnect noise, and the websocket connect error a
+  plain network failure also prints.
+- **claude declares one too**, and as a structured path rather than a stderr
+  substring, because under its real flags it states the failure in its own
+  JSON: `result: "Not logged in · Please run /login"`. Provoked by denying
+  Keychain *read* access to one child process under this runner's own
+  sandbox — nothing logged out, nothing written. Deliberately not keyed on
+  `is_error` or `terminal_reason: api_error`, which a rate limit sets
+  identically; classifying that as auth would stop dispatching a friend that
+  only needed to wait.
+- **ollama was a category error, not a missing capture.** A local ollama has
+  no credentials, so waiting for a captured auth failure meant waiting
+  forever. Behind an authenticating proxy it answers 401/403, `http_transport`
+  already records the status as `exit_code`, and `classify` already matches on
+  exit codes. Those two statuses are specified by RFC 9110 rather than chosen
+  by a vendor, which is why declaring them is not the guess §14 forbids.
+- **codex now runs under OS confinement** despite having a read-only mode of
+  its own. That mode stops it writing and says nothing about what it may
+  read: measured, under `--sandbox read-only` alone and asked to list
+  `~/.ssh`, it listed the directory; under the sandbox the same request
+  returns "the filesystem sandbox denied access". Opt-in per adapter via
+  `[sandbox] os_confine`, because blanket confinement would break claude.
+
+Found while doing it: a confined friend could not read its own prompt or
+output schema. Both are written to the run directory rather than the friend's
+isolation directory, so codex died with `Failed to read output schema file`
+the first time it ran confined — opencode had never hit it because it declares
+no schema flag. The two files are granted individually rather than by
+directory: that directory also holds every other friend's prompt and captured
+output.
+
 ## 0.1.4
 
 **Upgrade from 0.1.1–0.1.3 if you run `codex`, `claude` or `agy`.** Two holes
@@ -743,22 +786,14 @@ repository does not get to choose who reviews it.
 
 ### Known gaps
 
-- Three of five adapters declare no auth marker. agy and opencode do, both
-  captured from real failures; claude, codex and ollama stay unclassified
-  until theirs are captured —
-  guessing at stderr is what the design rejects. Repeat detection covers the
-  cost meanwhile: a friend that fails identically twice stops being
-  dispatched.
-- A doc-scope friend of a read-only-capable CLI is not OS-confined, and the
-  reason is now measured rather than assumed. codex runs confined given read
-  and write on `~/.codex`. claude reports `Not logged in` under any profile
-  that does not grant `~/Library/Keychains` — its credentials are in the
-  macOS Keychain, so confining it would hand a friend every credential the
-  user has, which is worse than the gap it closes. agy is untested, because
-  provoking its re-authentication has already cost one login. Its own
-  read-only mode is engaged in doc scope (see 0.1.2), so no friend is
-  unrestrained; what is missing is read protection, for one CLI, at a price
-  that is not worth paying.
+- **claude and agy are still not OS-confined**, and each for a stated reason
+  rather than for want of effort. claude keeps its credentials in the macOS
+  Keychain and reports `Not logged in` under any profile that does not grant
+  `~/Library/Keychains`; granting it would hand a friend every credential the
+  operator has, which is worse than the gap. agy is left untested on purpose,
+  because provoking its re-authentication has already cost one login. Both
+  still engage their own read-only modes in every scope, so neither is
+  unrestrained — what they lack is read protection.
 - `quorum_partial` (spec §7.2) is not emitted, and will not be: the
   per-claim state and the run-level `incomplete` flag already say it, and a
   third spelling is one more thing to keep true.

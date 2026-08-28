@@ -12,3 +12,23 @@ internal_timeout_flag = ""
 effort_kind = "none"
 
 [effort]
+
+# §14. ollama was listed for a long time as "no auth marker captured yet",
+# alongside the CLIs whose markers genuinely had to be observed. That was a
+# category error: a local ollama has no credentials, so there is no auth
+# failure to capture from it, and waiting for one meant waiting forever.
+#
+# What it does have is HTTP. An ollama reached through an authenticating
+# proxy answers 401 or 403, http_transport records the response status as
+# `exit_code`, and failures.classify already matches on exit_codes. So the
+# marker is declarable WITHOUT a capture -- not because a guess is
+# acceptable here, but because these two statuses are specified by RFC 9110
+# as meaning exactly "unauthenticated" and "refused despite authentication",
+# rather than being a vendor's choice of wording. That is the distinction
+# the no-guessing rule is actually about.
+#
+# Deliberately only these two: 407 is a proxy's own challenge rather than
+# the endpoint's, and 429/5xx are not auth at all.
+[auth]
+exit_codes = [401, 403]
+remediation = "the endpoint requires authentication; ollama itself holds no credentials, so the token belongs to whatever proxy fronts it"
