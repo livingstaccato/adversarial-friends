@@ -273,6 +273,38 @@ def build_argv(
     raise UsageError(f"unknown prompt_mode {adapter.prompt_mode!r}")
 
 
+def place_extra_args(argv: list[str], adapter: Adapter, extra_args: list[str]) -> list[str]:
+    """Insert operator flags where a FLAG goes for this adapter's prompt mode.
+
+    Appending them to the end was wrong for two of the five shipped adapters,
+    and wrong in the way `build_argv`'s own docstring warns about: the prompt
+    is not always last, and a token after it is not a flag any more.
+
+    * `stdin` -- the prompt never enters argv, so the end is a flag position
+      and nothing moves. codex.
+    * `trailing-arg` -- the prompt IS the last element. Appending put the
+      operator's flags after it, turning them into stray positionals and
+      displacing the prompt from the position the CLI reads it from. claude.
+    * `flag-value` -- the prompt is the value of `prompt_flag`. Appending put
+      the flags after that value, where they are positionals rather than
+      options. agy.
+
+    So `--unsafe-extra-args` silently did nothing for agy and claude, or
+    corrupted the invocation, rather than failing in a way anyone would see.
+    Raised as a deadlocked claim by a cross-examination of dispatch.py --
+    judges split because neither ran it; the argv settles it.
+    """
+    if not extra_args:
+        return argv
+    if adapter.prompt_mode == "trailing-arg" and argv:
+        return [*argv[:-1], *extra_args, argv[-1]]
+    if adapter.prompt_mode == "flag-value" and adapter.prompt_flag in argv:
+        cut = argv.index(adapter.prompt_flag)
+        return [*argv[:cut], *extra_args, *argv[cut:]]
+    # stdin, or a shape this does not recognise: the end is a flag position.
+    return [*argv, *extra_args]
+
+
 def friend_key(spec: FriendSpec) -> str:
     """A friend's ledger identity: what round 1 writes into a claim's
     `origin`, and what judging matches against to decide who may judge

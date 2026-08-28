@@ -12,7 +12,7 @@ import shutil
 import threading
 
 from . import childenv, http_transport, sandbox
-from .adapters import Adapter, Capability, FriendSpec, build_argv
+from .adapters import Adapter, Capability, FriendSpec, build_argv, place_extra_args
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult
@@ -394,7 +394,7 @@ def _dispatch(
         # unvalidated flag does -- it may well have re-enabled writes -- so
         # the honest report is that read-only was not verified, not that the
         # flag the adapter emitted is still in force.
-        argv = [*argv, *extra_args]
+        argv = place_extra_args(argv, adapter, extra_args)
         # Re-screened, because the argv checked earlier is not the argv that
         # runs. `parse_unsafe_extra_args` refuses a DENIED_FLAG, but nothing
         # looked at denied VALUES on these tokens -- so
