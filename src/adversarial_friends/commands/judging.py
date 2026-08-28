@@ -17,6 +17,7 @@ from typing import Any
 
 from .. import verdicts as vd
 from ..adapters import FriendSpec, friend_key
+from ..dispatch import KILL_GRACE_S
 from ..ledger import Claim, Verdict
 
 
@@ -60,7 +61,15 @@ def _within_deadline(specs: list[FriendSpec], seconds_left: float) -> list[Frien
     wall-clock ceiling. A friend dispatched just under the ceiling used to
     run for its own full timeout past it.
 
-    Below one whole second, nothing is dispatched at all. `int()` floors, so
+    The cap subtracts `KILL_GRACE_S`, because dispatch hands `run_process` a
+    kill deadline of `spec.timeout + KILL_GRACE_S` -- a full extra minute. A
+    cap that ignored it made the wall-clock ceiling a ceiling only for
+    friends that behaved: a single hung friend overshot it by that minute,
+    plus the group's own escalation windows. Reserving the grace up front
+    costs a well-behaved friend some of its timeout and makes the ceiling
+    mean what it says, which is the trade the ceiling exists to make.
+
+    Below one whole second of usable time, nothing is dispatched at all. `int()` floors, so
     0.6s remaining became a timeout of 0 -- a friend launched only to be
     killed the instant it started, which still spends a call from the budget
     and still reports as a failure that marks the run incomplete. There is no
@@ -68,7 +77,7 @@ def _within_deadline(specs: list[FriendSpec], seconds_left: float) -> list[Frien
     reach its model. Returning nothing lets the caller's withheld path say so
     plainly instead.
     """
-    remaining = int(seconds_left)
+    remaining = int(seconds_left) - KILL_GRACE_S
     if remaining < 1:
         return []
     return [dataclasses.replace(s, timeout=min(s.timeout, remaining)) for s in specs]

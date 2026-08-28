@@ -13,6 +13,7 @@ from e2e_helpers import run_af
 from adversarial_friends.adapters import FriendSpec
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands.crossexam import _within_deadline
+from adversarial_friends.dispatch import KILL_GRACE_S
 
 
 def _spec(timeout):
@@ -75,5 +76,14 @@ def test_a_friend_may_not_outlive_the_ceiling_it_was_dispatched_under():
     assert budget.seconds_left(500.0) == 0
 
     specs = [_spec(timeout=900), _spec(timeout=10)]
-    capped = _within_deadline(specs, budget.seconds_left(100.0))
-    assert [s.timeout for s in capped] == [20, 10]
+    # With room for both a timeout and the kill grace, every friend is capped
+    # to what remains of the run, minus the grace dispatch adds on top.
+    capped = _within_deadline(specs, budget.seconds_left(0.0))
+    assert [s.timeout for s in capped] == [120 - KILL_GRACE_S, 10]
+    # With 20 seconds left and a 60-second grace, there is no dispatch that
+    # both runs and respects the ceiling. This used to cap to 20 and then
+    # hand run_process a kill deadline of 80 -- honouring the ceiling in the
+    # timeout while breaking it in the kill, which is the half-guarantee
+    # c-0011 named. Refusing is the honest answer; the withheld path reports
+    # it rather than letting the round look clean.
+    assert _within_deadline(specs, budget.seconds_left(100.0)) == []

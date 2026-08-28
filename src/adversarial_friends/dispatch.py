@@ -7,6 +7,7 @@ than re-derived (see _dispatch's own docstring below).
 
 import dataclasses
 from pathlib import Path
+import re
 import shutil
 import threading
 
@@ -40,6 +41,31 @@ KILL_GRACE_S = 60
 # is visible before a real dispatch would fail, not only after.
 PROMPT_ARGV_WARN_BYTES = 100_000
 
+
+def argv_size_warning(spec_name: str, adapter: "Adapter", prompt_text: str) -> str | None:
+    """The E2BIG warning for a prompt this CLI passes as one argv element.
+
+    Shared because it was written once, in the critique round, under a
+    docstring saying every friend prompt passes through it. Judging prompts
+    never did -- and they are strictly larger, carrying the claims under
+    review and the prior verdicts on top of the same artifact. The round most
+    likely to trip the limit was the one round not measured.
+    """
+    if spec_name.startswith("fake") or adapter.prompt_mode == "stdin":
+        return None
+    prompt_bytes = len(prompt_text.encode("utf-8"))
+    if prompt_bytes <= PROMPT_ARGV_WARN_BYTES:
+        return None
+    return (
+        f"{spec_name}: prompt is {prompt_bytes} bytes and "
+        f"{adapter.name} passes it as a single argv element "
+        f"(prompt_mode={adapter.prompt_mode!r}); Linux commonly "
+        "caps a single argument near 128KB (the limit varies by "
+        "OS), so this friend's dispatch may fail with 'Argument "
+        "list too long' (E2BIG)."
+    )
+
+
 # A synthetic capability for the test-only "fake" cli (see _dispatch): it
 # never touches adapters.py/build_argv at all, so there is no real
 # Capability to surface. Always doc-scope, no schema enforcement, no
@@ -68,7 +94,27 @@ _UNKNOWN_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
 # escaping here first would double-escape and could reintroduce exactly the
 # construct being neutralized; a short diagnostic snippet loses nothing
 # essential by simply not containing these characters.
-_INLINE_MARKDOWN_STRIP = str.maketrans("", "", "`*_[]<>")
+_INLINE_MARKDOWN_STRIP = str.maketrans("", "", "`*_[]<>~")
+
+# Stripping delimiters cannot reach a construct that has none. GFM autolinks
+# a bare `scheme://host` and a bare `www.host` with no surrounding syntax at
+# all, so the character strip above left an attacker-controlled clickable
+# link in the status column while claiming to have neutralized links. A
+# friend's stderr is attacker-influenced text: the artifact under review can
+# steer what a CLI prints.
+#
+# Defanged rather than removed, and visibly so. `https: //host` is still
+# readable as the diagnostic it belongs to, and is not a link in any
+# renderer, because an autolink needs the scheme punctuation contiguous.
+# Removing the URL entirely would delete the most useful part of an auth or
+# proxy error.
+_AUTOLINK_SCHEME_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
+_AUTOLINK_WWW_RE = re.compile(r"(?i)\bwww\.")
+
+
+def _defang_autolinks(text: str) -> str:
+    text = _AUTOLINK_SCHEME_RE.sub(r"\1: //", text)
+    return _AUTOLINK_WWW_RE.sub("www .", text)
 
 
 def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
@@ -126,12 +172,13 @@ def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = 200) -> str:
     commands.run.cmd_run). Takes the LAST non-empty lines: the actionable
     diagnostic (an auth error, a missing env var) is usually near the end of
     a CLI's stderr, after any banner/progress noise, not the first line.
-    Inline Markdown/HTML-significant characters are stripped (see
-    _INLINE_MARKDOWN_STRIP above) before the length cap is applied, so
+    Inline Markdown/HTML-significant characters are stripped and bare
+    autolinks are defanged (see _INLINE_MARKDOWN_STRIP and
+    _defang_autolinks above) before the length cap is applied, so
     `max_chars` bounds what a reader actually sees."""
     lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
     tail = " | ".join(lines[-max_lines:])
-    tail = tail.translate(_INLINE_MARKDOWN_STRIP)
+    tail = _defang_autolinks(tail.translate(_INLINE_MARKDOWN_STRIP))
     if len(tail) > max_chars:
         tail = tail[: max_chars - 1].rstrip() + "…"
     return tail
@@ -223,7 +270,14 @@ def _dispatch(
         return (
             spec,
             http_transport.capability_for(adapter),
-            http_transport.run_request(adapter, spec, prompt_file, spec.timeout, contract),
+            http_transport.run_request(
+                adapter,
+                spec,
+                prompt_file,
+                spec.timeout,
+                contract,
+                abort_event=abort_event,
+            ),
         )
     else:
         adapter = registry[spec.cli]
@@ -261,26 +315,30 @@ def _dispatch(
         # adapter and not blanket.
         self_confines = bool(adapter.readonly_argv)
         if binary_present and (not self_confines or adapter.sandbox_confine):
-            # §12.2. This CLI enforces nothing on its own, and cwd is not
-            # containment -- an artifact telling it to read
+            # §12.2. Two ways in, and they carry different consequences.
+            #
+            # A CLI with NO read-only mode enforces nothing on its own, and
+            # cwd is not containment -- an artifact telling it to read
             # ~/.ssh/id_ed25519 would simply work. Confined by the OS, or
             # refused.
             #
-            # **Deliberately narrower than §12.2's letter**, which keys on
-            # the capability rather than the adapter. `build_argv` emits a
-            # readonly flag only for repo scope, so a doc-scope claude also
-            # reports `readonly=False` -- and every friend is downgraded to
-            # doc scope whenever the artifact is not inside a git repository.
-            # Keying on the capability would therefore refuse every friend
-            # for any artifact outside a repo, and would put CLIs whose
-            # credential paths this project has NOT verified under a sandbox
-            # that silently breaks their authentication.
+            # A CLI that opted in via `sandbox_confine` already restrains its
+            # own writes; what it lacks is read protection, since a read-only
+            # flag says nothing about what may be opened. Measured, not
+            # assumed: codex under `--sandbox read-only` alone, asked to list
+            # ~/.ssh, listed it.
             #
-            # So the rule here is "this CLI has no read-only mode at all",
-            # which is the case §12.2's own example is about. The residual
-            # gap -- a doc-scope friend of a readonly-capable CLI is not
-            # OS-confined -- is real and recorded in the spec's divergences
-            # section rather than left implied.
+            # **Deliberately keyed on the ADAPTER, not the capability.**
+            # `build_argv` emits a readonly flag only for repo scope, so a
+            # doc-scope claude reports `readonly=False` -- and every friend
+            # is downgraded to doc scope whenever the artifact is not inside
+            # a git repository. Keying on the capability would put CLIs whose
+            # credential paths this project has NOT verified under a sandbox
+            # that silently breaks their authentication. claude is the live
+            # example: its credentials are in the macOS Keychain, and
+            # granting that would hand a friend every credential the operator
+            # has. So opting in stays a per-adapter statement that someone
+            # ran that CLI confined and watched it work.
             mechanism = sandbox.detect()
             if mechanism is None:
                 # Refusal is only right for a CLI that enforces NOTHING on
@@ -319,9 +377,16 @@ def _dispatch(
                 # user's. Without this opencode needed a read grant over the
                 # whole of $TMPDIR -- which holds every other friend's
                 # isolation tree -- and a write grant over its own home
-                # state directory, which outlives the run. Only for confined
-                # friends: a self-confining CLI keeps its real config, which
-                # is where its credentials live.
+                # state directory, which outlives the run.
+                #
+                # Applied to every friend reaching this branch, including one
+                # that also confines itself: redirecting the generic scratch
+                # and state variables does not touch where a CLI keeps its
+                # credentials, which is either its own declared config path
+                # (codex reads CODEX_HOME, granted above) or somewhere the
+                # sandbox cannot reach at all. An earlier version of this
+                # comment said self-confining CLIs were excluded here, which
+                # stopped being true the moment one of them opted in.
                 child_env.update(childenv.private_dirs(cwd))
     if extra_args and spec.cli != "fake":
         # §13: their presence forces readonly False in the header regardless
@@ -330,6 +395,15 @@ def _dispatch(
         # the honest report is that read-only was not verified, not that the
         # flag the adapter emitted is still in force.
         argv = [*argv, *extra_args]
+        # Re-screened, because the argv checked earlier is not the argv that
+        # runs. `parse_unsafe_extra_args` refuses a DENIED_FLAG, but nothing
+        # looked at denied VALUES on these tokens -- so
+        # `--unsafe-extra-args "--sandbox danger-full-access"` passed the
+        # flag-name screen and reached the CLI, re-enabling exactly the write
+        # access `check_denied_values` exists to refuse. The escape hatch is
+        # for "I need one more option", never for "run with no guardrails",
+        # which is the line its own docstring already draws.
+        check_denied_values(argv)
         capability = dataclasses.replace(capability, readonly=False)
     outcome = run_process(
         argv,

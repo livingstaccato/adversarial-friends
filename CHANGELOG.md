@@ -62,6 +62,55 @@ from a pipe held open.
 
 spawn.py crossed the 500-line cap again, so the pumps moved to `procio.py`.
 
+### dispatch.py, cross-examined
+
+Eleven claims, eight upheld. Two of them I had already found reading the file
+while the run was in flight; the friends reached both independently.
+
+- **The HTTP transport ignored the abort signal entirely.** The exec
+  transport has honoured it since signal handling was added — a cancelled run
+  must not leave a friend running, nor make the operator wait out a timeout
+  they already interrupted. `run_request` never received the event, so Ctrl-C
+  on a run with an ollama friend sat until the network deadline expired. The
+  request runs on a worker now and the wait ends on abort.
+- **The argv that was screened was not the argv that ran.**
+  `check_denied_values` fires before `--unsafe-extra-args` are appended.
+  `parse_unsafe_extra_args` refuses a denied *flag* on those tokens but never
+  looked at denied *values*, so the flag spelling of "turn the sandbox off"
+  was blocked while the value spelling —
+  `--unsafe-extra-args "--sandbox danger-full-access"` — went straight
+  through to the CLI. The final argv is re-screened.
+- **The wall-clock ceiling was a ceiling only for friends that behaved.**
+  Dispatch hands `run_process` a kill deadline of `spec.timeout +
+  KILL_GRACE_S`, a full extra minute, which the cap ignored: a hung friend
+  overshot the operator's limit by that minute plus the group escalation
+  windows. The cap reserves the grace, and when only the grace would fit
+  nothing is dispatched — an existing test asserted the older half-guarantee
+  (cap the timeout, ignore the kill) and was updated to the stronger one.
+- **The round most likely to trip the argv size limit was the one not
+  measured.** `PROMPT_ARGV_WARN_BYTES` was documented as covering every
+  friend prompt and only ever ran in the critique round. Judging prompts are
+  strictly larger — the same artifact plus the claims under review plus prior
+  verdicts. The check is shared now.
+- **The stderr sanitizer left attacker-controlled links clickable.** It
+  stripped `` ` * _ [ ] < > `` and claimed to neutralize inline links, but
+  GFM autolinks a bare `scheme://host` with no delimiters at all, so nothing
+  in that strip could reach one; `~~strike~~` used a character outside the
+  set too. A friend's stderr is attacker-influenced text — the artifact under
+  review steers what the CLI prints. URLs are defanged visibly rather than
+  deleted, since the host is usually the useful part of an auth error.
+- **Two comments contradicted their own code**, both written earlier the same
+  day: the §12.2 block still declared the rule to be "this CLI has no
+  read-only mode at all" after `sandbox_confine` was added beside it, and the
+  `private_dirs` comment still said self-confining CLIs were excluded after
+  codex became both.
+
+Left unsettled, and recorded rather than quietly dropped: two deadlocked
+claims — that appending extra_args at the end ignores the flag-ordering rule
+`build_argv` documents as a verified trap, and that "scratch inside the
+isolation directory" means the git worktree of the code under review for a
+repo-scope friend. Both had judges on each side.
+
 ### crossexam.py, cross-examined
 
 Eleven claims, and the friends refuted three of each other's rather than

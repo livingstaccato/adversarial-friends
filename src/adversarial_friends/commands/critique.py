@@ -18,7 +18,7 @@ import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec, friend_key
-from ..dispatch import PROMPT_ARGV_WARN_BYTES
+from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
 from ..ledger import Alias, Claim
@@ -79,18 +79,9 @@ def build_prompts(
         # Recording the risk up front means an E2BIG failure is already
         # explained by the time it is read, not a surprise raw exit code.
         if spec.cli != "fake":
-            adapter = registry[spec.cli]
-            if adapter.prompt_mode != "stdin":
-                prompt_bytes = len(prompt_text.encode("utf-8"))
-                if prompt_bytes > PROMPT_ARGV_WARN_BYTES:
-                    downgrades.append(
-                        f"{spec.name}: prompt is {prompt_bytes} bytes and "
-                        f"{adapter.name} passes it as a single argv element "
-                        f"(prompt_mode={adapter.prompt_mode!r}); Linux commonly "
-                        "caps a single argument near 128KB (the limit varies by "
-                        "OS), so this friend's dispatch may fail with 'Argument "
-                        "list too long' (E2BIG)."
-                    )
+            warning = argv_size_warning(spec.name, registry[spec.cli], prompt_text)
+            if warning is not None:
+                downgrades.append(warning)
         prompt_path = store.friend_prompt_path(round_no, spec.name)
         prompt_path.write_text(prompt_text, encoding="utf-8")
         prompt_for[spec.name] = prompt_path

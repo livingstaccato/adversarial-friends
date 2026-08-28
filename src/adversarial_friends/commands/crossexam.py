@@ -22,6 +22,7 @@ from typing import Any
 from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec, friend_key
 from ..ceilings import BUDGET_EXHAUSTED, Budget
+from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
@@ -188,6 +189,13 @@ def run_rounds(
             )
             if note:
                 outcome.downgrades.append(note)
+            if spec.cli != "fake":
+                # The round the original check never covered, and the one
+                # more likely to trip it: a judging prompt carries the claims
+                # and the prior verdicts on top of the same artifact.
+                size_note = argv_size_warning(spec.name, registry[spec.cli], prompt_text)
+                if size_note is not None:
+                    outcome.downgrades.append(size_note)
             path = store.friend_prompt_path(round_no, spec.name)
             path.write_text(prompt_text, encoding="utf-8")
             judge_specs.append(spec)

@@ -25,8 +25,10 @@ Requests use urllib from the stdlib. The project ships no runtime
 dependencies, and adding one for a single POST would be a poor trade.
 """
 
+import concurrent.futures
 import json
 from pathlib import Path
+import threading
 import time
 import urllib.error
 from urllib.parse import urlparse
@@ -37,6 +39,11 @@ from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult, normalize
 from .spawn import MAX_OUTPUT_BYTES, SpawnResult
+
+# How often the abort flag is consulted while a request is in flight.
+# Matches spawn's poll cadence so a cancelled run ends at the same pace
+# whichever transport its friends use.
+_ABORT_POLL_S = 0.05
 
 # ollama returns the model's text under this key for a non-streaming
 # /api/generate call. Declared here rather than as an Envelope on the
@@ -124,6 +131,7 @@ def run_request(
     timeout_s: int,
     contract: PayloadContract = CLAIM_CONTRACT,
     max_response_bytes: int = MAX_OUTPUT_BYTES,
+    abort_event: threading.Event | None = None,
 ) -> SpawnResult:
     """POST the prompt to the adapter's endpoint and normalize the reply.
 
@@ -179,20 +187,46 @@ def run_request(
         method="POST",
     )
 
-    try:
+    # The request runs on a worker so `abort_event` can end the wait. The
+    # exec transport has honoured it since signal handling was added -- a
+    # cancelled run must not leave a friend running, and must not make the
+    # operator wait out a timeout they already interrupted. This transport
+    # ignored it entirely: `urlopen` blocks, so Ctrl-C on a run with an
+    # ollama friend sat until the network deadline expired.
+    #
+    # The socket is abandoned rather than closed on abort. urllib gives no
+    # cancellation handle, and the alternative -- waiting for a cooperative
+    # shutdown -- is the exact wait being escaped. The worker is a daemon, so
+    # it cannot hold the process open.
+    def _issue() -> tuple[int, bytes]:
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
-            status = response.status
             # One byte past the ceiling is enough to know it was exceeded,
             # and never reads the rest of an arbitrarily large body.
-            raw = response.read(max_response_bytes + 1)
-            if len(raw) > max_response_bytes:
-                return _failure(
-                    argv,
-                    time.monotonic() - started,
-                    f"response exceeded {max_response_bytes} bytes",
-                    status,
-                )
-            body = raw.decode("utf-8", errors="replace")
+            return response.status, response.read(max_response_bytes + 1)
+
+    try:
+        if abort_event is None:
+            status, raw = _issue()
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_issue)
+                while True:
+                    if abort_event.is_set():
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        return _failure(argv, time.monotonic() - started, "aborted")
+                    try:
+                        status, raw = future.result(timeout=_ABORT_POLL_S)
+                        break
+                    except concurrent.futures.TimeoutError:
+                        continue
+        if len(raw) > max_response_bytes:
+            return _failure(
+                argv,
+                time.monotonic() - started,
+                f"response exceeded {max_response_bytes} bytes",
+                status,
+            )
+        body = raw.decode("utf-8", errors="replace")
     except TimeoutError:
         return _failure(argv, time.monotonic() - started, "timeout")
     except urllib.error.HTTPError as exc:

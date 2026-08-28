@@ -29,9 +29,21 @@ def test_a_negative_remainder_dispatches_nothing():
     assert judging._within_deadline([_spec("a")], -5.0) == []
 
 
-def test_a_whole_second_or_more_still_dispatches_capped():
-    got = judging._within_deadline([_spec("a", timeout=600)], 30.7)
-    assert [s.timeout for s in got] == [30]
+def test_the_cap_reserves_the_kill_grace(**_):
+    """c-0011. dispatch hands run_process `spec.timeout + KILL_GRACE_S`, a
+    full extra minute, so a cap that ignored it made the wall-clock ceiling
+    a ceiling only for friends that behaved: one hung friend overshot it by
+    that minute plus the group escalation windows."""
+    from adversarial_friends.dispatch import KILL_GRACE_S
+
+    got = judging._within_deadline([_spec("a", timeout=600)], 90.7)
+    assert [s.timeout for s in got] == [90 - KILL_GRACE_S]
+
+
+def test_nothing_is_dispatched_when_only_the_grace_would_fit():
+    from adversarial_friends.dispatch import KILL_GRACE_S
+
+    assert judging._within_deadline([_spec("a")], float(KILL_GRACE_S)) == []
 
 
 def test_a_timeout_below_the_remainder_is_left_alone():
