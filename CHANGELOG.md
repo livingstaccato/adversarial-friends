@@ -62,6 +62,48 @@ from a pipe held open.
 
 spawn.py crossed the 500-line cap again, so the pumps moved to `procio.py`.
 
+### crossexam.py, cross-examined
+
+Eleven claims, and the friends refuted three of each other's rather than
+nodding them through. Six upheld and fixed here.
+
+- **A judge was shown its own prior verdict as an anonymous stranger.** One
+  set of prior verdicts was built per round and handed to every judge, and
+  §5.1 strips the judge's name — so from the first round carrying priors, a
+  judge weighing "what did the others conclude" read its own earlier opinion
+  back as independent corroboration. Worse than leaking identity: it
+  manufactures consensus in the direction each judge already leans, which is
+  the exact thing blind presentation exists to prevent. Built per judge now.
+- **A re-amended claim could mint a successor id that already existed.**
+  `bump_claim_id` derives an id from (number, version + 1) and knows nothing
+  about the ledger. When the artifact changes mid-run a loop passes
+  `prior=None` — deliberately, so claims settled against the old text are
+  judged against the new one — while keeping the accumulated claim list. An
+  already-superseded claim is re-seeded contested, amended again, and
+  produces the same successor id twice, leaving two different claims under
+  one id. Fixed where the id is chosen rather than by asking the caller to
+  keep state it discards on purpose.
+- **The all-withheld path settled against the full roster.** The other two
+  settle paths pass the shrunken one; this passed `specs`, counting friends
+  that cannot vote toward quorum — the precise thing shrinking the roster
+  exists to prevent.
+- **A sub-second remainder dispatched a friend with a zero timeout.** `int()`
+  floors, so 0.6s left became `timeout=0`: a friend launched only to be
+  killed instantly, spending a call from the budget and reporting a failure
+  that marks the run incomplete. Nothing is dispatched under one second now.
+- **A loop re-announced a disabled friend every iteration.** The set tracking
+  who had already been reported was local to `run_rounds`, which a loop calls
+  once per iteration; the spec asks for once per run. It moved onto the
+  outcome, where `signatures` already lived for the same reason.
+- **A comment was false about the code it cited.** It claimed
+  `RepeatTracker` never clears a disabled friend; `record` clears one on any
+  success. What actually makes the exclusion permanent is the roster filter
+  itself — a friend dropped from `active` is never dispatched again, so it
+  never records the success that would re-enable it.
+
+crossexam.py crossed the 500-line cap, so the rules a round applies before
+and after dispatch moved to `commands/judging.py`.
+
 ### A refused signal crashed the round instead of reporting an orphan
 
 `_signal_group` caught only `ProcessLookupError`, so a `PermissionError` from

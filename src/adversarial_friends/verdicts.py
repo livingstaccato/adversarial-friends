@@ -259,8 +259,36 @@ def downgrade_unverifiable(verdict: Verdict) -> Verdict:
     return dataclasses.replace(verdict, verdict=UNPROVEN, reasoning=reasoning)
 
 
+def _free_successor_id(claim_id: str, taken: set[str] | None) -> str:
+    """The next version of `claim_id` that nothing already holds.
+
+    `bump_claim_id` derives an id purely from (number, version + 1) and knows
+    nothing about the ledger, which is fine while every amendment of a claim
+    happens once. A loop breaks that: `run_rounds` receives `prior=None` when
+    the artifact changed mid-run, so every accumulated claim -- including one
+    already `superseded` -- is re-seeded `contested` and can be amended a
+    second time, producing the same successor id again. The ledger then holds
+    two different claims under one id, and every later reference to it is
+    ambiguous.
+
+    Bumping past what is taken fixes it where the id is chosen, rather than
+    relying on a caller to preserve state it deliberately discards: the
+    revision reset exists so claims settled against the old text get judged
+    against the new one, which is the right behaviour to keep.
+    """
+    candidate = bump_claim_id(claim_id)
+    if not taken:
+        return candidate
+    while candidate in taken:
+        candidate = bump_claim_id(candidate)
+    return candidate
+
+
 def build_successor(
-    claim: Claim, amendments: list[Verdict], round_no: int
+    claim: Claim,
+    amendments: list[Verdict],
+    round_no: int,
+    taken: set[str] | None = None,
 ) -> tuple[Claim, str | None]:
     """The `c-0007@2` a unanimous `amended` produces -- §6.1.
 
@@ -315,7 +343,7 @@ def build_successor(
 
     successor = dataclasses.replace(
         claim,
-        id=bump_claim_id(claim.id),
+        id=_free_successor_id(claim.id, taken),
         supersedes=claim.id,
         origin=origin,
         round=round_no,

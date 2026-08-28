@@ -13,7 +13,6 @@ functions, and is tested there without a subprocess in sight.
 
 from collections.abc import Callable
 import concurrent.futures
-import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
@@ -29,6 +28,13 @@ from ..ledger import Claim, Verdict
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
+from .judging import (
+    _never_reported,
+    _parse_verdicts,
+    _prior_verdicts_by_claim,
+    _slice_for,
+    _within_deadline,
+)
 
 
 @dataclass
@@ -59,73 +65,11 @@ class CrossexamOutcome:
     # local to `run_rounds` so a loop's next block can go on comparing
     # against the last round that actually happened.
     signatures: dict[str, "vd._Signature"] = field(default_factory=dict)
-
-
-def _parse_verdicts(payload: dict[str, Any], judge: str, round_no: int) -> list[Verdict]:
-    """Turn one judge's validated payload into Verdict records.
-
-    The payload has already passed VERDICT_CONTRACT.validate inside
-    normalize, so the required fields are present and well-typed; this only
-    shapes them. `judge` comes from the runner, never from the payload -- a
-    friend does not get to say who it is.
-    """
-    out = []
-    # See critique.run_critique: nullable container, so `or []`.
-    for entry in payload.get("verdicts") or []:
-        out.append(
-            Verdict(
-                claim_id=entry["claim_id"],
-                judge=judge,
-                round=round_no,
-                verdict=entry["verdict"],
-                confidence=entry["confidence"],
-                evidence_assessment=entry.get("evidence_assessment") or "",
-                reasoning=entry["reasoning"],
-                counter_evidence=entry.get("counter_evidence"),
-                amended_claim=entry.get("amended_claim"),
-            )
-        )
-    return out
-
-
-def _slice_for(spec: FriendSpec, contested: list[Claim]) -> list[Claim]:
-    """The claims this friend may judge: everything contested it did not
-    originate (§7.1). An empty slice means this friend wrote every claim
-    still open, and it is simply not dispatched this round."""
-    key = friend_key(spec)
-    return [claim for claim in contested if key not in claim.origin]
-
-
-def _within_deadline(specs: list[FriendSpec], seconds_left: float) -> list[FriendSpec]:
-    """Every spec, with its timeout capped at what remains of the run's
-    wall-clock ceiling. A friend dispatched just under the ceiling used to
-    run for its own full timeout past it."""
-    remaining = int(seconds_left)
-    return [dataclasses.replace(s, timeout=min(s.timeout, remaining)) for s in specs]
-
-
-def _never_reported(missing: dict[str, set[str]], spec: FriendSpec, claims: list[Claim]) -> None:
-    """Record `spec` as a judge that did not report on `claims` this round."""
-    for claim in claims:
-        missing.setdefault(claim.id, set()).add(friend_key(spec))
-
-
-def _prior_verdicts_by_claim(
-    all_verdicts: list[Verdict], claim_ids: set[str]
-) -> dict[str, list[Verdict]]:
-    """One verdict per judge per claim -- `latest_per_judge`, the same
-    reduction `state_for` and `verdict_set_signature` apply.
-
-    §5.1 strips the judge and carries no round, so two verdicts from one
-    judge render as two anonymous reviewers: from round 4 a judge weighing
-    "what did the others conclude" reads a consensus that does not exist.
-    The file's own comment listed the three sites already fixed; this was
-    the fourth."""
-    prior: dict[str, list[Verdict]] = {}
-    for verdict in all_verdicts:
-        if verdict.claim_id in claim_ids:
-            prior.setdefault(verdict.claim_id, []).append(verdict)
-    return {cid: vd.latest_per_judge(cast) for cid, cast in prior.items()}
+    # Friends already announced as disabled. On the outcome rather than local
+    # to `run_rounds` for the same reason `signatures` is: a loop calls
+    # run_rounds once per iteration, so a per-call set re-announced the same
+    # friend every iteration, when the spec asks for it once per run.
+    dropped: set[str] = field(default_factory=set)
 
 
 def run_rounds(
@@ -189,9 +133,9 @@ def run_rounds(
     # seeding every claim as contested is what puts it in round 2's slice.
     carried = prior.states if prior is not None else {}
     outcome.states = {claim.id: carried.get(claim.id, vd.CONTESTED) for claim in outcome.claims}
-    # Friends already reported as gone for the rest of the run, so the
-    # downgrade is written once rather than every round.
-    dropped: set[str] = set()
+    # Seeded from the previous block so a loop announces a disabled friend
+    # once per RUN, not once per iteration.
+    outcome.dropped = set(prior.dropped) if prior is not None else set()
 
     round_no = first_round
     while round_no <= max_rounds:
@@ -203,9 +147,16 @@ def run_rounds(
         if not contested:
             break
 
-        # A friend the repeat tracker disabled is disabled for the rest of
-        # the run (`failures.RepeatTracker` never clears one), so it is not
-        # a judge that happens to be silent this round -- it is not a judge.
+        # A friend the repeat tracker disabled stays disabled for the rest
+        # of the run, so it is not a judge that happens to be silent this
+        # round -- it is not a judge.
+        #
+        # Note WHY, because the obvious reason is wrong: `RepeatTracker`
+        # does clear a disabled friend, in `record`, on any success. An
+        # earlier version of this comment claimed it never does. What makes
+        # the exclusion permanent is this filter itself -- a friend dropped
+        # from `active` is never dispatched again, so it never records the
+        # success that would re-enable it.
         # Counted as one, it was recorded "missing" every round, which
         # pinned its claims at `incomplete`: never `unproven`, so never
         # discardable, so a loop could not converge on them. Dropping it
@@ -213,8 +164,8 @@ def run_rounds(
         # shrunken roster is reported rather than implied.
         active = [s for s in specs if tracker is None or not tracker.is_disabled(s.name)]
         for spec in specs:
-            if spec not in active and spec.name not in dropped:
-                dropped.add(spec.name)
+            if spec not in active and spec.name not in outcome.dropped:
+                outcome.dropped.add(spec.name)
                 outcome.downgrades.append(
                     f"round {round_no}: {spec.name} failed identically twice and is "
                     "disabled for the rest of this run; it is no longer counted as "
@@ -223,11 +174,15 @@ def run_rounds(
         judge_specs: list[FriendSpec] = []
         prompt_for: dict[str, Path] = {}
         contested_ids = {c.id: c for c in contested}
-        prior_cast = _prior_verdicts_by_claim(outcome.verdicts, set(contested_ids))
         for spec in active:
             slice_ = _slice_for(spec, contested)
             if not slice_:
                 continue
+            # Built per judge, not per round: each one must be told what the
+            # OTHERS concluded, never what it concluded itself.
+            prior_cast = _prior_verdicts_by_claim(
+                outcome.verdicts, set(contested_ids), exclude_judge=friend_key(spec)
+            )
             prompt_text, note = build_judge_prompt(
                 spec, artifact_text, slice_, prior_cast, attributed
             )
@@ -324,7 +279,11 @@ def run_rounds(
             _settle_round(
                 outcome,
                 contested,
-                specs,
+                # `active`, not `specs`: the other two settle paths use the
+                # shrunken roster, and counting friends that cannot vote
+                # toward quorum is the exact thing the roster shrinking
+                # exists to prevent.
+                active,
                 store,
                 round_no,
                 max_rounds,
@@ -447,7 +406,11 @@ def _settle_round(
                 for v in vd.latest_per_judge(v for v in outcome.verdicts if v.claim_id == claim.id)
                 if v.verdict == "amended"
             ]
-            successor, note = vd.build_successor(claim, amendments, round_no)
+            # Every id the ledger already holds, so a re-amended claim in a
+            # loop cannot mint a successor id that already exists.
+            successor, note = vd.build_successor(
+                claim, amendments, round_no, taken={c.id for c in outcome.claims}
+            )
             if note:
                 outcome.notes.append(note)
             # The successor is a real claim and goes in the ledger like any
