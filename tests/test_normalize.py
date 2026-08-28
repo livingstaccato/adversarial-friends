@@ -1,7 +1,7 @@
 import json
 
-from adversarial_friends import normalize
-from adversarial_friends.normalize import Envelope, EnvelopeRule, parse_envelope
+from adversarial_friends import envelopes, normalize
+from adversarial_friends.envelopes import Envelope, EnvelopeRule, parse_envelope
 
 GOOD = (
     '{"findings": [{"severity": "low", "claim": "c", "location": null, '
@@ -18,7 +18,7 @@ def test_plain_json_parses():
 def test_ansi_interleaved_json_is_recovered():
     """ollama run writes cursor/spinner codes into the middle of its payload."""
     noisy = '\x1b[?25l\x1b[?2026h{"\x1b[?25lfind\x1b[?25hings": []}\x1b[?25h'
-    assert normalize.strip_ansi(noisy) == '{"findings": []}'
+    assert envelopes.strip_ansi(noisy) == '{"findings": []}'
 
 
 def test_fenced_json_is_extracted():
@@ -216,24 +216,24 @@ def test_parse_envelope_json_path_without_a_path_is_none():
 def test_unwrap_json_path_extracts_the_field():
     envelope = Envelope(kind="json_path", path="response")
     raw = json.dumps({"status": "SUCCESS", "response": GOOD})
-    assert normalize.unwrap_envelope(raw, envelope) == GOOD
+    assert envelopes.unwrap_envelope(raw, envelope) == GOOD
 
 
 def test_unwrap_json_path_supports_dotted_paths():
     envelope = Envelope(kind="json_path", path="result.text")
     raw = json.dumps({"result": {"text": GOOD}})
-    assert normalize.unwrap_envelope(raw, envelope) == GOOD
+    assert envelopes.unwrap_envelope(raw, envelope) == GOOD
 
 
 def test_unwrap_json_path_missing_key_returns_none():
     envelope = Envelope(kind="json_path", path="response")
     raw = json.dumps({"status": "ERROR", "response": ""})
-    assert normalize.unwrap_envelope(raw, envelope) is None
+    assert envelopes.unwrap_envelope(raw, envelope) is None
 
 
 def test_unwrap_json_path_non_json_raw_returns_none():
     envelope = Envelope(kind="json_path", path="response")
-    assert normalize.unwrap_envelope("not json at all", envelope) is None
+    assert envelopes.unwrap_envelope("not json at all", envelope) is None
 
 
 def test_unwrap_ndjson_extracts_matching_lines():
@@ -248,19 +248,19 @@ def test_unwrap_ndjson_extracts_matching_lines():
             json.dumps({"type": "error", "error": {"message": "auth failed"}}),
         ]
     )
-    assert normalize.unwrap_envelope(raw, envelope) == "auth failed"
+    assert envelopes.unwrap_envelope(raw, envelope) == "auth failed"
 
 
 def test_unwrap_ndjson_skips_malformed_lines():
     envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
     raw = "not json\n" + json.dumps({"type": "error", "message": "boom"}) + "\nalso not json"
-    assert normalize.unwrap_envelope(raw, envelope) == "boom"
+    assert envelopes.unwrap_envelope(raw, envelope) == "boom"
 
 
 def test_unwrap_ndjson_no_matching_line_returns_none():
     envelope = Envelope(kind="ndjson", rules=(EnvelopeRule(match_value="error", field="message"),))
     raw = json.dumps({"type": "step_finish"})
-    assert normalize.unwrap_envelope(raw, envelope) is None
+    assert envelopes.unwrap_envelope(raw, envelope) is None
 
 
 def test_normalize_unwraps_envelope_before_scanning():
@@ -440,13 +440,13 @@ def test_structured_output_hint_does_not_fire_for_ordinary_schema_errors():
 
 
 def test_parse_envelope_json_path_reads_an_error_path():
-    env = normalize.parse_envelope({"kind": "json_path", "path": "response", "error_path": "error"})
+    env = envelopes.parse_envelope({"kind": "json_path", "path": "response", "error_path": "error"})
     assert env is not None
     assert env.error_path == "error"
-    assert normalize.envelope_error(json.dumps({"response": "", "error": "boom"}), env) == "boom"
-    assert normalize.envelope_error(json.dumps({"response": "x"}), env) is None
+    assert envelopes.envelope_error(json.dumps({"response": "", "error": "boom"}), env) == "boom"
+    assert envelopes.envelope_error(json.dumps({"response": "x"}), env) is None
 
 
 def test_envelope_error_is_never_read_from_an_ndjson_envelope():
-    env = normalize.Envelope(kind="ndjson", rules=(normalize.EnvelopeRule("error", "message"),))
-    assert normalize.envelope_error(json.dumps({"type": "error", "message": "boom"}), env) is None
+    env = envelopes.Envelope(kind="ndjson", rules=(envelopes.EnvelopeRule("error", "message"),))
+    assert envelopes.envelope_error(json.dumps({"type": "error", "message": "boom"}), env) is None

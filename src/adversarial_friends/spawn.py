@@ -58,7 +58,8 @@ import warnings
 
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
-from .normalize import Envelope, NormalizeResult, answer_is_complete, normalize
+from .envelopes import Envelope, answer_is_complete
+from .normalize import NormalizeResult, normalize
 
 # Wait windows for group escalation: this long for the group to exit after
 # SIGTERM, then (if anything is still alive) this long for it to actually
@@ -454,7 +455,18 @@ def run_process(
         stdout, envelope=envelope, structured_output=structured_output, contract=contract
     )
     failure_reason = None
-    if process.returncode != 0:
+    # A friend we stopped ourselves cannot be judged by its exit code: the
+    # code IS our signal. `answered` means the wait loop broke because the
+    # answer was already complete, and the group sweep below it then killed
+    # a still-running process -- so a negative (signal) code here is this
+    # module's own doing, not the friend's verdict. Reporting it as `exit
+    # -15` discarded a payload that had already normalized successfully,
+    # turning agy's answer-then-hang path from a slow success into a fast
+    # failure. Restricted to negative codes on purpose: a friend that
+    # exited nonzero ON ITS OWN in the same instant is still a failure, and
+    # that is a real exit status rather than a signal we sent.
+    killed_after_answering = answered and process.returncode is not None and process.returncode < 0
+    if process.returncode != 0 and not killed_after_answering:
         failure_reason = f"exit {process.returncode}"
     elif not result.succeeded:
         failure_reason = "; ".join(result.errors) or "unusable output"

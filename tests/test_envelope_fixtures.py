@@ -37,7 +37,7 @@ constructed to reproduce the regression, not the envelope shape itself.
 
 from pathlib import Path
 
-from adversarial_friends import adapters, normalize
+from adversarial_friends import adapters, envelopes, normalize
 
 REPO = Path(__file__).resolve().parents[1]
 ADAPTER_DIR = REPO / "src" / "adversarial_friends" / "assets" / "adapters"
@@ -117,7 +117,7 @@ def test_agy_response_prose_with_top_level_findings_still_succeeds():
 def test_opencode_error_ndjson_fixture_unwraps_the_real_error_message():
     adapter = _registry()["opencode"]
     raw = (FIXTURES / "opencode_error.ndjson").read_text(encoding="utf-8")
-    unwrapped = normalize.unwrap_envelope(raw, adapter.envelope)
+    unwrapped = envelopes.unwrap_envelope(raw, adapter.envelope)
     assert unwrapped == (
         "CLOUDFLARE_GATEWAY_ID missing. Set with: export CLOUDFLARE_GATEWAY_ID=<value>"
     )

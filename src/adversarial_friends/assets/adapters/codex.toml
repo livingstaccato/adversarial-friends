@@ -43,6 +43,11 @@ match_field = "type"
 
 [[envelope.rules]]
 type = "item.completed"
+# Both halves of what the note above describes. Matching on `type` alone
+# also caught reasoning, command-execution and file-change items, any of
+# which may carry their own `item.text`.
+where = "item.type"
+equals = "agent_message"
 field = "item.text"
 
 [effort]

@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### normalize.py, cross-examined
+
+Six defects in the module that parses untrusted friend output, found by
+pointing the tool at it with codex, claude and agy. Three were HIGH and
+settled unanimously; all six were reproduced here before being fixed.
+
+- **The early-answer stop discarded the answer it existed to preserve.**
+  Shipped three commits earlier. Breaking the wait loop is followed by a
+  process-group sweep, so the exit code becomes the signal *we* sent, and
+  `if returncode != 0` marked the friend failed: measured
+  `normalize succeeded: True` beside `failure_reason: exit -15`. agy's
+  answer-then-hang path went from a slow success to a fast failure, which is
+  worse than the hang it replaced. The existing test could not see it — its
+  payload was agy's ERROR object, which fails normalization anyway, so a
+  discarded answer and a preserved one looked identical.
+- **The trailing-comma repair was quadratic on exactly its stated input.**
+  `(?:,\s*)+(?=[}\]])` carried the note "Verified linear with this
+  pattern", and is — when the comma run ends in a bracket. When it does not,
+  every start position rescans the run: 16k commas took 7.5s against 0.3ms
+  for the same count with a bracket. The cited threat, a repetition-looping
+  local model, emits the unbracketed case; and `normalize()` runs *after*
+  the process is killed, so that cost lands past the timeout meant to bound
+  it. Replaced with a single linear pass.
+- **That pass is also string-aware**, which the regex could not be:
+  `{"a": "x, }"}` was rewritten to `{"a": "x}"}` — valid JSON, silently
+  different value. Repair is structural and has no business editing content.
+- **"Latest first" never fixed the codex progress bug it claimed to fix.**
+  `extract_json` ranks globally by tier and short-circuits on tier 0, so
+  ordering only breaks ties. Schema-valid progress narration (tier 0, carries
+  `findings`) beat a real `{"no_findings": true}` answer (tier 2) from any
+  position — including with the real answer first. An ordered source now
+  takes the first candidate that succeeds under the contract; a single
+  document keeps tier ranking, so a stray marker still loses to real findings.
+- **An envelope rule could not express the match its own comment described.**
+  codex.toml documented "the item.completed event whose item.type is
+  agent_message" and declared only the first half, so it matched every
+  item.completed — reasoning, command-execution and file-change items
+  included. Verified live: a reasoning item's text was extracted as the
+  answer. Rules take an optional second condition now.
+- **The Envelope docstring reasoned from a false premise**, claiming all five
+  shipped adapters declare an envelope and that the no-envelope path is
+  reserved for adapters nobody has run. ollama declares none and takes that
+  path on every run.
+
+normalize.py crossed the 500-line cap during this, so the envelope machinery
+moved to `envelopes.py` — "where the answer lives" apart from "turn text into
+a validated payload".
+
 ### opencode had never been dispatched, and could not have been
 
 The first crossexam to include `opencode` — the one adapter with no schema,

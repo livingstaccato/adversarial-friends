@@ -12,7 +12,7 @@ import sys
 import time
 
 from adversarial_friends import spawn
-from adversarial_friends.normalize import Envelope, answer_is_complete
+from adversarial_friends.envelopes import Envelope, answer_is_complete
 
 JSON_PATH = Envelope(kind="json_path", path="response")
 NDJSON = Envelope(kind="ndjson")
@@ -91,3 +91,43 @@ def test_a_missing_working_directory_does_not_read_as_a_missing_binary(tmp_path)
     outcome = spawn.run_process([sys.executable, "-c", "pass"], None, 5, tmp_path / "nope")
     assert outcome.failure_reason is not None
     assert "working directory not found" in outcome.failure_reason, outcome.failure_reason
+
+
+def test_an_early_stopped_answer_is_not_reported_as_a_failure(tmp_path):
+    """The stop must preserve the answer, not just arrive at it sooner.
+
+    Breaking the wait loop is followed by a process-group sweep, so the exit
+    code becomes the signal WE sent (-15). Reporting that as `exit -15`
+    marked the friend failed and discarded a payload that had already
+    normalized successfully -- turning agy's answer-then-hang path from a
+    slow success into a fast failure, which is worse than the hang.
+
+    The test above could not catch this: its payload was agy's ERROR object,
+    which fails normalization anyway, so a discarded answer and a preserved
+    one look identical.
+    """
+    answer = json.dumps(
+        {
+            "findings": [
+                {
+                    "severity": "high",
+                    "claim": "a real finding",
+                    "location": "x.py:1",
+                    "evidence": "e",
+                    "failure_scenario": "f",
+                    "suggested_fix": "s",
+                }
+            ],
+            "no_findings": None,
+        }
+    )
+    payload = json.dumps({"status": "SUCCESS", "response": answer})
+    script = (
+        f"import sys,time;sys.stdout.write({json.dumps(payload)});sys.stdout.flush();time.sleep(60)"
+    )
+    outcome = spawn.run_process(
+        [sys.executable, "-c", script], None, 45, tmp_path, envelope=JSON_PATH
+    )
+    assert outcome.stopped_after_answer is True
+    assert outcome.result.succeeded is True
+    assert outcome.failure_reason is None, outcome.failure_reason

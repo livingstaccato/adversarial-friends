@@ -10,8 +10,8 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
+from .envelopes import Envelope, parse_envelope
 from .errors import UsageError
-from .normalize import Envelope, parse_envelope
 
 
 @dataclass(frozen=True)

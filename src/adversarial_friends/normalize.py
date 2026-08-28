@@ -32,19 +32,16 @@ from typing import Any
 
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
+from .envelopes import (
+    Envelope,
+    envelope_error,
+    strip_ansi,
+    unwrap_envelope,
+)
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 FENCE_RE = re.compile(r"```[ \t]*[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)```", re.DOTALL)
 
-# A run of one-or-more ",<whitespace>" immediately before a closing bracket
-# collapses in a single substitution pass -- the lookahead means the run
-# isn't consumed until it's confirmed trailing, so "[1,,,]" and
-# '{"a":1, , }' are both fixed without looping. (An earlier version of this
-# looped a simpler regex to a fixed point; that was O(n) per pass and O(k)
-# passes for k trailing commas, which is quadratic on a long run of commas --
-# exactly what a repetition-looping local model can emit. Verified linear
-# with this pattern: see task-7-report.md timings.)
-TRAILING_COMMA_RE = re.compile(r"(?:,\s*)+(?=[}\]])")
+_CLOSERS = "}]"
 
 # json.loads recurses per nesting level; a maliciously (or accidentally) deep
 # structure can blow the interpreter's recursion limit. Anything from a friend
@@ -59,187 +56,65 @@ class NormalizeResult:
     succeeded: bool
 
 
-@dataclass(frozen=True)
-class EnvelopeRule:
-    """One NDJSON matching rule: when `match_field` on a parsed line equals
-    `match_value`, extract `field` (a dotted path) as one segment of the
-    unwrapped answer text."""
+def drop_trailing_commas(text: str) -> str:
+    """Remove comma runs that sit immediately before a closing bracket.
 
-    match_value: str
-    field: str
+    A single left-to-right pass, for two reasons a regex could not satisfy
+    at once. Both were found by cross-examining this module.
 
+    **Linear.** The previous pattern, `(?:,\\s*)+(?=[}\\]])`, was documented
+    as verified linear -- and is, when the run really is followed by a
+    bracket. When it is not, every start position rescans the whole run:
+    16k commas took 7.5 seconds against 0.3ms for the same count with a
+    bracket. A repetition-looping local model emitting endless commas is the
+    exact input the old comment cited, and `normalize()` runs after the
+    process has already been killed, so that cost lands *past* the timeout
+    that was supposed to bound it. Here a run is scanned once and then
+    skipped whether or not it turned out to be trailing.
 
-@dataclass(frozen=True)
-class Envelope:
-    """Declarative description of where a friend's real answer lives inside
-    a CLI's structured-output wrapper. Two kinds, matching the two shapes
-    verified against real CLI output (see the module docstring):
-
-    - "json_path": the whole stdout is a single JSON object; `path` is a
-      dotted key path to the string field holding the answer (agy: the
-      top-level `response` field).
-    - "ndjson": stdout is one JSON object per line (an event stream); each
-      line's `match_field` (default "type") is compared against every rule
-      in `rules`, and every match's `field` is extracted (opencode: an
-      `"error"` event's `error.data.message`).
-
-    There is deliberately no third kind for "I'm not sure". An adapter whose
-    real envelope shape has not been captured simply has no `envelope` at
-    all; see normalize()'s `structured_output` parameter for how that case
-    is made legible without guessing a shape. All five shipped adapters now
-    declare one, captured from the real CLIs -- but the no-envelope path
-    remains the correct default for any adapter added before someone has
-    run it and saved its stdout.
+    **String-aware.** A flat regex cannot tell a structural comma from one
+    inside a string literal, so `{"a": "x, }"}` was rewritten to
+    `{"a": "x}"}` -- still valid JSON, silently different value. Repair is
+    structural and has no business editing content.
     """
-
-    kind: str
-    path: str = ""
-    match_field: str = "type"
-    rules: tuple[EnvelopeRule, ...] = ()
-    # json_path only: a dotted path to the CLI's own error message, for the
-    # case where the envelope carries one INSTEAD of an answer (agy: a
-    # top-level `error` string beside an empty `response`). Read only after
-    # normalizing has failed, so it can never turn a working answer into a
-    # failure; it makes the failure say what the CLI said.
-    error_path: str = ""
-
-
-def parse_envelope(data: dict[str, Any] | None) -> "Envelope | None":
-    """Build an Envelope from the `[envelope]` table of an adapter TOML, or
-    return None if no (valid) envelope was declared. Never raises: a
-    malformed or absent envelope section simply means "no envelope," which
-    normalize() already treats as a safe, working fallback -- adapter config
-    is trusted input, but there is no reason to make a typo here fatal when
-    "don't unwrap" is always a safe degradation."""
-    if not data:
-        return None
-    kind = data.get("kind")
-    if kind == "json_path":
-        path = data.get("path", "")
-        if not path:
-            return None
-        error_path = data.get("error_path", "")
-        return Envelope(
-            kind="json_path",
-            path=path,
-            error_path=error_path if isinstance(error_path, str) else "",
-        )
-    if kind == "ndjson":
-        rules = tuple(
-            EnvelopeRule(match_value=rule["type"], field=rule["field"])
-            for rule in data.get("rules", [])
-            if isinstance(rule, dict) and rule.get("type") and rule.get("field")
-        )
-        return Envelope(kind="ndjson", match_field=data.get("match_field", "type"), rules=rules)
-    return None
-
-
-def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
-
-
-def _dotted_get(obj: object, path: str) -> object:
-    current = obj
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return current
-
-
-def _unwrap_json_path(raw: str, envelope: Envelope) -> str | None:
-    """The whole text must itself be exactly one JSON object (agy's stdout
-    is not wrapped in prose or fencing -- it IS the envelope). Anything that
-    fails to parse as a single top-level object, or whose target field is
-    missing/empty, unwraps to nothing -- the caller falls back to scanning
-    the raw text."""
-    cleaned = strip_ansi(raw).strip()
-    try:
-        parsed = json.loads(cleaned)
-    except _JSON_ERRORS:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    value = _dotted_get(parsed, envelope.path)
-    if isinstance(value, dict) and value:
-        # The target is the answer itself, not a string holding it. claude
-        # under --json-schema puts the validated object in
-        # `structured_output` and a serialized copy in `result`; pointing
-        # the envelope at the object rather than the copy means the thing
-        # the CLI validated is the thing we parse. Re-serialized so the rest
-        # of normalize() sees the same text it would have unwrapped.
-        return json.dumps(value)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value
-
-
-def _unwrap_ndjson(raw: str, envelope: Envelope) -> str | None:
-    """Scan every line as its own JSON object (an NDJSON event stream);
-    every line whose `match_field` matches a rule contributes that rule's
-    extracted field to the unwrapped text, latest first. A line that
-    fails to parse (blank, partial, non-JSON) is simply skipped -- one
-    malformed event must not poison the rest of a real stream.
-
-    Latest first because in an event stream the final matching event is
-    the answer and the earlier ones are progress. codex under
-    `--output-schema` emits "I'm inspecting the repository..." as an
-    `agent_message` that is itself a schema-valid findings object, then
-    the real answer; extract_json keeps the first candidate that ranks
-    best, so stream order handed it the progress line and lost the answer
-    -- a high-severity finding, in the run that found this. Captured in
-    tests/fixtures/codex_progress_then_findings.ndjson."""
-    cleaned = strip_ansi(raw)
-    extracted: list[str] = []
-    for line in cleaned.splitlines():
-        line = line.strip()
-        if not line:
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
             continue
-        try:
-            parsed = json.loads(line)
-        except _JSON_ERRORS:
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
             continue
-        if not isinstance(parsed, dict):
+        if char == ",":
+            end = index
+            while end < length and (text[end] == "," or text[end].isspace()):
+                end += 1
+            # Advance past the whole run either way -- dropping it when it
+            # was trailing, keeping it verbatim when it was not. Never
+            # re-examining it is what keeps this linear.
+            if end < length and text[end] in _CLOSERS:
+                index = end
+            else:
+                out.append(text[index:end])
+                index = end
             continue
-        type_value = parsed.get(envelope.match_field)
-        for rule in envelope.rules:
-            if rule.match_value == type_value:
-                value = _dotted_get(parsed, rule.field)
-                if isinstance(value, str) and value.strip():
-                    extracted.append(value)
-    if not extracted:
-        return None
-    return "\n".join(reversed(extracted))
-
-
-def unwrap_envelope(raw: str, envelope: Envelope) -> str | None:
-    """Return the friend's answer text as described by `envelope`, or None
-    if the envelope's own path/rules found nothing to extract -- "found
-    nothing" is the caller's signal to fall back to scanning `raw` directly
-    (see normalize())."""
-    if envelope.kind == "json_path":
-        return _unwrap_json_path(raw, envelope)
-    if envelope.kind == "ndjson":
-        return _unwrap_ndjson(raw, envelope)
-    return None
-
-
-def envelope_error(raw: str, envelope: Envelope) -> str | None:
-    """The CLI's own error message, when its json_path envelope declares
-    where one lives and `raw` carries a non-empty one. None otherwise --
-    including for every ndjson envelope, whose error events are rules."""
-    if envelope.kind != "json_path" or not envelope.error_path:
-        return None
-    try:
-        parsed = json.loads(strip_ansi(raw).strip())
-    except _JSON_ERRORS:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    value = _dotted_get(parsed, envelope.error_path)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
+        out.append(char)
+        index += 1
+    return "".join(out)
 
 
 def _with_reported_error(result: NormalizeResult, raw: str, envelope: Envelope) -> NormalizeResult:
@@ -317,7 +192,11 @@ def _candidate_sources(cleaned: str) -> Iterator[str]:
     yield cleaned
 
 
-def extract_json(text: str, contract: PayloadContract = CLAIM_CONTRACT) -> dict[str, Any] | None:
+def extract_json(
+    text: str,
+    contract: PayloadContract = CLAIM_CONTRACT,
+    prefer_order: bool = False,
+) -> dict[str, Any] | None:
     """Best-effort recovery of a single JSON object from untrusted text.
 
     Every candidate that parses as a JSON object is ranked by the contract's
@@ -327,6 +206,17 @@ def extract_json(text: str, contract: PayloadContract = CLAIM_CONTRACT) -> dict[
     tiering -- `normalize` runs it again on the single winning payload, but
     each candidate considered during the search is validated exactly once,
     not twice.
+
+    `prefer_order` inverts that for an ORDERED source: the first candidate
+    that is successful under the contract wins outright, whatever its tier.
+    Only an NDJSON stream sets it (see normalize()), because only there does
+    a later event supersede an earlier one -- `_unwrap_ndjson` reverses its
+    segments so "first" means "newest". Tier ranking alone could not express
+    that: it is global and short-circuits on tier 0, so codex's schema-valid
+    progress narration (tier 0, carries `findings`) beat a real
+    `{"no_findings": true}` answer (tier 2) from ANY position, including
+    when the real answer came first. Left off for a single document, where
+    a stray well-formed marker must still lose to real findings.
     """
     cleaned = strip_ansi(text).strip()
     best_tier = None
@@ -335,7 +225,7 @@ def extract_json(text: str, contract: PayloadContract = CLAIM_CONTRACT) -> dict[
         pieces = [source]
         pieces.extend(_iter_balanced_objects(source))
         for piece in pieces:
-            for attempt in (piece, TRAILING_COMMA_RE.sub("", piece)):
+            for attempt in (piece, drop_trailing_commas(piece)):
                 try:
                     parsed = json.loads(attempt)
                 except _JSON_ERRORS:
@@ -343,6 +233,8 @@ def extract_json(text: str, contract: PayloadContract = CLAIM_CONTRACT) -> dict[
                 if not isinstance(parsed, dict):
                     continue
                 errors = contract.validate(parsed)
+                if prefer_order and not errors and contract.is_successful(parsed):
+                    return parsed
                 tier = contract.tier(parsed, errors)
                 if best_tier is None or tier < best_tier:
                     best_tier, best_payload = tier, parsed
@@ -359,9 +251,12 @@ def _envelope_hint(contract: PayloadContract) -> str:
 
 
 def _normalize_text(
-    raw: str, structured_output: bool, contract: PayloadContract
+    raw: str,
+    structured_output: bool,
+    contract: PayloadContract,
+    prefer_order: bool = False,
 ) -> NormalizeResult:
-    payload = extract_json(raw, contract)
+    payload = extract_json(raw, contract, prefer_order=prefer_order)
     if payload is None:
         return NormalizeResult(None, ["output contained no parseable JSON object"], False)
     errors = contract.validate(payload)
@@ -443,7 +338,12 @@ def normalize(
     if envelope is not None:
         unwrapped = unwrap_envelope(raw, envelope)
         if unwrapped is not None:
-            unwrapped_result = _normalize_text(unwrapped, False, contract)
+            # An NDJSON stream is ordered and `_unwrap_ndjson` already put
+            # the newest segment first, so the newest complete answer wins
+            # over anything earlier -- see extract_json's `prefer_order`.
+            unwrapped_result = _normalize_text(
+                unwrapped, False, contract, prefer_order=envelope.kind == "ndjson"
+            )
             if unwrapped_result.succeeded:
                 return unwrapped_result
             # Case 2: the envelope matched something, but it wasn't the
@@ -461,32 +361,3 @@ def normalize(
             _normalize_text(raw, structured_output, contract), raw, envelope
         )
     return _normalize_text(raw, structured_output, contract)
-
-
-def answer_is_complete(text: str, envelope: Envelope) -> bool:
-    """Whether a `json_path` friend has already said everything it will say.
-
-    Only for that envelope kind, and the restriction is the whole argument:
-    its contract is that stdout IS one JSON object, so a parseable object
-    means the answer is in hand. An NDJSON friend streams events and a later
-    line carries the answer, so the same check there would truncate it.
-
-    This exists because agy, on its error path, writes its JSON and then does
-    not exit until its own `--print-timeout` elapses. Measured across three
-    occurrences against eleven clean ones: every successful run exits about
-    2.5 seconds after the work it reports, and every hang exits at 906
-    seconds having reported 163, 372 and 482 -- between seven and twelve
-    minutes of waiting for a process that had already answered.
-
-    The cheap guard first: a complete object ends with `}`, so the parse is
-    attempted only when the buffer looks finished rather than on every poll.
-    """
-    if envelope.kind != "json_path":
-        return False
-    text = text.strip()
-    if not text.endswith("}"):
-        return False
-    try:
-        return isinstance(json.loads(text), dict)
-    except (ValueError, RecursionError):
-        return False
