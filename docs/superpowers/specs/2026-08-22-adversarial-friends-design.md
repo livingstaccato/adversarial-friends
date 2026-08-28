@@ -954,7 +954,7 @@ listed here with which side is authoritative.
 | §7.4, §17 | `--max-spend-usd`, "native where supported, estimated elsewhere" | Not implemented at all | **Code** |
 | §17 | `af run ... [--rounds N]` | `--max-rounds N` | **Code** — §7.4 of the same spec already says `--max-rounds` |
 | §14 | Auth markers come from the CLI's structured output, "never by stderr substring" | An adapter may also declare `stderr_contains`, restricted to a sentence captured verbatim from a real failure | **Code**, with the spec's reasoning kept as the condition |
-| §7.2 M12 | A failed round marks the run `incomplete`; terminal states reached in it are annotated `quorum_partial: true` | The run-level flag is kept; the per-claim state is decided per claim. `quorum_partial` is emitted nowhere | **Code** |
+| §7.2 M12 | A failed round marks the run `incomplete`; terminal states reached in it are annotated `quorum_partial: true` | The run-level flag is kept; the per-claim state is decided per claim. `quorum_partial` is emitted nowhere, and will not be | **Code**, decided |
 | §7, §7.2 | Everything but `settled-refuted` needs a Resolution; `superseded` is "n/a"; no `discarded` row | Only `settled-refuted` clears. `superseded` is exempt, `discarded` blocks — nobody could check it | **Code** |
 | §7.2 M8 | A final-round `amended` is downgraded to `upheld` | An amendment is a rewrite in any round. A successor no round can judge stays `incomplete` and blocks a gate | **Code** |
 | §8.1 | The roster unit is `(cli, model, effort, lens)` | The ledger identity now spells that out: `cli/lens`, plus `@model` and `+effort` when set. A repeated entry is refused | **Spec** — the code was brought into line |
@@ -1093,8 +1093,12 @@ claim — and `unproven` when its judges all reported and declined to decide. A
 run-level reading was implemented first, and the judges of a crossexam over
 `verdicts.py` showed what it cost: one unrelated friend's failure marked every
 below-quorum claim in the run `incomplete` and reset its discard signature.
-`quorum_partial` is not emitted anywhere; `run.json`'s `incomplete` and the
-per-claim states carry the same information.
+`quorum_partial` is not emitted anywhere, and this is now a decision rather
+than an omission: `run.json`'s `incomplete` and the per-claim states carry
+the same information, and a third spelling of it is one more thing to keep
+true. A reader wanting to know whether a terminal state was reached with a
+short judge set has the claim's own state (`incomplete` says exactly that)
+and the run-level flag.
 
 ### §7.2 / gate — `discarded` needs a Resolution; `superseded` is exempt
 
@@ -1268,3 +1272,25 @@ A run directory takes an advisory `flock` for the life of the process. The
 has one, so two workers acting on the same halt could dispatch the same round
 twice and append duplicate records to one ledger. The second is refused with
 an explanation rather than silently interleaved.
+
+### §12.2 — why a doc-scope friend of a self-confining CLI is still not sandboxed
+
+The gap is real and now measured rather than assumed. Each CLI was run under
+the profile this runner generates, to find what confinement actually costs it:
+
+- **codex** works confined, given read and write on `~/.codex`. Its own state
+  directory, which §12.3 already accepts a friend can reach.
+- **claude** reports `Not logged in · Please run /login` under any profile
+  that does not grant `~/Library/Keychains`. Its credentials are in the macOS
+  Keychain, so confining it means handing a friend read access to *every*
+  credential the user has, for every service. That is strictly worse than the
+  gap it closes: the sandbox exists to stop a friend reading other services'
+  secrets, and this would give it all of them at once.
+- **agy** is untested. Sandboxing it risks the re-authentication that has
+  already cost this project one login, and a measurement is not worth that.
+
+So the rule stays as it is — confinement keys on a CLI having no read-only
+mode of its own — and the residual gap is documented with its reason. It is
+not "nobody has got to it": for claude on macOS there is no narrow grant that
+works, and a wide one would defeat the boundary it was meant to strengthen.
+

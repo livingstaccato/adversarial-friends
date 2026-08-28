@@ -203,9 +203,11 @@ joins its canonical, so `*(corroborated by 2 friends)*` still appears. That
 matters most here: these are merges of *differently worded* claims, which is
 exactly where independent agreement is the strongest evidence.
 
-One combination is refused: `--merge orchestrator` with `--mode loop`. A loop
-halts once per iteration and would resume into mid-iteration budget and
-streak state this build does not reconstruct.
+`--merge orchestrator` works with `--mode loop` too, and it halts once per
+iteration: each one asks for its own adjudication, and the resume re-enters
+the iteration it stopped in carrying what earlier iterations already decided.
+A five-iteration loop therefore wants five responses, which is the honest
+cost of asking a human to adjudicate every merge.
 
 ## Choosing friends without repeating flags
 

@@ -646,10 +646,18 @@ repository does not get to choose who reviews it.
   guessing at stderr is what the design rejects. Repeat detection covers the
   cost meanwhile: a friend that fails identically twice stops being
   dispatched.
-- A doc-scope friend of a read-only-capable CLI is not OS-confined. Its own
-  read-only mode is now engaged there (see 0.1.2), so it is no longer
-  unrestrained — but OS-level confinement still needs verified credential
-  paths for those CLIs.
-- `--merge orchestrator` is refused with `--mode loop`.
+- A doc-scope friend of a read-only-capable CLI is not OS-confined, and the
+  reason is now measured rather than assumed. codex runs confined given read
+  and write on `~/.codex`. claude reports `Not logged in` under any profile
+  that does not grant `~/Library/Keychains` — its credentials are in the
+  macOS Keychain, so confining it would hand a friend every credential the
+  user has, which is worse than the gap it closes. agy is untested, because
+  provoking its re-authentication has already cost one login. Its own
+  read-only mode is engaged in doc scope (see 0.1.2), so no friend is
+  unrestrained; what is missing is read protection, for one CLI, at a price
+  that is not worth paying.
+- `quorum_partial` (spec §7.2) is not emitted, and will not be: the
+  per-claim state and the run-level `incomplete` flag already say it, and a
+  third spelling is one more thing to keep true.
 
 See `docs/superpowers/specs/` for the design and its recorded divergences.
