@@ -393,4 +393,11 @@ def policy_for(
     writes: list[Path] = []
     for raw in adapter_write:
         _add_declared(writes, raw)
+    # Resolved for the same reason every declared path is: SBPL matches what
+    # the kernel sees. An isolation directory under `/tmp` or `$TMPDIR` is
+    # reached through a symlink on macOS, so granting the unresolved path
+    # granted nothing -- the friend was denied write access to its own
+    # working directory. This was the one path the module exempted from its
+    # own rule, and a crossexam of this file said so before it was hit.
+    workdir = Path(workdir).resolve()
     return SandboxPolicy(workdir=workdir, read_paths=tuple(reads), write_paths=tuple(writes))

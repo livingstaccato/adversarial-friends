@@ -275,6 +275,12 @@ def _dispatch(
                 # middle: a friend could read another service's token
                 # without touching a forbidden path.
                 child_env = childenv.build(adapter.env_pass, pass_env)
+                # Scratch and state inside the isolation directory, not the
+                # user's. Without this opencode needed a read grant over the
+                # whole of $TMPDIR -- which holds every other friend's
+                # isolation tree -- and a write grant over its own home
+                # state directory, which outlives the run.
+                child_env.update(childenv.private_dirs(cwd))
     if extra_args and spec.cli != "fake":
         # §13: their presence forces readonly False in the header regardless
         # of what the argv appears to say. The runner cannot know what an

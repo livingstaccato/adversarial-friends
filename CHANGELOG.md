@@ -41,6 +41,28 @@ recording: the environment was filtered to eight variables, the repeat
 tracker disabled opencode after two identical failures, the run reported
 itself incomplete, and the shrunken roster was named in the report.
 
+Cross-examining `sandbox.py` immediately afterwards found three defects in
+that fix, and the corrections collapse into something better than what it
+replaced:
+
+- **The `$TMPDIR` grant exposed every other friend.** Isolation directories
+  are created there, so reading it meant reading other friends' trees and
+  every other same-user temporary file.
+- **One log file was paid for with the whole state directory**, which
+  outlives the run: a friend could corrupt saved sessions or auth state that
+  a later run depends on.
+- **The isolation directory itself was the one path never resolved**, so on
+  macOS the profile granted `/tmp/...` while the kernel saw
+  `/private/tmp/...` — a friend denied write access to its own working
+  directory, by the module that states the resolve-paths rule for
+  everything else.
+
+A confined friend now gets a private scratch and state directory *inside*
+its isolation directory (`TMPDIR`, `XDG_DATA_HOME` and their neighbours), so
+opencode writes its log where the round deletes it and needs no grant
+outside the boundary at all. Redirecting where a CLI thinks its state lives
+beats widening the sandbox to reach the real one.
+
 The rest of the fifth crossexam's findings -- the eight the 0.1.2 batch left
 open -- plus two defects that surfaced while testing them.
 

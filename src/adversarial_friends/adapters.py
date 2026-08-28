@@ -101,13 +101,13 @@ class Adapter:
     # Empty is meaningful: an adapter with a real readonly mode is trusted
     # to confine itself (§11) and never reaches the sandbox at all.
     sandbox_read: tuple[str, ...] = ()
-    # §12.2: paths this CLI must WRITE to in order to start at all -- its own
-    # log or state directory, not the artifact's. The isolation directory is
-    # granted to every confined friend already; this is for a CLI that opens
-    # a file elsewhere before it will do anything, and dies if it cannot.
-    # Empty for every adapter that does not need it, which is the safe
-    # default: a write path is a hole in the boundary and has to be earned by
-    # a real failure, not anticipated.
+    # §12.2: paths this CLI must WRITE to in order to start at all, outside
+    # its isolation directory. Empty for every shipped adapter, and that is
+    # the point: opencode earned one by dying without a writable log
+    # directory, and then stopped needing it once `childenv.private_dirs`
+    # pointed its state at the isolation directory instead. Redirecting a
+    # CLI's own notion of where state lives beats punching a hole in the
+    # boundary, so reach for this only when redirection has failed.
     sandbox_write: tuple[str, ...] = ()
     # §14: where this CLI's own structured output says "not authenticated".
     # Empty means unclassifiable, which is the honest default until someone

@@ -38,19 +38,12 @@ field = "error.data.message"
 # plus opencode's own directories; a path that does not exist on a given
 # machine is simply not bound (see sandbox.linux_argv on --ro-bind-try).
 [sandbox]
-# `$TMPDIR` earns its place the same way every other entry here did:
-# opencode read it on startup and died without it. Captured by running it
-# confined for the first time -- it exited in 0.06 seconds with "error: An
-# unknown error occurred (Unexpected)", and the real message only appeared
-# once the profile was relaxed far enough for its logger to open.
-#
-# opencode runs on bun, which keeps its cache directly in the temp
-# directory, so granting the friend's own isolation directory (which lives
-# there) is not enough -- it reads its neighbours' parent. This is a real
-# widening: a confined opencode can read this user's temp directory. It is
-# the narrowest grant that lets the one OS-confined adapter start.
+# Its own configuration and binary. opencode also keeps a bun cache in
+# `$TMPDIR` and a log under `$XDG_DATA_HOME`, and needed both granted until
+# `childenv.private_dirs` pointed those at its isolation directory instead:
+# granting the real ones exposed every other friend's isolation tree and a
+# state directory that outlives the run.
 read = [
-  "$TMPDIR",
   "~/.config/opencode",
   "~/.local/share/opencode",
   "~/.local/state/opencode",
@@ -61,12 +54,7 @@ read = [
   "~/.config/node",
 ]
 
-# The one write outside the isolation directory. opencode opens
-# `~/.local/share/opencode/log/opencode.log` before it will do anything and
-# exits if the open fails, so a read-only grant is not enough for this one
-# path. It is the CLI's own state directory, which §12.3 already accepts a
-# friend can reach; the artifact under review is nowhere near it.
-write = ["~/.local/share/opencode"]
+
 
 # §12.2: opencode runs confined, so it receives an allowlisted environment
 # rather than the operator's whole shell. These are the variables it may

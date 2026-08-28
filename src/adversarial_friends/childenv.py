@@ -27,6 +27,7 @@ this project does not.
 
 from collections.abc import Mapping
 import os
+from pathlib import Path
 
 # Variables any process needs to start and behave sanely. None of these
 # carries a credential; each was included because dropping it changes
@@ -58,6 +59,36 @@ BASE_PASS = (
     "PYTHONPATH",
     "PYTHONHOME",
 )
+
+
+def private_dirs(workdir: Path) -> dict[str, str]:
+    """Environment pointing a friend's scratch and state at its own
+    isolation directory.
+
+    A CLI that keeps a cache in `$TMPDIR` or a log under `$XDG_DATA_HOME`
+    otherwise needs those real locations, and granting them is worse than it
+    sounds: `$TMPDIR` holds every other friend's isolation tree and every
+    other same-user temporary file, and a home state directory outlives the
+    run. opencode needed both until it was given these instead -- it now
+    writes its log inside the directory that is deleted when the round ends,
+    and reads nothing outside it.
+
+    The directories are created here because a CLI that finds `$TMPDIR`
+    missing falls back to the real one, which is the hole this closes.
+    """
+    scratch = workdir / ".af-scratch"
+    data = workdir / ".af-data"
+    for path in (scratch, data):
+        path.mkdir(parents=True, exist_ok=True)
+    return {
+        "TMPDIR": str(scratch),
+        "TEMP": str(scratch),
+        "TMP": str(scratch),
+        "XDG_CACHE_HOME": str(scratch),
+        "XDG_DATA_HOME": str(data),
+        "XDG_STATE_HOME": str(data),
+        "XDG_CONFIG_HOME": str(data),
+    }
 
 
 def build(
