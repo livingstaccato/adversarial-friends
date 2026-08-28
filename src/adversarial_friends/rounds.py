@@ -223,7 +223,13 @@ def persist_result(
         f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
         f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
         f"orphans_suspected={outcome.orphans_suspected}\n"
-        f"stopped_after_answer={outcome.stopped_after_answer}\n",
+        f"stopped_after_answer={outcome.stopped_after_answer}\n"
+        # Its justification is that a reader comparing a short stdout against
+        # a long duration cannot otherwise tell truncation from a friend that
+        # said little. That only holds if the reader can SEE it -- and it was
+        # recorded on the result and written nowhere, unlike every sibling
+        # flag on this line.
+        f"output_truncated={outcome.output_truncated}\n",
         encoding="utf-8",
     )
     err_path = store.friend_err_path(round_no, spec.name)

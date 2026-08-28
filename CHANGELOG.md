@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### spawn.py, cross-examined
+
+Eleven claims upheld against the module that runs a friend, six of them about
+code written an hour earlier. Eight are fixed here; the ninth is a limitation
+rather than a defect and is recorded below.
+
+- **Truncated output reached the extraction path after all.** spawn's
+  docstring says a killed friend's truncated output "never enters the repair
+  path". That was true of `normalize()` and only of it: `commands/critique.py`
+  hands raw stdout to §14.2 extraction gated on `payload is None`, which is
+  exactly what a timed-out or overflowed result carries. Extraction is the
+  path built to pull meaning out of text nothing else could parse, so it is
+  the worst possible destination for a cut-off buffer.
+- **A noisy stderr discarded a good answer.** One `overflow_event` was shared
+  by both pumps, so a friend that answered correctly on stdout and merely
+  chattered on stderr had its valid answer thrown away unparsed. Nothing reads
+  stderr for content; its truncation cannot make an answer wrong. Now recorded
+  as an annotation while the answer still goes through `normalize()`.
+- **Overflow stopped draining rather than stopping accumulation.** The first
+  version returned from the pump at the ceiling, leaving the pipe unread — so
+  the friend blocked writing and died flushing at exit, and a complete valid
+  answer came back as `exit 120`. It now reads and discards, which bounds
+  memory just as well and leaves the child able to exit on its own terms.
+- **The early-answer probe joined the whole buffer for adapters that could
+  never use it.** `answer_is_complete` rejects every ndjson envelope
+  unconditionally, while the cheap guard added to avoid that join is *true* on
+  almost every poll, since each NDJSON line ends with `}`. The envelope kind
+  now settles it once, before the loop.
+- **A pump ignored its stop signal while data kept arriving.** The loop
+  `continue`d straight past the check after any successful read, so a writer
+  trickling bytes kept it from ever running — the thread then lived until the
+  byte ceiling stopped it, a bound but not the documented one. Checked every
+  iteration now, with a drain window so setting the event still never
+  truncates what is already buffered.
+- **The stdin pump could block forever.** The output pumps were built
+  non-blocking because a descendant can inherit a friend's stdio and hold it
+  open; `_pump_stdin` used a plain `write()`, which blocks once the pipe fills
+  and nothing drains it. Prompts carry the whole artifact, so "larger than the
+  pipe buffer" is ordinary. Now non-blocking on the same selector pattern.
+- **Repair amplified a bounded capture into an unbounded cost.** The byte
+  ceiling bounded what was captured, not what normalizing it cost:
+  `drop_trailing_commas` allocated one list entry per character, measuring 61
+  seconds and 308MiB of peak memory on a 32MiB input — per friend, several in
+  flight. It now scans between the only characters that can change its state,
+  collects the spans it intends to drop before building anything, and returns
+  the original string untouched when there are none. The same input takes
+  0.005s and no measurable extra memory.
+- **`output_truncated` was recorded where nobody could read it.** Its stated
+  purpose is to let a reader tell truncation from a friend that said little;
+  it was written to the result and to no file, unlike every sibling flag.
+
+Not fixed, and stated rather than implied: a descendant that calls its own
+`os.setsid()` leaves the process group and cannot be reaped or reliably
+detected. Closing that needs a cgroup, PID namespace or job object, none of
+which macOS offers an equivalent of. It remains covered by
+`test_setsid_escapee_is_not_reaped` and by the orphan reporting that infers it
+from a pipe held open.
+
+spawn.py crossed the 500-line cap again, so the pumps moved to `procio.py`.
+
 ### A refused signal crashed the round instead of reporting an orphan
 
 `_signal_group` caught only `ProcessLookupError`, so a `PermissionError` from

@@ -42,6 +42,16 @@ from .envelopes import (
 FENCE_RE = re.compile(r"```[ \t]*[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)```", re.DOTALL)
 
 _CLOSERS = "}]"
+QUOTE = chr(34)
+BACKSLASH = chr(92)
+# The only two characters that can change the scanner's state, so the
+# scan can jump between them instead of visiting every character.
+_SPECIAL_RE = re.compile("[" + QUOTE + ",]")
+# A necessary (not sufficient) condition for anything to be dropped. It
+# cannot tell a comma inside a string literal from a structural one, so a
+# match sends the text to the scan below rather than to a substitution --
+# but NO match proves there is nothing to remove, in one C-level pass.
+_CANDIDATE_RE = re.compile(r",\s*[}\]]")
 
 # json.loads recurses per nesting level; a maliciously (or accidentally) deep
 # structure can blow the interpreter's recursion limit. Anything from a friend
@@ -59,61 +69,79 @@ class NormalizeResult:
 def drop_trailing_commas(text: str) -> str:
     """Remove comma runs that sit immediately before a closing bracket.
 
-    A single left-to-right pass, for two reasons a regex could not satisfy
-    at once. Both were found by cross-examining this module.
+    A single left-to-right pass. Three properties, each of which a regex
+    substitution failed at some point, and all three found by
+    cross-examining this module.
 
-    **Linear.** The previous pattern, `(?:,\\s*)+(?=[}\\]])`, was documented
-    as verified linear -- and is, when the run really is followed by a
-    bracket. When it is not, every start position rescans the whole run:
-    16k commas took 7.5 seconds against 0.3ms for the same count with a
-    bracket. A repetition-looping local model emitting endless commas is the
-    exact input the old comment cited, and `normalize()` runs after the
-    process has already been killed, so that cost lands *past* the timeout
-    that was supposed to bound it. Here a run is scanned once and then
-    skipped whether or not it turned out to be trailing.
+    **Linear in time.** The original pattern was documented as verified
+    linear -- and is, when the run really is followed by a bracket. When it
+    is not, every start position rescans the whole run: 16k commas took 7.5
+    seconds against 0.3ms for the same count with a bracket. A
+    repetition-looping local model emitting endless commas is exactly the
+    input that comment cited, and `normalize()` runs after the process has
+    been killed, so the cost lands past the timeout meant to bound it.
+
+    **Cheap in allocations.** The first replacement appended one list entry
+    per input character: at 32MiB, the stdout ceiling, that measured 61
+    seconds and 308MiB of peak memory -- per friend, with several in flight.
+    This version does two things instead. It jumps between the only
+    characters that can change its state rather than visiting every one, and
+    it collects the spans it intends to DROP before building anything. Text
+    with no trailing comma anywhere -- which is all well-formed output, and
+    so the overwhelmingly common case -- is returned unchanged, with no
+    copying at all.
 
     **String-aware.** A flat regex cannot tell a structural comma from one
     inside a string literal, so `{"a": "x, }"}` was rewritten to
     `{"a": "x}"}` -- still valid JSON, silently different value. Repair is
     structural and has no business editing content.
     """
-    out: list[str] = []
-    in_string = False
-    escaped = False
+    if "," not in text:
+        return text
+    if _CANDIDATE_RE.search(text) is None:
+        # No comma is followed by a closing bracket ANYWHERE, so there is
+        # nothing this function could remove and the string-aware scan below
+        # would only confirm that the slow way. Well-formed output takes this
+        # exit, which is one C-level pass rather than a Python loop over
+        # every comma in the document.
+        return text
+    drops: list[tuple[int, int]] = []
     index = 0
     length = len(text)
     while index < length:
-        char = text[index]
-        if in_string:
-            out.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            index += 1
+        match = _SPECIAL_RE.search(text, index)
+        if match is None:
+            break
+        if match.group() == QUOTE:
+            # Skip the string literal whole, honouring escapes so an escaped
+            # quote does not end it early. Its contents are never candidates.
+            cursor = match.start() + 1
+            while cursor < length:
+                char = text[cursor]
+                if char == BACKSLASH:
+                    cursor += 2
+                    continue
+                cursor += 1
+                if char == QUOTE:
+                    break
+            index = cursor
             continue
-        if char == '"':
-            in_string = True
-            out.append(char)
-            index += 1
-            continue
-        if char == ",":
-            end = index
-            while end < length and (text[end] == "," or text[end].isspace()):
-                end += 1
-            # Advance past the whole run either way -- dropping it when it
-            # was trailing, keeping it verbatim when it was not. Never
-            # re-examining it is what keeps this linear.
-            if end < length and text[end] in _CLOSERS:
-                index = end
-            else:
-                out.append(text[index:end])
-                index = end
-            continue
-        out.append(char)
-        index += 1
+        run_end = match.start()
+        while run_end < length and (text[run_end] == "," or text[run_end].isspace()):
+            run_end += 1
+        # Advance past the whole run whether or not it turned out to be
+        # trailing. Never re-examining it is what keeps this linear.
+        if run_end < length and text[run_end] in _CLOSERS:
+            drops.append((match.start(), run_end))
+        index = run_end
+    if not drops:
+        return text
+    out: list[str] = []
+    cursor = 0
+    for start, stop in drops:
+        out.append(text[cursor:start])
+        cursor = stop
+    out.append(text[cursor:])
     return "".join(out)
 
 

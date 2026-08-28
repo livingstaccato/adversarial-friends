@@ -27,6 +27,7 @@ from ..orchestrator import NeedsOrchestrator, write_extract_request
 from ..prompt import _build_friend_prompt
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
+from ..spawn import SpawnResult
 
 
 @dataclass
@@ -95,6 +96,23 @@ def build_prompts(
         prompt_for[spec.name] = prompt_path
         advisory_for[spec.name] = advisory
     return prompt_for, advisory_for, downgrades
+
+
+def extraction_candidates(result: SpawnResult) -> bool:
+    """Whether this failed result's raw text may be offered to §14.2
+    extraction.
+
+    Extraction is the path designed to pull meaning out of text nothing else
+    could parse, which makes it precisely the wrong place to send a buffer
+    that was CUT OFF. A prefix of a friend's answer can be valid JSON, and
+    presenting a partial answer as a whole one is the failure spawn's own
+    docstring rules out -- but that rule only ever governed normalize().
+    This path read `payload is None`, which is exactly what a timed-out or
+    overflowed result carries, so truncated output arrived here anyway.
+    """
+    if result.timed_out or result.output_truncated:
+        return False
+    return result.result.payload is None and bool(result.stdout.strip())
 
 
 def run_critique(
@@ -167,7 +185,7 @@ def run_critique(
             # rather than discarding whatever the friend actually found;
             # under --merge=exact the friend is simply failed, which is what
             # keeps the default usable from a plain shell.
-            if merge == "orchestrator" and result.result.payload is None and result.stdout.strip():
+            if merge == "orchestrator" and extraction_candidates(result):
                 # Collected, not raised here: every friend in this round has
                 # already been dispatched, and halting mid-loop would strand
                 # the claims of friends processed after this one -- their

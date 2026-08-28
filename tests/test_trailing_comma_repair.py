@@ -69,3 +69,42 @@ def test_a_huge_unterminated_run_finishes_promptly():
     start = time.perf_counter()
     drop_trailing_commas("," * 200_000)
     assert time.perf_counter() - start < 1.0
+
+
+def test_repair_does_not_amplify_a_large_capture(tmp_path):
+    """c-0003: the byte ceiling bounded what was CAPTURED, not what repairing
+    it cost.
+
+    The character-by-character version allocated one list entry per input
+    character. At 32MiB -- the stdout ceiling, so a reachable input -- that
+    measured 61 seconds and 308MiB of peak memory, per friend, with several
+    friends dispatched concurrently. Capping capture at 32MiB while
+    normalization multiplied it by ten left the denial of service in place
+    one layer down.
+    """
+    import time
+    import tracemalloc
+
+    text = "x" * (8 * 1024 * 1024)
+    tracemalloc.start()
+    started = time.perf_counter()
+    assert drop_trailing_commas(text) == text
+    elapsed = time.perf_counter() - started
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    # Was ~15s and ~77MiB at this size before the rewrite.
+    assert elapsed < 2.0, elapsed
+    assert peak < 4 * 1024 * 1024, peak
+
+
+def test_well_formed_output_takes_the_fast_path():
+    """Nothing to drop must not cost a scan over every comma in the
+    document: that is every successful run, and the slow path existed only
+    for malformed output."""
+    import json
+    import time
+
+    text = json.dumps({"findings": [{"claim": "c", "evidence": "e"} for _ in range(20000)]})
+    started = time.perf_counter()
+    assert drop_trailing_commas(text) == text
+    assert time.perf_counter() - started < 0.5

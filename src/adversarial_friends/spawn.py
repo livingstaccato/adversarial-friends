@@ -43,16 +43,11 @@ so a pump thread is never stuck in a syscall it can't get back out of: it is
 always back at a `stop_event` check within one `_POLL_INTERVAL_S`.
 """
 
-import codecs
-import contextlib
 from dataclasses import dataclass
-import os
 from pathlib import Path
-import selectors
 import subprocess
 import threading
 import time
-from typing import IO
 import warnings
 
 from .claimschema import CLAIM_CONTRACT
@@ -60,6 +55,13 @@ from .contracts import PayloadContract
 from .envelopes import Envelope, answer_is_complete
 from .normalize import NormalizeResult, normalize
 from .procgroup import _terminate_group
+from .procio import (
+    _DRAIN_JOIN_S,
+    _POLL_INTERVAL_S,
+    _buffer_looks_finished,
+    _pump_output,
+    _pump_stdin,
+)
 
 # Wait windows for group escalation: this long for the group to exit after
 # SIGTERM, then (if anything is still alive) this long for it to actually
@@ -69,17 +71,21 @@ from .procgroup import _terminate_group
 # this, and that is a real, accepted limitation, not a bug here.
 GRACE_SECONDS = 10
 KILL_GRACE_SECONDS = 5
-_POLL_INTERVAL_S = 0.05
-# How long to give the output-pump threads to finish draining once we
-# already know the process is done, before falling back to stop_event to
-# force them out. Purely a drain window, not a kill/escalation window.
-_DRAIN_JOIN_S = 2.0
-_READ_CHUNK = 65536
 # Per-stream ceiling on what one friend may make this process hold. The
 # timeout bounds how LONG a friend runs; without this, nothing bounds how
-# much memory it costs -- and friends are dispatched concurrently, so it is
-# never one friend's memory at stake. 32MiB is far above any real critique
-# (tens of KB) and far below anything that threatens the host.
+# much memory it costs.
+#
+# Per STREAM, per FRIEND -- the run-level figure is larger and worth stating
+# rather than leaving a reader to multiply: with ceilings.DEFAULT_MAX_CONCURRENCY
+# friends in flight and two streams each, the accumulation bound is
+# concurrency x 2 x this number. At the defaults that is 512MiB of captured
+# text before the joins below. An earlier version of this comment called
+# 32MiB "far below anything that threatens the host" while the sentence above
+# it noted friends run concurrently, which is the multiplication it skipped.
+#
+# In practice a real critique is tens of KB and nothing approaches this; the
+# ceiling exists for the friend that loops, and one looping friend costs
+# 64MiB, not 512.
 MAX_OUTPUT_BYTES = 32 * 1024 * 1024
 
 
@@ -104,107 +110,6 @@ class SpawnResult:
     # reader comparing a short stdout against a long duration otherwise has
     # no way to tell truncation from a friend that simply said little.
     output_truncated: bool = False
-
-
-def _pump_stdin(process: subprocess.Popen[bytes], stdin_text: str | None) -> None:
-    """Write the prompt (if any) on its own thread and close stdin.
-
-    Writing synchronously on the main thread before we start polling would
-    risk the classic pipe deadlock: a prompt larger than the OS pipe buffer
-    blocks our write() until the friend reads more, but the friend may
-    itself be blocked writing to its own full stdout pipe if nobody is
-    draining it concurrently. Running the write here, alongside the stdout
-    and stderr pump threads, avoids that.
-    """
-    # process was always constructed with stdin=subprocess.PIPE (see
-    # run_process below) -- .stdin is only ever None for a Popen that never
-    # requested a pipe, which never happens on this code path.
-    assert process.stdin is not None
-    try:
-        if stdin_text:
-            process.stdin.write(stdin_text.encode("utf-8"))
-    except (BrokenPipeError, OSError):
-        pass
-    finally:
-        with contextlib.suppress(OSError):
-            process.stdin.close()
-
-
-def _pump_output(
-    stream: IO[bytes],
-    chunks: list[str],
-    stop_event: threading.Event,
-    limit: int,
-    overflow_event: threading.Event,
-) -> None:
-    """Drain a pipe into chunks (decoded str fragments) until EOF or
-    stop_event is set, without ever blocking in an uninterruptible read.
-
-    The fd is switched to non-blocking and polled with a selector so the
-    loop is always back at the stop_event check within one
-    _POLL_INTERVAL_S -- see the module docstring for why a plain blocking
-    readline() loop cannot be relied on to exit once a descendant has
-    escaped the process group and is holding this pipe open. stop_event is
-    checked only once no more data is immediately available, so a chunk
-    that becomes ready in the same instant stop_event is set is still read
-    before this returns -- setting stop_event never truncates output that
-    was already sitting in the kernel buffer.
-
-    `limit` caps the bytes this pump will accumulate. Past it the pump sets
-    `overflow_event` and stops reading, which run_process treats the way it
-    treats a timeout: kill the group, and do not offer the partial output to
-    the parser. Dropping the overflowing read rather than keeping a prefix
-    is deliberate -- a prefix of a friend's answer can still be valid JSON,
-    and reporting one as the whole answer is a worse failure than reporting
-    none.
-    """
-    fd = stream.fileno()
-    os.set_blocking(fd, False)
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    total = 0
-    sel = selectors.DefaultSelector()
-    sel.register(fd, selectors.EVENT_READ)
-    try:
-        while True:
-            if sel.select(timeout=_POLL_INTERVAL_S):
-                try:
-                    raw = os.read(fd, _READ_CHUNK)
-                except BlockingIOError:
-                    raw = None
-                except OSError:
-                    break
-                if raw == b"":
-                    break
-                if raw:
-                    total += len(raw)
-                    if total > limit:
-                        overflow_event.set()
-                        break
-                    chunks.append(decoder.decode(raw))
-                continue
-            if stop_event.is_set():
-                break
-        chunks.append(decoder.decode(b"", final=True))
-    finally:
-        sel.close()
-        with contextlib.suppress(OSError):
-            stream.close()
-
-
-def _buffer_looks_finished(chunks: list[str]) -> bool:
-    """Cheap precondition for the early-answer probe.
-
-    `answer_is_complete` needs one string, and joining the whole buffer on
-    every poll is O(n) per poll -- quadratic across a run, which only became
-    affordable to ignore while output was unbounded. A complete JSON object
-    ends with `}`, and the buffer ends with `}` exactly when its last
-    non-blank chunk does, so this settles it without joining anything.
-    """
-    for chunk in reversed(chunks):
-        stripped = chunk.rstrip()
-        if stripped:
-            return stripped.endswith("}")
-    return False
 
 
 def _early_failure(argv: list[str], duration: float, reason: str) -> SpawnResult:
@@ -309,22 +214,33 @@ def run_process(
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
-    overflow_event = threading.Event()
+    stdout_overflow = threading.Event()
+    stderr_overflow = threading.Event()
     stop_event = threading.Event()
-    stdin_thread = threading.Thread(target=_pump_stdin, args=(process, stdin_text), daemon=True)
+    stdin_thread = threading.Thread(
+        target=_pump_stdin, args=(process, stdin_text, stop_event), daemon=True
+    )
     stdout_thread = threading.Thread(
         target=_pump_output,
-        args=(process.stdout, stdout_chunks, stop_event, max_output_bytes, overflow_event),
+        args=(process.stdout, stdout_chunks, stop_event, max_output_bytes, stdout_overflow),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_pump_output,
-        args=(process.stderr, stderr_chunks, stop_event, max_output_bytes, overflow_event),
+        args=(process.stderr, stderr_chunks, stop_event, max_output_bytes, stderr_overflow),
         daemon=True,
     )
     stdin_thread.start()
     stdout_thread.start()
     stderr_thread.start()
+
+    # Hoisted out of the loop. `answer_is_complete` rejects every ndjson
+    # envelope unconditionally, so for those adapters the guard below could
+    # never succeed -- while `_buffer_looks_finished` is TRUE on almost every
+    # poll, since each NDJSON line ends with `}`. The whole buffer was
+    # therefore being joined ~20 times a second to answer a question already
+    # settled by the envelope kind.
+    early_envelope = envelope if envelope is not None and envelope.kind == "json_path" else None
 
     deadline = started + timeout_s
     timed_out = False
@@ -337,12 +253,14 @@ def run_process(
         if abort_event is not None and abort_event.is_set():
             aborted = True
             break
-        if overflow_event.is_set():
+        if stdout_overflow.is_set():
+            # Only stdout ends the wait. A friend flooding stderr is noisy,
+            # not unanswerable.
             break
         if (
-            envelope is not None
+            early_envelope is not None
             and _buffer_looks_finished(stdout_chunks)
-            and answer_is_complete("".join(stdout_chunks), envelope)
+            and answer_is_complete("".join(stdout_chunks), early_envelope)
         ):
             answered = True
             break
@@ -393,6 +311,12 @@ def run_process(
 
     stdout = "".join(stdout_chunks)
     stderr = "".join(stderr_chunks)
+    # The joined string and the chunk list hold the same bytes twice, and the
+    # lists are dead from here on. Dropping them halves peak footprint at the
+    # exact moment it is highest -- which matters most for the flooding friend
+    # this ceiling exists for.
+    stdout_chunks.clear()
+    stderr_chunks.clear()
     duration = time.monotonic() - started
 
     # Output that hit the ceiling is truncated, so it is not a candidate for
@@ -400,7 +324,13 @@ def run_process(
     # reason: a partial answer that happens to parse would be reported as a
     # whole one. Checked before `timed_out` because a flooding friend often
     # trips both, and the ceiling is the more specific diagnosis.
-    if overflow_event.is_set():
+    # Only a STDOUT overflow discards the answer. One event used to be
+    # shared by both pumps, so a friend that answered correctly on stdout and
+    # merely chattered on stderr had its valid answer thrown away unparsed --
+    # nothing reads stderr for content, so its truncation cannot make the
+    # answer wrong. A stderr overflow is recorded and the answer still goes
+    # through normalize() below.
+    if stdout_overflow.is_set():
         return SpawnResult(
             argv,
             process.returncode,
@@ -408,8 +338,8 @@ def run_process(
             stderr,
             duration,
             timed_out,
-            NormalizeResult(None, ["output exceeded the byte ceiling"], False),
-            f"output exceeded {max_output_bytes} bytes",
+            NormalizeResult(None, ["stdout exceeded the byte ceiling"], False),
+            f"stdout exceeded {max_output_bytes} bytes",
             orphans_suspected,
             stopped_after_answer=answered,
             output_truncated=True,
@@ -477,4 +407,5 @@ def run_process(
         failure_reason,
         orphans_suspected,
         stopped_after_answer=answered,
+        output_truncated=stderr_overflow.is_set(),
     )
