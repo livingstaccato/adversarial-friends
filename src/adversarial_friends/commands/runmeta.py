@@ -15,12 +15,17 @@ import argparse
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..adapters import FriendSpec
+from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..errors import UsageError
+from ..ledger import Claim
 from ..runstore import default_root
 from ..verdicts import judges_for, loop_should_terminate
+
+if TYPE_CHECKING:
+    from .crossexam import CrossexamOutcome
 
 # Everything a resumed run must restore rather than re-read from a second
 # command line. §4.2 requires that the same response produce the same run;
@@ -244,3 +249,52 @@ def loop_is_done(streak: int, claims: list[Any], cross: Any, roster: list[str]) 
     iteration can end -- a normal one, and one resumed after an orchestrator
     halt. They drifted apart while there was a copy in each."""
     return loop_should_terminate(streak, unresolved_loop_states(claims, cross, roster))
+
+
+def finalize_meta(
+    meta: dict[str, Any],
+    mode: str,
+    *,
+    iterations_run: int,
+    streak: int,
+    blocking: list[Claim],
+    budget: Budget,
+    downgrades: list[str],
+    cross: "CrossexamOutcome | None",
+    rounds_reached: int,
+) -> dict[str, Any]:
+    """Fold every mode's end-of-run fields into `meta`, in place.
+
+    Extracted from cmd_run for the same reason the rest of this module was:
+    the run loop crossed the 500-line cap again, and this block is data
+    assembly with no control flow of its own -- it reads finished state and
+    writes keys. Keeping it beside the rest of run.json's shape puts every
+    field that reaches that file in one place, which is where a reader looks
+    when a key is missing.
+
+    Mutates and returns the same dict rather than building a new one: the
+    caller passes the base metadata and expects its keys to survive, and a
+    copy here would silently drop anything added between the two points.
+    """
+    if mode == "loop":
+        meta["iterations_run"] = iterations_run
+        meta["dry_streak"] = streak
+    if mode == "gate":
+        meta["gate_blocked"] = bool(blocking)
+        meta["gate_blocking_claims"] = [c.id for c in blocking]
+    if budget.exhausted_by and not meta.get("ceiling_hit"):
+        # Same spelling crossexam uses: the label names the ceiling, the
+        # downgrade says which one and when.
+        meta["ceiling_hit"] = BUDGET_EXHAUSTED
+        reason = f"{BUDGET_EXHAUSTED}: {budget.exhausted_by}"
+        if reason not in downgrades:
+            downgrades.append(reason)
+    if cross is not None:
+        meta["rounds_run"] = max(rounds_reached, cross.rounds_run)
+        meta["claim_states"] = cross.states
+        meta["amendment_notes"] = cross.notes
+        meta["ceiling_hit"] = cross.ceiling_hit or (
+            BUDGET_EXHAUSTED if budget.exhausted_by else None
+        )
+        meta["incomplete"] = cross.incomplete
+    return meta

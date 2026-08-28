@@ -18,11 +18,9 @@ test_run_end_to_end_isolation.py) share.
 import contextlib
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 from e2e_helpers import AF, _env, _git_commit, _git_repo, run_af
@@ -76,6 +74,20 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _assert_signal_tears_everything_down(tmp_path, sig: int):
+    # The run under test gets its OWN temp directory, and the leftover check
+    # below looks only in there.
+    #
+    # It used to glob the shared system temp directory, which made the
+    # assertion "no afriend anywhere on this machine has an isolation
+    # directory right now". Any concurrent run failed it -- and this project
+    # is routinely pointed at its own source while its tests run, so that is
+    # not a hypothetical. Observed: a crossexam in another session left
+    # `af-isolation-r2-*` in $TMPDIR and both signal tests failed, reporting
+    # a teardown bug in code that had torn down correctly.
+    private_tmp = tmp_path / "tmp"
+    private_tmp.mkdir()
+    env = _env({"TMPDIR": str(private_tmp)})
+
     repo = _git_repo(tmp_path / "repo")
     (repo / "tracked.py").write_text("original\n")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
@@ -96,7 +108,7 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
             "--friend",
             "fake:hang:repo",
         ],
-        env=_env(),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -161,7 +173,7 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
             check=True,
             capture_output=True,
             text=True,
-            env=_env(),
+            env=env,
         )
         assert len(worktrees_during.stdout.strip().splitlines()) == 2, (
             "expected the friend's private worktree to be live before signalling"
@@ -189,13 +201,13 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
         check=True,
         capture_output=True,
         text=True,
-        env=_env(),
+        env=env,
     )
     assert len(worktrees_after.stdout.strip().splitlines()) == 1, (
         f"leftover worktree registration after signal {sig}:\n{worktrees_after.stdout}"
     )
 
-    leftover_iso_dirs = list(Path(tempfile.gettempdir()).glob("af-isolation-*"))
+    leftover_iso_dirs = list(private_tmp.glob("af-isolation-*"))
     assert leftover_iso_dirs == [], f"leftover isolation temp dirs: {leftover_iso_dirs}"
 
     assert not _pid_alive(friend_pid), "friend process survived the signal"

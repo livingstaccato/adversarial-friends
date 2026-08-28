@@ -28,10 +28,54 @@ from .contracts import PayloadContract
 from .dispatch import _UNKNOWN_CAPABILITY, _dispatch, _exception_outcome, _stderr_tail
 from .errors import AfError
 from .failures import AUTH, RepeatTracker, auth_abort_message, classify
+from .progress import Progress, disabled
 from .runstore import RunStore
 from .spawn import SpawnResult
 
 RoundResult = tuple[FriendSpec, Capability, SpawnResult]
+
+
+def _outcome_word(outcome: SpawnResult, contract: PayloadContract) -> str:
+    """How one friend's round ended, in a few words, for the progress line.
+
+    Deliberately not the failure text: `_stderr_tail` already puts that in
+    the report, and a diagnostic wrapped across a terminal is exactly the
+    noise that makes a progress stream unreadable. This says which of the
+    handful of shapes happened, plus the one number a reader is waiting for
+    -- how many claims or verdicts came back -- because a friend that
+    answered with nothing and a friend that answered well are otherwise
+    reported identically.
+    """
+    if outcome.timed_out:
+        return "timed out"
+    if not outcome.result.succeeded or outcome.result.payload is None:
+        return f"failed: {outcome.failure_reason or 'no usable answer'}"
+    items = outcome.result.payload.get(contract.container_key)
+    count = len(items) if isinstance(items, list) else 0
+    # `contract.name` is already plural ("claims", "verdicts").
+    noun = contract.name[:-1] if count == 1 and contract.name.endswith("s") else contract.name
+    suffix = " (truncated)" if outcome.output_truncated else ""
+    return f"answered with {count} {noun}{suffix}"
+
+
+def _round_summary(results: list[RoundResult], contract: PayloadContract) -> str:
+    """The one line a reader wants after a round: how many friends answered,
+    and how much they produced between them.
+
+    Counts answers rather than successes-minus-failures because a round with
+    one dead friend is a normal, reportable outcome here -- the run
+    continues, and the report says so. Presenting it as "2 failed" would
+    make a routine state read like an error.
+    """
+    if not results:
+        return "no friends dispatched"
+    answered = [r for r in results if r[2].result.succeeded and r[2].result.payload is not None]
+    total = 0
+    for _spec, _capability, outcome in answered:
+        assert outcome.result.payload is not None
+        items = outcome.result.payload.get(contract.container_key)
+        total += len(items) if isinstance(items, list) else 0
+    return f"{len(answered)}/{len(results)} friends answered, {total} {contract.name}"
 
 
 @contextlib.contextmanager
@@ -66,6 +110,8 @@ def dispatch_round(
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    reporter: Progress | None = None,
+    kind: str = "critique",
 ) -> list[RoundResult]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -104,6 +150,7 @@ def dispatch_round(
         if not specs:
             return []
 
+    report = reporter if reporter is not None else disabled()
     results: list[RoundResult] = []
     # §12.4: isolation is torn down at run end unless --keep. A
     # TemporaryDirectory would remove the tree regardless, leaving a "kept"
@@ -142,8 +189,9 @@ def dispatch_round(
                 # deliberate AfError (e.g. check_denied_values refusing a
                 # dangerous flag) is a real stop condition with its own exit
                 # code -- that still propagates.
+                report.friend_dispatched(spec.name, spec.timeout)
                 try:
-                    return _dispatch(
+                    result = _dispatch(
                         spec,
                         cwd_for[spec.name],
                         registry,
@@ -157,9 +205,17 @@ def dispatch_round(
                         pass_env,
                     )
                 except AfError:
+                    # A deliberate stop, not this friend's outcome. Cleared
+                    # from the in-flight set so the heartbeat stops naming
+                    # it, but not reported as a result -- it did not produce
+                    # one, and the error itself is about to be printed.
+                    report.friend_forgotten(spec.name)
                     raise
                 except Exception as exc:
+                    report.friend_finished(spec.name, f"failed: {exc.__class__.__name__}")
                     return spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
+                report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                return result
 
             # Only specs that actually got an isolation directory are
             # dispatched -- _run_one would otherwise KeyError looking up
@@ -172,12 +228,25 @@ def dispatch_round(
             # aggregation is unchanged -- only how many friends are in
             # flight at once.
             workers = max(1, min(max_concurrency, len(dispatch_specs)))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                on_pool(pool)
-                try:
-                    results = list(pool.map(_run_one, dispatch_specs))
-                finally:
-                    on_pool(None)
+            # Announced here rather than on entry: the friends named are the
+            # ones that actually got an isolation directory, and a repeat-
+            # disabled friend has already been filtered out above. A header
+            # listing friends that are not going to run would be the first
+            # thing a reader had to learn to discount.
+            report.round_started(round_no, kind, [s.name for s in dispatch_specs])
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                    on_pool(pool)
+                    try:
+                        results = list(pool.map(_run_one, dispatch_specs))
+                    finally:
+                        on_pool(None)
+            finally:
+                # In a `finally` because the heartbeat thread must stop even
+                # when the round raises. A background thread left naming
+                # friends that are no longer running would interleave with
+                # the error being reported.
+                report.round_finished(round_no, _round_summary(results, contract))
         finally:
             if not keep:
                 for spec in specs:

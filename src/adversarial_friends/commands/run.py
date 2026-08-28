@@ -27,6 +27,7 @@ from ..orchestrator import (
     write_request,
 )
 from ..paths import ADAPTER_DIR
+from ..progress import Progress
 from ..report import render
 from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
@@ -40,7 +41,7 @@ from .environment import _resolve_repo_root, freeze_revision, install_abort_hand
 from .exits import decide_exit
 from .friends import roster_for_run
 from .resume import loop_position, resume_round_one, write_halt
-from .runmeta import JUDGING_MODES, _base_meta, loop_is_done, validate_run_args
+from .runmeta import JUDGING_MODES, _base_meta, finalize_meta, loop_is_done, validate_run_args
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -110,6 +111,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             "cannot cleanly abort this run -- isolation teardown on a kill "
             "signal is not guaranteed."
         )
+    # Progress goes to stderr; stdout stays the run directory and nothing
+    # else, so `cd "$(afriend run spec.md)"` keeps working. Built before the
+    # try because its `finally` closes it.
+    reporter = Progress(enabled=not args.no_progress)
     try:
         repo_root = _resolve_repo_root(artifact)
         if repo_root is None:
@@ -349,6 +354,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     pass_env=tuple(args.pass_env),
                     merge=args.merge,
                     run_id=run_id,
+                    reporter=reporter,
                 )
                 budget.spend(critique.calls)
                 iterations_run = iteration
@@ -401,6 +407,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         pass_env=tuple(args.pass_env),
                         prior=carry_over,
                         final_block=(args.mode != "loop" or iteration == max_iterations),
+                        reporter=reporter,
                     )
                     all_claims = cross.claims
                     carry_over = cross
@@ -442,28 +449,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         if args.mode == "gate":
             blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
 
-        meta: dict[str, Any] = run_meta()
-        if args.mode == "loop":
-            meta["iterations_run"] = iterations_run
-            meta["dry_streak"] = streak
-        if args.mode == "gate":
-            meta["gate_blocked"] = bool(blocking)
-            meta["gate_blocking_claims"] = [c.id for c in blocking]
-        if budget.exhausted_by and not meta.get("ceiling_hit"):
-            # Same spelling crossexam uses: the label names the ceiling, the
-            # downgrade says which one and when.
-            meta["ceiling_hit"] = BUDGET_EXHAUSTED
-            reason = f"{BUDGET_EXHAUSTED}: {budget.exhausted_by}"
-            if reason not in downgrades:
-                downgrades.append(reason)
-        if cross is not None:
-            meta["rounds_run"] = max(rounds_reached, cross.rounds_run)
-            meta["claim_states"] = cross.states
-            meta["amendment_notes"] = cross.notes
-            meta["ceiling_hit"] = cross.ceiling_hit or (
-                BUDGET_EXHAUSTED if budget.exhausted_by else None
-            )
-            meta["incomplete"] = cross.incomplete
+        meta: dict[str, Any] = finalize_meta(
+            run_meta(),
+            args.mode,
+            iterations_run=iterations_run,
+            streak=streak,
+            blocking=blocking,
+            budget=budget,
+            downgrades=downgrades,
+            cross=cross,
+            rounds_reached=rounds_reached,
+        )
         store.write_run_json(meta)
         store.write_report(
             render(
@@ -490,6 +486,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
         )
     finally:
+        # Stops the heartbeat thread. In the same `finally` as the signal
+        # handlers because both are process-level state this command
+        # installed, and a Ctrl-C that skipped this would leave a thread
+        # narrating friends that are no longer running.
+        reporter.close()
         # A distinct loop variable name from the `for sig in (...)` loop
         # above: reusing `sig` here would bind it to a different type
         # (installed_handlers' int keys vs. that loop's Signals values)

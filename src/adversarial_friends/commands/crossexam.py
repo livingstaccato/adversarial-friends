@@ -26,6 +26,7 @@ from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
+from ..progress import Progress
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
@@ -98,6 +99,7 @@ def run_rounds(
     pass_env: tuple[str, ...] = (),
     prior: CrossexamOutcome | None = None,
     final_block: bool = True,
+    reporter: Progress | None = None,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -249,6 +251,8 @@ def run_rounds(
             extra_args=extra_args,
             pass_env=pass_env,
             keep=keep,
+            reporter=reporter,
+            kind="judging",
         )
         budget.spend(len(results))
         outcome.rounds_run = round_no

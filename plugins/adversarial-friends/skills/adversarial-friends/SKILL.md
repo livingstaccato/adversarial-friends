@@ -42,14 +42,34 @@ skill cannot run — install it with
 wrote, saved to disk. All four modes run; see `references/modes.md` for the
 full rules.
 
-Both dispatch the artifact to every discovered friend in parallel and write a
-run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
+Every mode dispatches the artifact to every discovered friend in parallel and
+writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
 or `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
 `artifact/` copy, and per friend under `round-N/`: `<friend>.prompt` (exactly
 what it was asked), `.raw` (its unmodified stdout), `.err` (its stderr —
 always written, even when empty), and `.meta` (argv, exit code, duration,
 timeout and orphan status). `afriend run` prints only the run directory path
 to stdout; read `report.md` from there and present the findings.
+
+### This takes minutes, not seconds
+
+Budget for it, and tell whoever asked. A friend is a whole agent CLI reading
+a document and writing a critique: measured here at **around six minutes for
+a single friend in a single round**, against a default `--timeout` of 15
+minutes each. Friends within a round run in parallel, so a round costs about
+what its slowest friend costs — but `crossexam` runs up to three rounds, so
+**twenty minutes or more is normal, not a symptom**.
+
+Do not kill a run because it has gone quiet. Progress goes to **stderr**: a
+line per friend as it finishes, and every 30 seconds a line naming whatever
+is still outstanding and how long it has been running. If those heartbeat
+lines are still appearing, the run is working. Watch stderr rather than
+polling the run directory, and keep stdout clean — it carries the run path
+and nothing else.
+
+If you need an answer sooner, `--mode report` is one round instead of
+several, and `--max-rounds 2` shortens a crossexam. Reducing `--timeout`
+does not make friends faster; it only converts slow ones into failures.
 
 Which mode to reach for:
 

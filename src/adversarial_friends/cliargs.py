@@ -101,6 +101,19 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
     run_p.add_argument("--timeout", type=int, default=900)
     run_p.add_argument("--out", default=None)
+    # Progress is ON by default and goes to stderr. A crossexam is silent
+    # for tens of minutes otherwise, and a silent run cannot be told from a
+    # hung one -- measured here at 357s for a single friend in a single
+    # round, against a 900s default timeout.
+    #
+    # Default-on is safe for scripts because stdout is untouched: it still
+    # carries the run directory and nothing else. Opting out exists for a
+    # caller that captures both streams together and wants only the result.
+    run_p.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="suppress per-friend progress on stderr (stdout is unaffected)",
+    )
     run_p.add_argument(
         "--attributed",
         action="store_true",

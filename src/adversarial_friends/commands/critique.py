@@ -24,6 +24,7 @@ from ..ids import format_claim_id
 from ..ledger import Alias, Claim
 from ..merge import exact_merge
 from ..orchestrator import NeedsOrchestrator, write_extract_request
+from ..progress import Progress
 from ..prompt import _build_friend_prompt
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
@@ -128,6 +129,7 @@ def run_critique(
     pass_env: tuple[str, ...] = (),
     merge: str = "exact",
     run_id: str = "",
+    reporter: Progress | None = None,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -161,6 +163,8 @@ def run_critique(
         extra_args=extra_args,
         pass_env=pass_env,
         keep=keep,
+        reporter=reporter,
+        kind="critique",
     )
     outcome.calls = len(results)
 
