@@ -27,15 +27,38 @@ GRACE_SECONDS = 10
 KILL_GRACE_SECONDS = 5
 _POLL_INTERVAL_S = 0.05
 
+# What one killpg attempt did. EPERM and ESRCH mean opposite things and must
+# not be collapsed into a single bool: "nothing has that pgid" is a clean
+# no-op, while "the kernel refused" means the group was never reaped and an
+# orphan is exactly what should be suspected.
+SENT = "sent"
+GONE = "gone"
+DENIED = "denied"
 
-def _signal_group(pgid: int, sig: int) -> bool:
-    """Send sig to every process in pgid. False means the group is already
-    empty -- nothing to signal, not an error."""
+
+def _signal_group(pgid: int, sig: int) -> str:
+    """Send sig to every process in pgid; report SENT, GONE or DENIED.
+
+    This returned a bool and caught only ProcessLookupError, so a
+    PermissionError from killpg propagated out of `_terminate_group` and out
+    of `run_process` itself -- killing the round rather than the process, and
+    in the reported case discarding an answer that had already been written
+    and parsed. Observed as `PermissionError: [Errno 1] Operation not
+    permitted`.
+
+    EPERM is not "already gone": something holds that pgid and the kernel
+    refused us. Returning GONE for it would claim a cleanup that never
+    happened, which is the one thing the orphan reporting must not do.
+    `_group_alive` already drew this distinction correctly -- it treats EPERM
+    as alive -- so only this function was wrong.
+    """
     try:
         os.killpg(pgid, sig)
-        return True
+        return SENT
     except ProcessLookupError:
-        return False
+        return GONE
+    except PermissionError:
+        return DENIED
 
 
 def _group_alive(pgid: int) -> bool:
@@ -98,12 +121,21 @@ def _terminate_group(process: subprocess.Popen[bytes], pgid: int) -> bool:
     case separately, from whether the stdout/stderr pump threads reach
     natural EOF once this sweep is done.
     """
-    if not _signal_group(pgid, signal.SIGTERM):
+    first = _signal_group(pgid, signal.SIGTERM)
+    if first == GONE:
         return False
+    if first == DENIED:
+        # Refused, so nothing was reaped and escalating would only be
+        # refused again. Report it as an orphan rather than pretending the
+        # sweep succeeded.
+        return True
     _reap_after_signal(process, pgid, GRACE_SECONDS)
     if not _group_alive(pgid):
         return False
-    if not _signal_group(pgid, signal.SIGKILL):
+    second = _signal_group(pgid, signal.SIGKILL)
+    if second == GONE:
         return False
+    if second == DENIED:
+        return True
     _reap_after_signal(process, pgid, KILL_GRACE_SECONDS)
     return _group_alive(pgid)

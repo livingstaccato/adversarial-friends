@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### A refused signal crashed the round instead of reporting an orphan
+
+`_signal_group` caught only `ProcessLookupError`, so a `PermissionError` from
+`os.killpg` propagated out of `_terminate_group` and out of `run_process`
+itself — killing the round rather than the process, and discarding an answer
+that in the reported case had already been written and parsed.
+
+Worth recording how it was found. A full test run failed with
+`PermissionError: [Errno 1] Operation not permitted`, and that was written off
+as interference from a cross-examination running concurrently. Two of the
+three failures in that run really were interference; this one was not. agy
+raised it independently while cross-examining spawn.py, which is what prompted
+reading the exception handling rather than the test output.
+
+EPERM and ESRCH mean opposite things and were being collapsed. ESRCH means
+nothing holds that pgid — a clean no-op, the common case for a friend with no
+children. EPERM means something *does* hold it and the kernel refused us, so
+the group was never reaped and an orphan is exactly what should be suspected.
+Reporting that as "gone" claims a cleanup that did not happen. `_group_alive`
+had drawn the distinction correctly all along, treating EPERM as alive; only
+the signalling half was wrong.
+
 ### Every adapter now says how it fails to authenticate, and codex is confined
 
 Four gaps closed, three of which had been sitting behind "nobody has captured
