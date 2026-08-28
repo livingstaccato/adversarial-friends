@@ -184,8 +184,11 @@ class SandboxPolicy:
     died in 0.06s with "an unknown error occurred".
 
     `read_paths` are the CLI's own configuration and credential locations,
-    declared per-adapter (see adapters.Adapter.sandbox_read), plus the
-    resolved path of the binary itself. Without the latter the CLI cannot
+    declared per-adapter (see adapters.Adapter.sandbox_read), plus up to
+    three directories for the binary: the directory `which` returned, the
+    directory the executable really lives in once symlinks are followed,
+    and -- when that sits in a `bin/` beside a library directory -- the
+    installation root above it. Without the latter the CLI cannot
     even load: an agent installed under Homebrew or in a node_modules tree
     lives nowhere in the system allowlist.
     """
@@ -258,11 +261,16 @@ def darwin_profile(policy: SandboxPolicy) -> str:
         "",
         "; The friend must reach its model (§12.3) -- but only outward.",
         "(allow network*)",
-        "; Host-local and link-local services are not 'its model'. Reaching",
-        "; a database on 127.0.0.1, another dev server, or a cloud metadata",
-        "; endpoint is exfiltration with extra steps, and none of it is",
-        "; needed to talk to an API. SBPL takes the last matching rule, so",
-        "; these deny AFTER the blanket allow above.",
+        "; Loopback is not 'its model': a database on 127.0.0.1 or another",
+        "; dev server is exfiltration with extra steps, and neither is needed",
+        "; to talk to an API. SBPL takes the last matching rule, so this",
+        "; denies AFTER the blanket allow above.",
+        ";",
+        "; What this does NOT deny, because SBPL cannot express it: a numeric",
+        "; address. Link-local and cloud-metadata endpoints such as",
+        "; 169.254.169.254 stay REACHABLE. This profile is written into the",
+        "; run directory to be audited, so it says so here rather than",
+        "; leaving a reader to infer it from a rule that is not present.",
         '(deny network-outbound (remote ip "localhost:*"))',
         "",
         "; Read-only: system paths, plus this CLI's own config and binary.",
@@ -281,7 +289,9 @@ def darwin_profile(policy: SandboxPolicy) -> str:
 def linux_argv(policy: SandboxPolicy, root: Path = Path("/")) -> list[str]:
     """The `bwrap` prefix implementing `policy`.
 
-    `--ro-bind-try` rather than `--ro-bind` throughout: bwrap fails outright
+    `--ro-bind-try` rather than `--ro-bind` for adapter-declared paths
+    (the system set and the workdir are bound hard, because a missing one is
+    a broken host or a broken run rather than an absent optional config): bwrap fails outright
     when a bind source does not exist, and a policy naming a config directory
     the operator has never created would then refuse a friend that would have
     worked. A missing path grants no access either way.
@@ -334,6 +344,26 @@ def wrap(
     raise ValueError(f"unknown sandbox mechanism: {mechanism!r}")
 
 
+# Directories a real installation keeps beside its `bin/`. Their presence is
+# what distinguishes `~/.opencode` -- which holds a 61MB `node_modules/` the
+# CLI cannot run without -- from `~/bin`, which holds whatever the operator
+# put there.
+_INSTALL_SIBLINGS = ("lib", "lib64", "libexec", "share", "node_modules")
+
+
+def _is_install_root(root: Path) -> bool:
+    """Whether `root` looks like one CLI's installation rather than a place
+    executables happen to live.
+
+    The home directory is never one, whatever it contains: granting it back
+    would undo the boundary's stated purpose, and a heuristic is not a good
+    enough reason to do that.
+    """
+    if root == Path.home():
+        return False
+    return any((root / sibling).is_dir() for sibling in _INSTALL_SIBLINGS)
+
+
 def policy_for(
     workdir: Path,
     binary: str | None,
@@ -376,6 +406,12 @@ def policy_for(
             # its parent as an install root would grant the whole of `~/.local`
             # to confine one CLI. The resolved path is inside the real
             # installation, where `bin/` does mean what it looks like.
+            #
+            # That reasoning holds only while the executable is a SYMLINK
+            # into an installation. A real file in `~/bin` resolves to
+            # `~/bin`, whose parent is the home directory this sandbox exists
+            # to remove -- and curl-installers and single-file binaries put
+            # real files there. `_is_install_root` is what separates the two.
             if resolved.name == "bin":
                 root = resolved.parent
                 # NEVER the filesystem root, and never a directory the system
@@ -386,7 +422,12 @@ def policy_for(
                 # entire reason those tests run a real process instead of
                 # asserting about a profile string.
                 system = set(_DARWIN_SYSTEM_READ) | set(_LINUX_SYSTEM_READ)
-                if root != root.parent and str(root) not in system and root not in reads:
+                if (
+                    root != root.parent
+                    and str(root) not in system
+                    and root not in reads
+                    and _is_install_root(root)
+                ):
                     reads.append(root)
     for raw in adapter_read:
         _add_declared(reads, raw)

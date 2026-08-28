@@ -88,6 +88,34 @@ a host with no sandbox now reports that the filesystem is unconfined *while
 the environment is still filtered*. The previous wording understated the
 protection as badly as the original overstated it.
 
+### A binary in `~/bin` granted the whole home directory
+
+From the same crossexam, and confirmed by running it before it was fixed: a
+CLI installed as a real file in `~/bin` or `~/.local/bin` — the normal shape
+for a curl-installer or a single-file binary — was granted
+`(subpath "/Users/<you>")`, read. That is the exact thing this module's own
+docstring says confinement removes.
+
+The rule was "the parent of any directory named `bin`", which is right for a
+symlink into an installation (`~/.opencode/bin/opencode` needs the 61MB
+`node_modules/` beside it) and wrong for everything else: a real file in
+`~/bin` resolves to `~/bin`, whose parent is your home directory. An install
+root must now look like one — a `lib`, `libexec`, `share` or `node_modules`
+sibling — and the home directory is never one, whatever it happens to
+contain.
+
+Two related corrections, both about the boundary describing itself
+accurately:
+
+- The generated profile is written into the run directory **to be audited**,
+  and its comment claimed link-local and cloud-metadata endpoints were
+  denied while emitting only a `localhost` rule. It now says outright that
+  SBPL cannot express a numeric address and that `169.254.169.254` stays
+  reachable.
+- `--ro-bind-try` was documented as used "throughout" when the system set
+  and the working directory bind hard, and `read_paths` was documented as
+  "the resolved path of the binary" when it carries up to three directories.
+
 The rest of the fifth crossexam's findings -- the eight the 0.1.2 batch left
 open -- plus two defects that surfaced while testing them.
 
