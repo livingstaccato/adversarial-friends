@@ -239,6 +239,19 @@ def _dispatch(
         # exit 71 from the wrapper. A missing agent CLI is the single most
         # common setup problem this tool has; its message must not degrade
         # because the friend happened to need confinement.
+        # §12.2, for EVERY exec friend and not only the confined ones. A
+        # read-only flag stops a CLI writing files; it does nothing about
+        # what it can read out of its own environment, and an artifact that
+        # talks a friend into echoing `env` exfiltrates every token the
+        # operator exported. Filtering was gated on the same condition as
+        # filesystem confinement, so codex, claude and agy -- the three that
+        # confine themselves -- inherited the whole environment, and the
+        # allowlist 0.1.1 introduced only ever applied to opencode.
+        #
+        # Verified against all three before the coupling was cut: each
+        # authenticates under this allowlist, because their credentials are
+        # files under HOME rather than variables.
+        child_env = childenv.build(adapter.env_pass, pass_env)
         binary_present = bool(adapter.binary and shutil.which(adapter.binary))
         if not adapter.readonly_argv and binary_present:
             # §12.2. This CLI enforces nothing on its own, and cwd is not
@@ -274,12 +287,13 @@ def _dispatch(
                 # secret would leave the boundary open straight through the
                 # middle: a friend could read another service's token
                 # without touching a forbidden path.
-                child_env = childenv.build(adapter.env_pass, pass_env)
                 # Scratch and state inside the isolation directory, not the
                 # user's. Without this opencode needed a read grant over the
                 # whole of $TMPDIR -- which holds every other friend's
                 # isolation tree -- and a write grant over its own home
-                # state directory, which outlives the run.
+                # state directory, which outlives the run. Only for confined
+                # friends: a self-confining CLI keeps its real config, which
+                # is where its credentials live.
                 child_env.update(childenv.private_dirs(cwd))
     if extra_args and spec.cli != "fake":
         # §13: their presence forces readonly False in the header regardless

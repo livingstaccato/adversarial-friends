@@ -7,6 +7,7 @@ commands/run.py found it doing neither.
 """
 
 import argparse
+import dataclasses
 
 import pytest
 
@@ -61,16 +62,19 @@ def test_a_variable_the_adapter_passes_is_not_reported_as_withheld(env, monkeypa
     assert "SECRET_TOKEN" in withheld
 
 
-def test_nothing_is_reported_withheld_when_nothing_can_confine(env, monkeypatch):
-    """With no mechanism, dispatch passes `env=None` and the child inherits
-    everything. A withheld list here would tell a reader auditing the run
-    that secrets were filtered when nothing filtered them."""
+def test_no_mechanism_means_no_filesystem_confinement_but_still_a_filtered_env(env, monkeypatch):
+    """With no mechanism the child's FILESYSTEM is unconfined, and the run
+    says so. Its environment is filtered regardless: that is `subprocess`
+    passing an explicit `env`, not something the sandbox does, and reporting
+    otherwise would understate the protection as badly as the original
+    defect overstated it."""
     monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: None)
     registry = {"opencode": _adapter("opencode")}
     downgrades: list[str] = []
     withheld = confinement_downgrades(_args(), [_spec("opencode")], registry, downgrades)
-    assert withheld == []
-    assert any("was NOT filtered" in d for d in downgrades), downgrades
+    assert "SECRET_TOKEN" in withheld
+    assert any("is not confined" in d for d in downgrades), downgrades
+    assert any("environment is still filtered" in d for d in downgrades), downgrades
 
 
 def test_a_variable_only_one_adapter_receives_is_named_not_folded_in(env, monkeypatch):
@@ -90,11 +94,27 @@ def test_a_variable_only_one_adapter_receives_is_named_not_folded_in(env, monkey
     assert any("passed to others" in d for d in downgrades), downgrades
 
 
-def test_a_friend_with_its_own_readonly_mode_is_not_counted_as_confined(env, monkeypatch):
+def test_a_self_confining_friend_still_has_its_environment_filtered(env, monkeypatch):
     """Confinement keys on the adapter having no read-only mode of its own
-    (§12.2), so a CLI that does is not part of this record at all."""
+    (§12.2), but environment filtering does not: a read-only flag stops a
+    CLI writing files and does nothing about what it reads out of its own
+    environment. The two were gated on one condition, so codex, claude and
+    agy inherited every exported secret while the run recorded nothing."""
     monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
     registry = {"codex": _adapter("codex", readonly=("--sandbox", "read-only"))}
     downgrades: list[str] = []
-    assert confinement_downgrades(_args(), [_spec("codex")], registry, downgrades) == []
+    withheld = confinement_downgrades(_args(), [_spec("codex")], registry, downgrades)
+    assert "SECRET_TOKEN" in withheld, withheld
+    # It confines itself, so no sandbox note is due -- only the env record.
+    assert not any("is not confined" in d for d in downgrades), downgrades
+
+
+def test_an_http_friend_has_no_child_environment_to_filter(env, monkeypatch):
+    """ollama is reached over HTTP: there is no child process, so it cannot
+    be named in a record about what a child was denied."""
+    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    http = _adapter("ollama")
+    registry = {"ollama": dataclasses.replace(http, transport="http")}
+    downgrades: list[str] = []
+    assert confinement_downgrades(_args(), [_spec("ollama")], registry, downgrades) == []
     assert downgrades == []

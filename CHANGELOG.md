@@ -63,6 +63,31 @@ opencode writes its log where the round deletes it and needs no grant
 outside the boundary at all. Redirecting where a CLI thinks its state lives
 beats widening the sandbox to reach the real one.
 
+### Three friends were inheriting every secret you export
+
+The same crossexam's highest finding, and the only one in this batch that
+was not about a change made an hour earlier.
+
+Environment filtering was gated on the same condition as filesystem
+confinement — `if not adapter.readonly_argv` — so codex, claude and agy, the
+three CLIs that confine themselves, received no environment at all and
+inherited the operator's whole shell. A read-only flag stops a CLI writing
+files; it does nothing about what it can read out of its own environment,
+and an artifact that talks a friend into echoing `env` sends every exported
+token to a model provider. The allowlist 0.1.1 introduced — and whose
+arrival that release announced as closing this hole — only ever applied to
+opencode.
+
+Every exec friend is filtered now. Verified against all three before the
+coupling was cut: each authenticates under the allowlist, because their
+credentials are files under `HOME` rather than variables.
+
+The run's record follows dispatch again — every exec friend counted, HTTP
+friends excluded because there is no child process to deny anything to, and
+a host with no sandbox now reports that the filesystem is unconfined *while
+the environment is still filtered*. The previous wording understated the
+protection as badly as the original overstated it.
+
 The rest of the fifth crossexam's findings -- the eight the 0.1.2 batch left
 open -- plus two defects that surfaced while testing them.
 
