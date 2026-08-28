@@ -101,6 +101,14 @@ class Adapter:
     # Empty is meaningful: an adapter with a real readonly mode is trusted
     # to confine itself (§11) and never reaches the sandbox at all.
     sandbox_read: tuple[str, ...] = ()
+    # §12.2: paths this CLI must WRITE to in order to start at all -- its own
+    # log or state directory, not the artifact's. The isolation directory is
+    # granted to every confined friend already; this is for a CLI that opens
+    # a file elsewhere before it will do anything, and dies if it cannot.
+    # Empty for every adapter that does not need it, which is the safe
+    # default: a write path is a hole in the boundary and has to be earned by
+    # a real failure, not anticipated.
+    sandbox_write: tuple[str, ...] = ()
     # §14: where this CLI's own structured output says "not authenticated".
     # Empty means unclassifiable, which is the honest default until someone
     # captures a real auth failure -- guessing at stderr substrings is what
@@ -170,6 +178,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             transport=data.get("transport", "exec"),
             endpoint=data.get("endpoint", ""),
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
+            sandbox_write=tuple(data.get("sandbox", {}).get("write", [])),
             auth=parse_auth(data.get("auth")),
             env_pass=tuple(data.get("env", {}).get("pass", [])),
             doc_argv=tuple(data.get("doc_argv", [])),

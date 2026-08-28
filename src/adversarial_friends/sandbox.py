@@ -80,6 +80,7 @@ directory itself, and without it nothing runs.
 """
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -148,6 +149,25 @@ def system_binds(root: Path = Path("/")) -> list[str]:
     return binds + symlinks
 
 
+def _add_declared(into: list[Path], raw: str) -> None:
+    """Expand one adapter-declared path and add it, with its real path.
+
+    `~` and `$TMPDIR` are expanded here rather than in the TOML so an adapter
+    file stays portable between machines and users.
+
+    The resolved form is added too when it differs, because SBPL matches the
+    path the kernel sees, not the one that was written: `/tmp` is a symlink
+    to `/private/tmp` and `$TMPDIR` sits under `/var/folders`, which is a
+    symlink to `/private/var/folders`. Granting only what the adapter wrote
+    silently grants nothing at all -- a whole class of "the rule is there and
+    the CLI still cannot read it".
+    """
+    expanded = Path(os.path.expandvars(raw)).expanduser()
+    for candidate in (expanded, expanded.resolve()):
+        if candidate not in into:
+            into.append(candidate)
+
+
 @dataclass(frozen=True)
 class SandboxPolicy:
     """What one friend is allowed to touch.
@@ -155,6 +175,13 @@ class SandboxPolicy:
     `workdir` is its isolation directory -- the git worktree for repo scope,
     or the bare directory holding a copy of the artifact for doc scope. It is
     the only place the friend may write.
+
+    `write_paths` are the few places a CLI must write before it will run at
+    all -- its own log or state directory. Declared per adapter and empty by
+    default: opencode is the one that needed it, and only because it opens
+    `~/.local/share/opencode/log/opencode.log` on startup and exits if it
+    cannot. Found by dispatching it confined for the first time, where it
+    died in 0.06s with "an unknown error occurred".
 
     `read_paths` are the CLI's own configuration and credential locations,
     declared per-adapter (see adapters.Adapter.sandbox_read), plus the
@@ -307,7 +334,12 @@ def wrap(
     raise ValueError(f"unknown sandbox mechanism: {mechanism!r}")
 
 
-def policy_for(workdir: Path, binary: str | None, adapter_read: tuple[str, ...]) -> SandboxPolicy:
+def policy_for(
+    workdir: Path,
+    binary: str | None,
+    adapter_read: tuple[str, ...],
+    adapter_write: tuple[str, ...] = (),
+) -> SandboxPolicy:
     """Build a policy for one friend.
 
     Three paths are granted for the binary, not one, and each covers a case
@@ -357,5 +389,8 @@ def policy_for(workdir: Path, binary: str | None, adapter_read: tuple[str, ...])
                 if root != root.parent and str(root) not in system and root not in reads:
                     reads.append(root)
     for raw in adapter_read:
-        reads.append(Path(raw).expanduser())
-    return SandboxPolicy(workdir=workdir, read_paths=tuple(reads))
+        _add_declared(reads, raw)
+    writes: list[Path] = []
+    for raw in adapter_write:
+        _add_declared(writes, raw)
+    return SandboxPolicy(workdir=workdir, read_paths=tuple(reads), write_paths=tuple(writes))

@@ -266,7 +266,9 @@ def _dispatch(
                 if not allow_unsandboxed:
                     return spec, capability, _refused_unsandboxed(argv, spec, adapter)
             else:
-                policy = sandbox.policy_for(cwd, adapter.binary, adapter.sandbox_read)
+                policy = sandbox.policy_for(
+                    cwd, adapter.binary, adapter.sandbox_read, adapter.sandbox_write
+                )
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
                 # Confining the filesystem while handing over every exported
                 # secret would leave the boundary open straight through the

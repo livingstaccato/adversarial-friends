@@ -5,6 +5,8 @@ aborts the whole run, so it fires only on a marker an adapter declared;
 repeat detection merely disables one friend, so it is allowed to infer.
 """
 
+from pathlib import Path
+
 from adversarial_friends import failures
 from adversarial_friends.adapters import Adapter, AuthMarkers
 from adversarial_friends.normalize import NormalizeResult
@@ -195,3 +197,48 @@ def test_agy_ships_the_captured_marker():
     assert agy.auth.declared()
     assert failures.classify(_with_stderr(AGY_CAPTURED), agy) == failures.AUTH
     assert "agy" in agy.auth.remediation
+
+
+# --- opencode: the first structured auth marker (§14) -----------------------
+
+
+def _opencode():
+    from adversarial_friends.adapters import load_adapters
+    from adversarial_friends.paths import ADAPTER_DIR
+
+    return load_adapters(ADAPTER_DIR)["opencode"]
+
+
+def _opencode_payload(name="ProviderAuthError"):
+    """The captured envelope, normalized the way dispatch would deliver it."""
+    import json
+
+    raw = (Path(__file__).parent / "fixtures" / "opencode_provider_auth_error.ndjson").read_text(
+        encoding="utf-8"
+    )
+    return json.loads(raw.strip().splitlines()[0].replace("ProviderAuthError", name))
+
+
+def test_opencodes_provider_auth_error_is_classified_as_auth():
+    """Captured from a real confined run: opencode reached its provider with
+    no credential in its allowlisted environment and said so in its own
+    structured output. §14 asks for exactly this shape -- the CLI naming the
+    failure itself -- rather than a guessed stderr substring. It is the first
+    marker of the kind §14 actually describes; agy's is a stderr sentence,
+    allowed only as a recorded divergence."""
+    import dataclasses
+
+    result = NormalizeResult(payload=_opencode_payload(), errors=[], succeeded=False)
+    cast = dataclasses.replace(outcome(exit_code=1), result=result)
+    assert failures.classify(cast, _opencode()) == failures.AUTH
+
+
+def test_an_ordinary_opencode_error_is_not_an_auth_failure():
+    """The marker names one error type. A provider that is merely broken --
+    the same envelope, a different `name` -- must stay unclassified, or a
+    run aborts on a failure a retry would have survived."""
+    import dataclasses
+
+    result = NormalizeResult(payload=_opencode_payload("UnknownError"), errors=[], succeeded=False)
+    cast = dataclasses.replace(outcome(exit_code=1), result=result)
+    assert failures.classify(cast, _opencode()) != failures.AUTH

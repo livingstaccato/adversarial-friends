@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### opencode had never been dispatched, and could not have been
+
+The first crossexam to include `opencode` — the one adapter with no schema,
+no read-only mode of its own, and therefore the only one that runs under OS
+confinement. It failed in 0.06 seconds, in every round, with `error: An
+unknown error occurred (Unexpected)`. It had never been dispatched in a real
+run before, so the confinement path shipped in 0.1.0 had never executed
+against the CLI it exists for.
+
+Three separate things were wrong, each hidden behind that one message:
+
+- **It could not write its own log.** opencode opens
+  `~/.local/share/opencode/log/opencode.log` before it will do anything and
+  exits if the open fails. The profile granted that directory read-only.
+  Adapters can now declare `[sandbox] write`, which stays empty for every
+  adapter that has not earned it.
+- **It could not read the temp directory.** It runs on bun, which keeps its
+  cache directly in `$TMPDIR` — so granting the friend's own isolation
+  directory, which lives there, was not enough. Adapter paths now expand
+  `$TMPDIR` as well as `~`, and a declared path is granted alongside its
+  real path: `/tmp` is a symlink to `/private/tmp` and `$TMPDIR` sits under
+  `/var/folders`, so granting only what was written granted nothing at all.
+- **It had no credentials.** `opencode auth list` reports where it actually
+  looks, and on the machine this was captured from it named `GEMINI_API_KEY`
+  and `HF_TOKEN` — neither in the adapter's allowlist, so a confined
+  opencode reached its provider and was refused by it.
+
+With those fixed it starts, runs for a minute rather than dying instantly,
+and reaches its provider. It also produced the first auth marker of the kind
+§14 actually describes — a CLI naming the failure in its own structured
+output, `{"error":{"name":"ProviderAuthError"}}`, rather than the stderr
+sentence agy needed. agy's remains a recorded divergence; opencode's is the
+shape the spec asked for.
+
+The machinery around the failure behaved correctly throughout, which is worth
+recording: the environment was filtered to eight variables, the repeat
+tracker disabled opencode after two identical failures, the run reported
+itself incomplete, and the shrunken roster was named in the report.
+
 The rest of the fifth crossexam's findings -- the eight the 0.1.2 batch left
 open -- plus two defects that surfaced while testing them.
 
@@ -485,8 +524,9 @@ repository does not get to choose who reviews it.
 
 ### Known gaps
 
-- Only agy declares an auth marker (captured from a real failure; see
-  0.1.2). The others stay unclassified until theirs is captured —
+- Three of five adapters declare no auth marker. agy and opencode do, both
+  captured from real failures; claude, codex and ollama stay unclassified
+  until theirs are captured —
   guessing at stderr is what the design rejects. Repeat detection covers the
   cost meanwhile: a friend that fails identically twice stops being
   dispatched.
