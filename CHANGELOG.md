@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.1.5
+
+**The first release published since 0.1.3, and 0.1.3 is what PyPI still
+serves.** 0.1.4 was tagged and never uploaded, so anyone who installed this
+tool from PyPI is running a version with both confinement holes 0.1.4 fixed:
+`codex`, `claude` and `agy` inheriting every exported secret, and a binary in
+`~/bin` granting read over the whole home directory. Upgrading is the point of
+this release.
+
+On top of 0.1.4, this adds what came out of pointing the tool at its own
+source five more times — `normalize.py`, `spawn.py`, `procio.py`,
+`crossexam.py` and `dispatch.py` — and closing the last of the recorded gaps.
+One more security fix among them: `--unsafe-extra-args "--sandbox
+danger-full-access"` bypassed the denied-value screen, because the argv that
+was checked was not the argv that ran.
 
 ### spawn.py, cross-examined
 

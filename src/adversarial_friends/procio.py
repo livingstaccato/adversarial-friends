@@ -171,12 +171,15 @@ def _pump_output(
                     total += len(raw)
                     if total > limit:
                         overflow_event.set()
-                        # Paced once the output is already unusable: without
-                        # this the loop reads and throws away at full speed
-                        # for as long as a writer keeps producing, which for
-                        # a descendant that escaped the process group is
-                        # until the drain window closes.
-                        time.sleep(_POLL_INTERVAL_S)
+                        # Discarded at full speed, deliberately. Pacing this
+                        # read was tried and reverted: throttling to one
+                        # chunk per poll caps drain throughput at roughly a
+                        # megabyte a second, so a friend flooding faster than
+                        # that blocks on its own write and the round's
+                        # duration starts depending on how much it chose to
+                        # emit -- which made two tests timing-dependent.
+                        # The loop is already bounded without it: EOF, or
+                        # stop_event plus the drain window, ends it.
                         continue
                     chunks.append(decoder.decode(raw))
                 continue
