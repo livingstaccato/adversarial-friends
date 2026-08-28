@@ -241,3 +241,39 @@ def test_against_a_real_local_ollama(tmp_path):
     assert result.exit_code == 200, result.failure_reason
     assert result.stdout, "ollama returned an empty body"
     assert json.loads(result.stdout)["response"], "no text under ollama's response key"
+
+
+def test_an_oversized_response_body_is_refused_rather_than_held(stub, tmp_path):
+    """c-0002, the HTTP half. `response.read()` had no ceiling, so a
+    misbehaving or hostile endpoint could make this process hold an
+    arbitrary amount of memory -- while the error path two lines below it
+    had capped its body at 500 bytes all along.
+
+    Note the endpoint is operator-configured, so this is not primarily an
+    attack surface; it is the same runaway-output failure the subprocess
+    path has, and a local model server looping on generation is the
+    realistic way to hit it.
+    """
+    _Stub.status = 200
+    _Stub.body = json.dumps({"response": "x" * (256 * 1024)})
+    result = http_transport.run_request(
+        _adapter(_endpoint(stub)),
+        _spec(),
+        _prompt(tmp_path),
+        30,
+        max_response_bytes=64 * 1024,
+    )
+    assert result.failure_reason is not None
+    assert "exceeded" in result.failure_reason
+    assert result.result.succeeded is False
+    assert len(result.stdout) < 2 * 64 * 1024
+
+
+def test_a_normal_sized_response_is_unaffected_by_the_ceiling(stub, tmp_path):
+    _Stub.status = 200
+    _Stub.body = json.dumps({"response": json.dumps(GOOD_PAYLOAD)})
+    result = http_transport.run_request(
+        _adapter(_endpoint(stub)), _spec(), _prompt(tmp_path), 30, max_response_bytes=64 * 1024
+    )
+    assert result.failure_reason is None
+    assert result.result.succeeded is True

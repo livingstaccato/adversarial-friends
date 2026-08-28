@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### A timeout bounded how long a friend ran, not what it cost
+
+c-0002 from the same cross-examination, which the judges ruled out of scope
+because it lives in spawn.py rather than in the artifact under review. It was
+parked rather than dismissed, and it was real.
+
+stdout, stderr and HTTP response bodies were accumulated with no ceiling. The
+documented timeout bounds how LONG a friend may run and says nothing about how
+much memory it may make the runner hold -- and friends are dispatched
+concurrently, so it was never one friend's memory at stake. A model looping on
+generation, the failure this codebase already designs around elsewhere, is the
+realistic way to reach it. Measured: an uncapped stream accumulated 13MB where
+the cap now holds it to the ceiling exactly.
+
+Each stream is bounded at 32MiB, orders of magnitude above a real critique.
+Output that hits the ceiling is never offered to the parser, matching the rule
+a timeout already follows and for the same reason: a truncated answer can
+still parse, and reporting a friend's partial answer as its whole answer is a
+worse failure than reporting none. The run records `output_truncated`, because
+a short stdout beside a long duration is otherwise indistinguishable from a
+friend that simply said little.
+
+On the HTTP side it was specifically the success path that was unbounded --
+the error path beside it had capped its body at 500 bytes all along.
+
+Found while fixing it: the early-answer probe joined the entire stdout buffer
+on every 50ms poll, which is quadratic across a run. Affordable to overlook
+only while output was unbounded in the first place; it now settles the same
+question from the last chunk without joining anything.
+
+spawn.py crossed the 500-line cap, so process-group reaping moved to
+`procgroup.py`.
+
 ### normalize.py, cross-examined
 
 Six defects in the module that parses untrusted friend output, found by

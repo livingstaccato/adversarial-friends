@@ -49,7 +49,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import selectors
-import signal
 import subprocess
 import threading
 import time
@@ -60,6 +59,7 @@ from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .envelopes import Envelope, answer_is_complete
 from .normalize import NormalizeResult, normalize
+from .procgroup import _terminate_group
 
 # Wait windows for group escalation: this long for the group to exit after
 # SIGTERM, then (if anything is still alive) this long for it to actually
@@ -75,6 +75,12 @@ _POLL_INTERVAL_S = 0.05
 # force them out. Purely a drain window, not a kill/escalation window.
 _DRAIN_JOIN_S = 2.0
 _READ_CHUNK = 65536
+# Per-stream ceiling on what one friend may make this process hold. The
+# timeout bounds how LONG a friend runs; without this, nothing bounds how
+# much memory it costs -- and friends are dispatched concurrently, so it is
+# never one friend's memory at stake. 32MiB is far above any real critique
+# (tens of KB) and far below anything that threatens the host.
+MAX_OUTPUT_BYTES = 32 * 1024 * 1024
 
 
 @dataclass
@@ -93,6 +99,11 @@ class SpawnResult:
     # comparing durations should not have to guess why one friend's wall
     # clock is shorter than the CLI's own report of itself.
     stopped_after_answer: bool = False
+    # The friend produced more than MAX_OUTPUT_BYTES on a stream and was cut
+    # off. Recorded rather than inferred from the failure text, because a
+    # reader comparing a short stdout against a long duration otherwise has
+    # no way to tell truncation from a friend that simply said little.
+    output_truncated: bool = False
 
 
 def _pump_stdin(process: subprocess.Popen[bytes], stdin_text: str | None) -> None:
@@ -119,7 +130,13 @@ def _pump_stdin(process: subprocess.Popen[bytes], stdin_text: str | None) -> Non
             process.stdin.close()
 
 
-def _pump_output(stream: IO[bytes], chunks: list[str], stop_event: threading.Event) -> None:
+def _pump_output(
+    stream: IO[bytes],
+    chunks: list[str],
+    stop_event: threading.Event,
+    limit: int,
+    overflow_event: threading.Event,
+) -> None:
     """Drain a pipe into chunks (decoded str fragments) until EOF or
     stop_event is set, without ever blocking in an uninterruptible read.
 
@@ -132,10 +149,19 @@ def _pump_output(stream: IO[bytes], chunks: list[str], stop_event: threading.Eve
     that becomes ready in the same instant stop_event is set is still read
     before this returns -- setting stop_event never truncates output that
     was already sitting in the kernel buffer.
+
+    `limit` caps the bytes this pump will accumulate. Past it the pump sets
+    `overflow_event` and stops reading, which run_process treats the way it
+    treats a timeout: kill the group, and do not offer the partial output to
+    the parser. Dropping the overflowing read rather than keeping a prefix
+    is deliberate -- a prefix of a friend's answer can still be valid JSON,
+    and reporting one as the whole answer is a worse failure than reporting
+    none.
     """
     fd = stream.fileno()
     os.set_blocking(fd, False)
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    total = 0
     sel = selectors.DefaultSelector()
     sel.register(fd, selectors.EVENT_READ)
     try:
@@ -150,6 +176,10 @@ def _pump_output(stream: IO[bytes], chunks: list[str], stop_event: threading.Eve
                 if raw == b"":
                     break
                 if raw:
+                    total += len(raw)
+                    if total > limit:
+                        overflow_event.set()
+                        break
                     chunks.append(decoder.decode(raw))
                 continue
             if stop_event.is_set():
@@ -161,85 +191,20 @@ def _pump_output(stream: IO[bytes], chunks: list[str], stop_event: threading.Eve
             stream.close()
 
 
-def _signal_group(pgid: int, sig: int) -> bool:
-    """Send sig to every process in pgid. False means the group is already
-    empty -- nothing to signal, not an error."""
-    try:
-        os.killpg(pgid, sig)
-        return True
-    except ProcessLookupError:
-        return False
+def _buffer_looks_finished(chunks: list[str]) -> bool:
+    """Cheap precondition for the early-answer probe.
 
-
-def _group_alive(pgid: int) -> bool:
-    """Best-effort membership check via the null signal: it does nothing to
-    the target but still requires the kernel to confirm something with that
-    pgid exists. A zombie member still counts as "alive" here -- it only
-    disappears once its actual parent (or, once orphaned, the OS's reaper)
-    calls wait() on it, which is exactly the condition callers are polling
-    for."""
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-
-def _reap_after_signal(process: subprocess.Popen[bytes], pgid: int, grace_seconds: float) -> None:
-    """Wait up to grace_seconds for the group to empty out.
-
-    Two different things need to happen here, not one. `process` is *our*
-    direct child: the kernel keeps it as a zombie until we call wait() on it
-    ourselves -- polling `_group_alive` alone would spin for the full grace
-    window every time, since the kernel never stops reporting a zombie we
-    haven't reaped. Other descendants are not our children (they may even be
-    reparented to the OS's reaper after their own parent dies); we cannot
-    wait() on those, only poll for them to vanish once whichever process is
-    responsible for them reaps them.
+    `answer_is_complete` needs one string, and joining the whole buffer on
+    every poll is O(n) per poll -- quadratic across a run, which only became
+    affordable to ignore while output was unbounded. A complete JSON object
+    ends with `}`, and the buffer ends with `}` exactly when its last
+    non-blank chunk does, so this settles it without joining anything.
     """
-    deadline = time.monotonic() + grace_seconds
-    remaining = max(0.0, deadline - time.monotonic())
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        process.wait(timeout=remaining)
-    while time.monotonic() < deadline and _group_alive(pgid):
-        time.sleep(_POLL_INTERVAL_S)
-
-
-def _terminate_group(process: subprocess.Popen[bytes], pgid: int) -> bool:
-    """Escalate SIGTERM -> grace period -> SIGKILL against the whole process
-    group. Called both after a timeout and after every ordinary completion
-    (see `run_process`): a friend that exits 0 can still leave a descendant
-    alive in its group, and that descendant deserves the same cleanup a
-    timed-out one gets. When nothing is left in the group, the first
-    `_signal_group` call returns False immediately and this is a no-op --
-    the common case (a friend with no children) pays for one syscall, not a
-    wait.
-
-    Returns True if the group still has a member after the full escalation.
-    SIGKILL cannot be blocked or ignored, so this should be False in
-    practice every time -- anything actually still a *member* of the group
-    at that point cannot survive it. It is kept as a defensive, independent
-    signal into run_process's orphans_suspected anyway, in case a future
-    platform or edge case breaks that assumption.
-
-    Note what this does *not* catch: a descendant that calls its own
-    os.setsid() leaves this group entirely, by definition, the moment it
-    does so (see test_setsid_escapee_is_not_reaped) -- pgid membership can
-    never observe it, before or after this runs. run_process detects that
-    case separately, from whether the stdout/stderr pump threads reach
-    natural EOF once this sweep is done.
-    """
-    if not _signal_group(pgid, signal.SIGTERM):
-        return False
-    _reap_after_signal(process, pgid, GRACE_SECONDS)
-    if not _group_alive(pgid):
-        return False
-    if not _signal_group(pgid, signal.SIGKILL):
-        return False
-    _reap_after_signal(process, pgid, KILL_GRACE_SECONDS)
-    return _group_alive(pgid)
+    for chunk in reversed(chunks):
+        stripped = chunk.rstrip()
+        if stripped:
+            return stripped.endswith("}")
+    return False
 
 
 def _early_failure(argv: list[str], duration: float, reason: str) -> SpawnResult:
@@ -272,6 +237,7 @@ def run_process(
     structured_output: bool = False,
     contract: PayloadContract = CLAIM_CONTRACT,
     env: dict[str, str] | None = None,
+    max_output_bytes: int = MAX_OUTPUT_BYTES,
 ) -> SpawnResult:
     """Run one friend; see the module docstring for the process-group and
     pump-thread hazards this guards against.
@@ -343,13 +309,18 @@ def run_process(
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
+    overflow_event = threading.Event()
     stop_event = threading.Event()
     stdin_thread = threading.Thread(target=_pump_stdin, args=(process, stdin_text), daemon=True)
     stdout_thread = threading.Thread(
-        target=_pump_output, args=(process.stdout, stdout_chunks, stop_event), daemon=True
+        target=_pump_output,
+        args=(process.stdout, stdout_chunks, stop_event, max_output_bytes, overflow_event),
+        daemon=True,
     )
     stderr_thread = threading.Thread(
-        target=_pump_output, args=(process.stderr, stderr_chunks, stop_event), daemon=True
+        target=_pump_output,
+        args=(process.stderr, stderr_chunks, stop_event, max_output_bytes, overflow_event),
+        daemon=True,
     )
     stdin_thread.start()
     stdout_thread.start()
@@ -366,7 +337,13 @@ def run_process(
         if abort_event is not None and abort_event.is_set():
             aborted = True
             break
-        if envelope is not None and answer_is_complete("".join(stdout_chunks), envelope):
+        if overflow_event.is_set():
+            break
+        if (
+            envelope is not None
+            and _buffer_looks_finished(stdout_chunks)
+            and answer_is_complete("".join(stdout_chunks), envelope)
+        ):
             answered = True
             break
         time.sleep(_POLL_INTERVAL_S)
@@ -418,6 +395,25 @@ def run_process(
     stderr = "".join(stderr_chunks)
     duration = time.monotonic() - started
 
+    # Output that hit the ceiling is truncated, so it is not a candidate for
+    # repair -- the same rule a timeout already follows, and for the same
+    # reason: a partial answer that happens to parse would be reported as a
+    # whole one. Checked before `timed_out` because a flooding friend often
+    # trips both, and the ceiling is the more specific diagnosis.
+    if overflow_event.is_set():
+        return SpawnResult(
+            argv,
+            process.returncode,
+            stdout,
+            stderr,
+            duration,
+            timed_out,
+            NormalizeResult(None, ["output exceeded the byte ceiling"], False),
+            f"output exceeded {max_output_bytes} bytes",
+            orphans_suspected,
+            stopped_after_answer=answered,
+            output_truncated=True,
+        )
     # Timeout wins over parsing: truncated output from a killed process is
     # not a candidate for repair, it is simply a failed round.
     if timed_out:

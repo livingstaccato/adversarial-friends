@@ -36,7 +36,7 @@ from .adapters import Adapter, Capability, FriendSpec
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult, normalize
-from .spawn import SpawnResult
+from .spawn import MAX_OUTPUT_BYTES, SpawnResult
 
 # ollama returns the model's text under this key for a non-streaming
 # /api/generate call. Declared here rather than as an Envelope on the
@@ -123,12 +123,21 @@ def run_request(
     prompt_file: Path,
     timeout_s: int,
     contract: PayloadContract = CLAIM_CONTRACT,
+    max_response_bytes: int = MAX_OUTPUT_BYTES,
 ) -> SpawnResult:
     """POST the prompt to the adapter's endpoint and normalize the reply.
 
     `contract` selects which payload kind the reply is read as, exactly as it
     does for the exec transport -- an HTTP friend judges in a crossexam round
-    like any other."""
+    like any other.
+
+    `max_response_bytes` bounds the reply the same way spawn bounds a
+    subprocess's stdout, and for the same reason: the timeout limits how
+    long a request may take, not how much memory its answer may cost. A
+    local model server looping on generation is the realistic way to reach
+    it. The HTTPError path below has capped its body at 500 bytes all
+    along -- it was the success path, the one that reads an unbounded body,
+    that had no ceiling."""
     endpoint = adapter.endpoint
     model = spec.model or ""
     argv = ["POST", endpoint, model or "<default-model>"]
@@ -173,7 +182,17 @@ def run_request(
     try:
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             status = response.status
-            body = response.read().decode("utf-8", errors="replace")
+            # One byte past the ceiling is enough to know it was exceeded,
+            # and never reads the rest of an arbitrarily large body.
+            raw = response.read(max_response_bytes + 1)
+            if len(raw) > max_response_bytes:
+                return _failure(
+                    argv,
+                    time.monotonic() - started,
+                    f"response exceeded {max_response_bytes} bytes",
+                    status,
+                )
+            body = raw.decode("utf-8", errors="replace")
     except TimeoutError:
         return _failure(argv, time.monotonic() - started, "timeout")
     except urllib.error.HTTPError as exc:
