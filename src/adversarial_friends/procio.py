@@ -103,48 +103,51 @@ def _pump_output(
     stop_event: threading.Event,
     limit: int,
     overflow_event: threading.Event,
+    failed_event: threading.Event | None = None,
 ) -> None:
-    """Drain a pipe into chunks (decoded str fragments) until EOF or
-    stop_event is set, without ever blocking in an uninterruptible read.
+    """Drain a pipe into chunks (decoded str fragments), never blocking in an
+    uninterruptible read.
 
-    The fd is switched to non-blocking and polled with a selector so the
-    loop is always back at the stop_event check within one
-    _POLL_INTERVAL_S -- see the module docstring for why a plain blocking
-    readline() loop cannot be relied on to exit once a descendant has
-    escaped the process group and is holding this pipe open. stop_event is
-    checked only once no more data is immediately available, so a chunk
-    that becomes ready in the same instant stop_event is set is still read
-    before this returns -- setting stop_event never truncates output that
-    was already sitting in the kernel buffer.
+    The fd is switched to non-blocking and polled with a selector so the loop
+    is always back at its stop check within one `_POLL_INTERVAL_S` -- see the
+    module docstring for why a plain blocking `readline()` cannot be relied on
+    to exit once a descendant has escaped the process group and is holding
+    this pipe open. `stop_event` is checked on every iteration, and once set
+    the pump keeps draining for `_DRAIN_JOIN_S` so a chunk already sitting in
+    the kernel buffer is still read: asking a pump to finish never truncates
+    what was already there.
 
-    `limit` caps the bytes this pump will accumulate. Past it the pump sets
-    `overflow_event` and stops reading, which run_process treats the way it
-    treats a timeout: kill the group, and do not offer the partial output to
-    the parser. Dropping the overflowing read rather than keeping a prefix
-    is deliberate -- a prefix of a friend's answer can still be valid JSON,
-    and reporting one as the whole answer is a worse failure than reporting
-    none.
+    `limit` caps what this pump ACCUMULATES, not what it reads. Past it the
+    pump sets `overflow_event` and goes on draining into the void. Returning
+    at the ceiling instead -- which is what this did first -- leaves the pipe
+    unread, so the friend blocks writing and dies flushing at exit: a
+    complete, valid answer came back as `exit 120`. Reading and discarding
+    bounds memory just as well and leaves the child able to exit on its own
+    terms.
+
+    `failed_event`, when given, is set if the pipe fails in a way that is NOT
+    a clean end of stream. Every OSError used to be treated exactly like EOF,
+    so a transport failure and an orderly close were indistinguishable and the
+    caller happily parsed whatever bytes had arrived before the failure --
+    reporting a fraction of a friend's answer as the whole of it. That is the
+    same mistake the byte ceiling and the timeout both exist to prevent, one
+    layer further down.
     """
     fd = stream.fileno()
-    os.set_blocking(fd, False)
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     total = 0
-    sel = selectors.DefaultSelector()
-    sel.register(fd, selectors.EVENT_READ)
     stop_deadline: float | None = None
+    sel: selectors.BaseSelector | None = None
     try:
+        # Inside the try: selector construction and registration can fail
+        # under file-descriptor pressure, and doing them outside meant the
+        # `finally` below never ran -- leaving the pipe undrained, so the
+        # friend blocked on it until its own timeout and the operator saw a
+        # timeout rather than the real cause.
+        os.set_blocking(fd, False)
+        sel = selectors.DefaultSelector()
+        sel.register(fd, selectors.EVENT_READ)
         while True:
-            # stop_event is checked on EVERY iteration, not only on an idle
-            # select. The old loop `continue`d straight past it after any
-            # successful read, so a writer trickling bytes forever kept the
-            # check from ever running -- the thread then lived until the
-            # byte ceiling stopped it, which is a bound but not the one the
-            # docstring claimed.
-            #
-            # Setting the event still does not truncate: draining continues
-            # for _DRAIN_JOIN_S so a chunk already sitting in the kernel
-            # buffer is read, and only then does the loop give up. That
-            # preserves the original intent while making the exit bounded.
             if stop_event.is_set():
                 if stop_deadline is None:
                     stop_deadline = time.monotonic() + _DRAIN_JOIN_S
@@ -156,28 +159,39 @@ def _pump_output(
                 except BlockingIOError:
                     raw = None
                 except OSError:
+                    # A real read failure, not an orderly close. Recorded so
+                    # the caller can refuse to parse a buffer that stopped
+                    # arriving for a reason nobody chose.
+                    if failed_event is not None:
+                        failed_event.set()
                     break
                 if raw == b"":
                     break
                 if raw:
                     total += len(raw)
                     if total > limit:
-                        # Stop ACCUMULATING, keep DRAINING. Returning here
-                        # instead left the pipe unread, so the friend blocked
-                        # writing and died flushing at exit -- a friend whose
-                        # answer was already complete and valid came back as
-                        # `exit 120`. Reading and discarding costs nothing,
-                        # bounds memory just as well, and leaves the child
-                        # healthy enough to exit on its own terms.
                         overflow_event.set()
+                        # Paced once the output is already unusable: without
+                        # this the loop reads and throws away at full speed
+                        # for as long as a writer keeps producing, which for
+                        # a descendant that escaped the process group is
+                        # until the drain window closes.
+                        time.sleep(_POLL_INTERVAL_S)
                         continue
                     chunks.append(decoder.decode(raw))
                 continue
             if stop_event.is_set():
                 break
         chunks.append(decoder.decode(b"", final=True))
+    except OSError:
+        # Setup failed (fd pressure, an already-closed stream). The stream is
+        # still closed below, which is the part that matters: an undrained
+        # pipe blocks the friend.
+        if failed_event is not None:
+            failed_event.set()
     finally:
-        sel.close()
+        if sel is not None:
+            sel.close()
         with contextlib.suppress(OSError):
             stream.close()
 

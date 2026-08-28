@@ -216,18 +216,34 @@ def run_process(
     stderr_chunks: list[str] = []
     stdout_overflow = threading.Event()
     stderr_overflow = threading.Event()
+    stdout_failed = threading.Event()
+    stderr_failed = threading.Event()
     stop_event = threading.Event()
     stdin_thread = threading.Thread(
         target=_pump_stdin, args=(process, stdin_text, stop_event), daemon=True
     )
     stdout_thread = threading.Thread(
         target=_pump_output,
-        args=(process.stdout, stdout_chunks, stop_event, max_output_bytes, stdout_overflow),
+        args=(
+            process.stdout,
+            stdout_chunks,
+            stop_event,
+            max_output_bytes,
+            stdout_overflow,
+            stdout_failed,
+        ),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_pump_output,
-        args=(process.stderr, stderr_chunks, stop_event, max_output_bytes, stderr_overflow),
+        args=(
+            process.stderr,
+            stderr_chunks,
+            stop_event,
+            max_output_bytes,
+            stderr_overflow,
+            stderr_failed,
+        ),
         daemon=True,
     )
     stdin_thread.start()
@@ -330,6 +346,23 @@ def run_process(
     # nothing reads stderr for content, so its truncation cannot make the
     # answer wrong. A stderr overflow is recorded and the answer still goes
     # through normalize() below.
+    # A stdout pipe that failed mid-stream is truncated for a reason nobody
+    # chose, which is exactly the condition the ceiling and the timeout both
+    # refuse to parse. Checked with overflow, before any parsing.
+    if stdout_failed.is_set():
+        return SpawnResult(
+            argv,
+            process.returncode,
+            stdout,
+            stderr,
+            duration,
+            timed_out,
+            NormalizeResult(None, ["stdout stream failed before it ended"], False),
+            "stdout stream failed",
+            orphans_suspected,
+            stopped_after_answer=answered,
+            output_truncated=True,
+        )
     if stdout_overflow.is_set():
         return SpawnResult(
             argv,
@@ -407,5 +440,5 @@ def run_process(
         failure_reason,
         orphans_suspected,
         stopped_after_answer=answered,
-        output_truncated=stderr_overflow.is_set(),
+        output_truncated=stderr_overflow.is_set() or stderr_failed.is_set(),
     )
