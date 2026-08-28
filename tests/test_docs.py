@@ -199,6 +199,13 @@ def test_shipped_docs_do_not_call_implemented_features_absent():
 
     Caught the README claiming §14.2 extraction was absent two commits after
     it shipped: modes.md had been updated and the README had not.
+
+    Scans PARAGRAPHS, not lines. Line-scoped, it had a blind spot the shape of
+    a text wrap: `modes.md` said "Not in this build:" on one line and named a
+    flag on the next, and the check saw two unrelated lines. Every doc here is
+    hard-wrapped prose, so the sentence this guards is more often split across
+    lines than not -- the guard was strictest on exactly the formatting these
+    docs do not use.
     """
     import subprocess
     import sys
@@ -218,13 +225,14 @@ def test_shipped_docs_do_not_call_implemented_features_absent():
     # Anything a doc says is absent, that --help proves is present.
     offenders = []
     for path in shipped:
-        for number, line in enumerate(path.read_text().splitlines(), 1):
-            lowered = line.lower()
-            if "not in this build" not in lowered and "not implemented" not in lowered:
-                continue
-            for flag in re.findall(r"--[a-z][a-z-]+", line):
-                if flag in help_text:
-                    offenders.append(f"{path.relative_to(REPO)}:{number}: {flag} exists")
+        line_no = 1
+        for block in re.split(r"\n\s*\n", path.read_text()):
+            lowered = block.lower()
+            if "not in this build" in lowered or "not implemented" in lowered:
+                for flag in re.findall(r"--[a-z][a-z-]+", block):
+                    if flag in help_text:
+                        offenders.append(f"{path.relative_to(REPO)}:{line_no}: {flag} exists")
+            line_no += block.count("\n") + 2
     assert not offenders, "docs call an implemented feature absent:\n" + "\n".join(offenders)
 
 

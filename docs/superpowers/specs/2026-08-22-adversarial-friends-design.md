@@ -950,7 +950,7 @@ listed here with which side is authoritative.
 |---|---|---|---|
 | §11.1 | Capability is "computed from the **final effective argv**" | Capability is computed from the flags `build_argv` decides to emit, and the finished argv is never scanned | **Code** |
 | §18 risk 1 | "A stub adapter remains that errors with the migration URL" | No `gemini` adapter ships in any form | **Code** |
-| §12.2 | Confinement keys on "friends **without** a `readonly` capability" | Confinement keys on adapters that declare no `readonly_argv` at all | **Code**, with a stated residual gap |
+| §12.2 | Confinement keys on "friends **without** a `readonly` capability" | Confinement keys on the adapter: no `readonly_argv` at all, or an explicit `[sandbox] os_confine` opt-in | **Code**, with a stated residual gap |
 | §7.4, §17 | `--max-spend-usd`, "native where supported, estimated elsewhere" | Not implemented at all | **Code** |
 | §17 | `af run ... [--rounds N]` | `--max-rounds N` | **Code** — §7.4 of the same spec already says `--max-rounds` |
 | §14 | Auth markers come from the CLI's structured output, "never by stderr substring" | An adapter may also declare `stderr_contains`, restricted to a sentence captured verbatim from a real failure | **Code**, with the spec's reasoning kept as the condition |
@@ -1005,18 +1005,36 @@ would therefore refuse every friend for any artifact outside a repo, and
 would place CLIs whose credential paths this project has not verified under a
 sandbox that breaks their authentication silently rather than loudly.
 
-The shipped rule is narrower: a friend is confined when its adapter declares
-no `readonly_argv` at all — the CLI has no read-only mode in any
-configuration. That is exactly the case §12.2's own example is about, and the
-only shipped adapter it covers is `opencode`.
+The shipped rule keys on the adapter, and has two doors:
 
-**The residual gap, stated plainly.** A doc-scope friend of a
-readonly-capable CLI is not OS-confined. It was asked for read-only
-behaviour by scope alone, which §12.2 correctly says is not containment. This
-is narrower than the spec intends and is recorded rather than hidden.
-Closing it needs verified credential-path declarations for `claude`, `codex`
-and `agy`, which this project does not have; guessing them would produce
-friends that fail to authenticate for reasons no error message explains.
+1. The adapter declares no `readonly_argv` at all — the CLI has no read-only
+   mode in any configuration. That is exactly the case §12.2's own example is
+   about, and it covers `opencode`.
+2. The adapter opts in with `[sandbox] os_confine = true`, declaring that
+   someone ran that CLI confined and watched it authenticate. `codex` does.
+
+The second door exists because a read-only flag is a write restriction and
+says nothing about reads. Measured, not assumed: `codex` under `--sandbox
+read-only` alone, asked to list `~/.ssh`, listed it. Opting in adds the OS
+sandbox on top, with `~/.codex` granted read and write so its credentials
+survive.
+
+Doc scope was a second hole in the same wall, and is closed. `build_argv`
+now emits `readonly_argv` in **both** scopes, so a doc-scope friend is no
+longer asked for read-only behaviour by scope alone. `codex` additionally
+declares `doc_argv = ["--skip-git-repo-check"]`, which is what it needs to
+start outside a repository at all — the flag that made doc scope look like
+the scope where the read-only flag had to be dropped.
+
+**The residual gap, stated plainly.** `claude` and `agy` are not OS-confined.
+Both have a read-only mode and neither has opted in, so both are trusted to
+restrain themselves. Opting them in is not a config edit: `claude` keeps its
+credentials in the macOS Keychain, and granting a friend Keychain access
+would hand it every credential the operator has, which is worse than the
+exposure it closes. `agy` has not been probed because probing it under a
+sandbox that blocks the network logs the operator out. Both are recorded here
+rather than hidden, and both are one verified credential-path capture away
+from the same opt-in `codex` took.
 
 ### §7.4 — `--max-spend-usd` is absent, deliberately
 
@@ -1279,7 +1297,9 @@ The gap is real and now measured rather than assumed. Each CLI was run under
 the profile this runner generates, to find what confinement actually costs it:
 
 - **codex** works confined, given read and write on `~/.codex`. Its own state
-  directory, which §12.3 already accepts a friend can reach.
+  directory, which §12.3 already accepts a friend can reach. That grant is
+  now declared in `codex.toml`, and the adapter opts in with
+  `[sandbox] os_confine = true`.
 - **claude** reports `Not logged in · Please run /login` under any profile
   that does not grant `~/Library/Keychains`. Its credentials are in the macOS
   Keychain, so confining it means handing a friend read access to *every*
@@ -1289,8 +1309,10 @@ the profile this runner generates, to find what confinement actually costs it:
 - **agy** is untested. Sandboxing it risks the re-authentication that has
   already cost this project one login, and a measurement is not worth that.
 
-So the rule stays as it is — confinement keys on a CLI having no read-only
-mode of its own — and the residual gap is documented with its reason. It is
-not "nobody has got to it": for claude on macOS there is no narrow grant that
-works, and a wide one would defeat the boundary it was meant to strengthen.
+So the rule gained a second door rather than a wider one: a CLI with no
+read-only mode of its own is confined, and a CLI that has been measured
+confined can opt in. The residual gap — `claude` and `agy` — is documented
+with its reason. It is not "nobody has got to it": for claude on macOS there
+is no narrow grant that works, and a wide one would defeat the boundary it
+was meant to strengthen.
 

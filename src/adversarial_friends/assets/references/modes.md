@@ -324,8 +324,12 @@ cost reporting nobody has captured, and a flag that silently never fires is
 worse than none — you would set it and believe you were protected. Use
 `--max-calls`, which is derived from your roster and actually enforced.
 
-Not in this build: `afriend init` writes a roster but there is no interactive
-setup, and there is no `--resume` for anything except an orchestrator halt.
+Not in this build: interactive setup. `afriend init` writes a roster and
+stops there.
+
+Resuming is narrower than it looks. `--resume` takes an orchestrator halt and
+nothing else — a run that ended any other way starts over.
+
 Run `afriend run --help` for the full flag list.
 
 ## Exit codes
