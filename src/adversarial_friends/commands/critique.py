@@ -42,6 +42,12 @@ class CritiqueOutcome:
     calls: int = 0
     any_success: bool = False
     any_failed: bool = False
+    # How many distinct friends produced a usable answer this round.
+    # `any_success` alone cannot distinguish "1 of 50" from "50 of 50" --
+    # both report the same True, and a run reporting SUCCESS because one
+    # friend of a large roster answered is not the cross-examination its
+    # exit code implies. See `--require-friends` in cliargs.py.
+    succeeded_friends: int = 0
     # §7.3: a round is dry when every required friend completed successfully
     # AND every claim it produced was an alias of one already known -- i.e.
     # the round cost a full fan-out and learned nothing new.
@@ -195,6 +201,7 @@ def run_critique(
             outcome.any_failed = True
             continue
         outcome.any_success = True
+        outcome.succeeded_friends += 1
         incoming = []
         # `or []`, not a .get default: `findings` is nullable in the schema
         # (strict mode requires every property in `required`, so a friend

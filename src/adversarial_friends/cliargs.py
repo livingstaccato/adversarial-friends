@@ -59,6 +59,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--lens", action="append", default=[], help="restrict discovery to these lenses"
     )
     run_p.add_argument("--max-friends", type=int, default=None, metavar="N")
+    # A floor, not a ceiling. Without it, a run where 1 of 50 friends
+    # answered (everyone else misconfigured, rate-limited, or down) exits 0
+    # the same as a run where 50 of 50 did -- the report says plainly that
+    # it reflects one opinion rather than disagreement between several, but
+    # nothing in the exit code carries that, so a CI wrapper reading only
+    # the exit code cannot tell the two apart. Opt-in and unenforced by
+    # default: a fresh checkout with one CLI installed is a normal use of
+    # this tool, not a degraded one, and a floor nobody asked for would
+    # fail that case for no reason.
+    run_p.add_argument(
+        "--require-friends",
+        type=int,
+        default=None,
+        metavar="N",
+        help="fail the run (exit 12) if fewer than N friends produce a usable answer",
+    )
     # §12.4: worktrees and the run directory are removed at run end unless
     # asked otherwise. Keeping them is how you inspect what a friend saw.
     run_p.add_argument("--keep", action="store_true", help="keep friend worktrees for inspection")

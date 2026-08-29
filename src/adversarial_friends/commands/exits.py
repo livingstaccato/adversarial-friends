@@ -13,7 +13,7 @@ scattered through the end of a long function.
 import sys
 
 from .. import verdicts as vd
-from ..errors import CeilingError
+from ..errors import CeilingError, QuorumError
 from ..ledger import Claim
 from .crossexam import CrossexamOutcome
 
@@ -25,6 +25,8 @@ def decide_exit(
     cross: CrossexamOutcome | None,
     blocking: list[Claim],
     ceiling_hit: str | None = None,
+    succeeded_friends: int | None = None,
+    require_friends: int | None = None,
 ) -> int:
     if abort_signum is not None:
         # Distinct from both branches below: a run cancelled by signal
@@ -56,6 +58,28 @@ def decide_exit(
     # dispatched.
     if not any_success:
         return 1
+    # `--require-friends`, opt-in and unenforced when unset. Outranks gate
+    # and crossexam completeness: a run below the operator's declared
+    # quorum has not produced the review its exit code would otherwise
+    # claim, regardless of whether the claims it DID get are all resolved.
+    #
+    # `succeeded_friends is None` means this invocation never dispatched a
+    # fresh critique round to count -- the `--merge orchestrator` resume
+    # path applies stored merges and goes straight to judging, so a resumed
+    # run has no round-1 count of its own to check. Fails OPEN there rather
+    # than guessing: reporting a false quorum failure on a run that may
+    # have met quorum before the halt is worse than not checking at all.
+    if (
+        require_friends is not None
+        and succeeded_friends is not None
+        and succeeded_friends < require_friends
+    ):
+        print(
+            f"afriend: only {succeeded_friends} of {require_friends} required "
+            "friends produced a usable answer",
+            file=sys.stderr,
+        )
+        return QuorumError.exit_code
     if mode == "gate" and blocking:
         print(
             f"afriend: gate blocked -- {len(blocking)} claim(s) need a resolution: "

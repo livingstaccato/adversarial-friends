@@ -185,6 +185,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         friends_meta: list[dict[str, Any]] = []
         counter = 0
         any_success = False
+        # None: no fresh critique round yet -- decide_exit's
+        # --require-friends check fails open on None rather than guess.
+        succeeded_friends: int | None = None
         cross = None
         # What the next loop iteration inherits: states, verdicts, notes and
         # discard signatures. None means "judge everything fresh" -- the
@@ -353,6 +356,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 downgrades.extend(critique.downgrades)
                 all_aliases.extend(critique.aliases)
                 any_success = any_success or critique.any_success
+                # The most recent fresh critique round's count, not a
+                # running total: --require-friends asks "did the review
+                # that just ran have enough friends", not "across every
+                # iteration of a loop, how many ever succeeded".
+                succeeded_friends = critique.succeeded_friends
 
                 if args.merge == "orchestrator" and all_claims:
                     # §4.2. Stop and ask for judgment the runner cannot make.
@@ -477,6 +485,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             cross,
             blocking,
             ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
+            succeeded_friends=succeeded_friends,
+            require_friends=args.require_friends,
         )
     finally:
         # Stops the heartbeat thread. In the same `finally` as the signal

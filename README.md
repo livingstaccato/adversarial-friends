@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-912-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-925-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -319,6 +319,7 @@ is Antigravity — which is `agy`.
 | `3` | no usable friends found at all |
 | `10` | `--merge orchestrator` is waiting for you to adjudicate merges |
 | `11` | a ceiling was hit — the run was truncated, not decided |
+| `12` | `--require-friends N` was set and fewer than `N` friends answered |
 | `128+N` | aborted by signal N — isolation torn down, friends killed |
 
 A ceiling outranks everything below it, so a CI wrapper can read `11` as
@@ -357,7 +358,7 @@ The skill invokes `afriend`, so the package must be installed for it to work —
 
 ```bash
 make install    # uv sync
-make test       # pytest — 912 tests
+make test       # pytest — 925 tests
 make quality    # lint + type-check + every sync gate + tests
 make diagrams   # re-render docs/architecture/*.puml
 ```

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### `--require-friends N`: c-0013, closed
+
+The last open finding from cross-examining `commands/run.py`. A run where 1
+of 50 friends produced a usable answer exited `0` -- identically to a run
+where 50 of 50 did. The report already said plainly that a single answer is
+one opinion rather than disagreement between several; nothing in the exit
+code carried that, so a CI wrapper reading only the exit code could not tell
+the two apart and read a near-total roster failure as success.
+
+Opt-in and unenforced by default (exit `12` when set and missed): a fresh
+checkout with one CLI installed is a normal use of this tool, not a degraded
+one, and a floor nobody asked for would fail that case for no reason. Outranks
+gate and crossexam completeness in the exit precedence -- a run below the
+declared floor has not produced the review its exit code would otherwise
+claim -- but a ceiling still outranks it, since a truncated run has not
+evaluated anything including quorum. Unenforced, not guessed at, on a
+`--resume` of `--merge orchestrator`: that path never dispatches a fresh
+critique round in the resuming process, so there is nothing of this run's own
+to count, and reporting a failure on a number the process never saw would be
+worse than not checking.
+
 ## 0.1.7
 
 A documentation release. Every shipped doc was read against the code it

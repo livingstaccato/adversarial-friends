@@ -57,6 +57,7 @@ _RESUMABLE_ARGS = (
     # halted run recorded -- fewer or more friends, a dropped --pass-env,
     # unvalidated flags appearing or vanishing.
     "max_friends",
+    "require_friends",
     "pass_env",
     "unsafe_extra_args",
     "i_accept_unsandboxed",

@@ -100,6 +100,52 @@ def test_max_friends_caps_and_says_so(tmp_path):
     assert any("--max-friends=1 dropped" in d for d in meta["downgrades"])
 
 
+# --- --require-friends -------------------------------------------------------
+
+
+def test_require_friends_fails_a_run_below_quorum(tmp_path):
+    """c-0013. Without this, one friend answering out of a large roster
+    exits 0 identically to every friend answering -- the report already
+    says plainly that a single answer is one opinion rather than
+    disagreement between several, but the exit code carried none of that,
+    so a CI wrapper reading only the exit code could not tell the two
+    apart."""
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:crash",
+        "--require-friends",
+        "2",
+    )
+    assert result.returncode == 12, result.stderr
+    assert "only 1 of 2 required friends" in result.stderr
+
+
+def test_require_friends_passes_a_run_at_or_above_quorum(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good",
+        "--require-friends",
+        "2",
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_require_friends_is_unenforced_when_unset(tmp_path):
+    """Opt-in: a fresh checkout with one CLI installed is a normal use of
+    this tool, not a degraded one. A default floor would fail that case for
+    no reason."""
+    result = run_af(tmp_path, _artifact(tmp_path), "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+
+
 # --- --keep ----------------------------------------------------------------
 
 

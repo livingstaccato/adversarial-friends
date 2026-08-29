@@ -302,6 +302,7 @@ the default usable with no harness attached.
 | `--model NAME`, `--effort LEVEL` | Override every friend; §10.1's strongest layer |
 | `--lens NAME` (repeatable) | Restrict which lenses discovery assigns |
 | `--max-friends N` | Cap the roster; reports what it dropped |
+| `--require-friends N` | Fail the run (exit 12) if fewer than `N` friends answered; opt-in, unset by default |
 | `--keep` | Leave friend worktrees under the run directory to inspect |
 | `--json` | Print run.json instead of the run directory path |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
@@ -348,10 +349,20 @@ every command in this build:
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
+| `12` | below quorum | `--require-friends N` set, and fewer than `N` friends produced a usable answer this run |
 
-A ceiling outranks every outcome below it: a truncated run has not evaluated
-anything, so a CI wrapper can treat `11` as "retry" and `1` as "block"
-without ambiguity.
+A ceiling outranks every outcome below it, quorum included: a truncated run
+has not evaluated anything, so a CI wrapper can treat `11` as "retry" and `1`
+as "block" without ambiguity. Quorum in turn outranks gate and crossexam
+completeness -- a run below the declared floor has not produced the review
+its exit code would otherwise claim, whatever state the few claims it did
+get are in.
+
+`--require-friends` is unenforced when unset, and it is unenforced -- not
+guessed at -- on a `--resume` of `--merge orchestrator`: that path applies
+stored merges and goes straight to judging, so the resuming process never
+dispatches a fresh critique round to count. A resumed run's quorum question
+was already answered before the halt.
 
 A deadlock exits `0` under `crossexam`: it is a completed run whose answer
 happens to be "the friends disagree". Under `gate` it blocks, because that is

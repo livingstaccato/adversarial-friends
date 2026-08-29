@@ -97,8 +97,9 @@ usable friend could be found at all (install a second agent CLI, or pass
 `--include-self` to let the host CLI review its own artifact); `10`
 `--merge orchestrator` is waiting for you to adjudicate merges (see
 `references/modes.md`); `11` a judging mode stopped at a ceiling, having
-neither converged nor cleared anything. A run cancelled by a signal exits
-`128 + signal number`.
+neither converged nor cleared anything; `12` `--require-friends N` was set
+and fewer than `N` friends produced a usable answer -- opt-in, unset by
+default. A run cancelled by a signal exits `128 + signal number`.
 
 A `gate` run exits `1` while any claim still needs an answer. Resolve them
 one at a time; each call re-reports what is left:
