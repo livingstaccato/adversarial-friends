@@ -193,6 +193,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         # None: no fresh critique round yet -- decide_exit's
         # --require-friends check fails open on None rather than guess.
         succeeded_friends: int | None = None
+        # Set once any round hits a deterministic auth failure; only stops
+        # further scheduling -- the round that found it is already persisted.
+        auth_abort: str | None = None
         cross = None
         # What the next loop iteration inherits: states, verdicts, notes and
         # discard signatures. None means "judge everything fresh" -- the
@@ -327,6 +330,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                     iterations_run = iteration
                     rounds_reached = max(rounds_reached, base_round)
                     streak = step.streak
+                    if resumed.cross is not None and resumed.cross.auth_abort is not None:
+                        auth_abort = resumed.cross.auth_abort
+                        break
                     if step.done or loop_is_done(
                         streak, all_claims, cross, [friend_key(s) for s in specs]
                     ):
@@ -369,6 +375,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # that just ran have enough friends", not "across every
                 # iteration of a loop, how many ever succeeded".
                 succeeded_friends = critique.succeeded_friends
+
+                if critique.auth_abort is not None:
+                    # Deterministic (§7.2): stop rather than ask for
+                    # orchestrator adjudication or judge with a broken roster.
+                    auth_abort = critique.auth_abort
+                    break
 
                 if args.merge == "orchestrator" and all_claims:
                     # §4.2. Stop and ask for judgment the runner cannot make.
@@ -420,6 +432,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rounds_reached = max(rounds_reached, cross.rounds_run)
                     friends_meta.extend(cross.friends_meta)
                     downgrades.extend(cross.downgrades)
+                    if cross.auth_abort is not None:
+                        auth_abort = cross.auth_abort
+                        break
 
                 if args.mode != "loop":
                     break
@@ -469,6 +484,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             downgrades,
             budget,
             rounds_reached,
+            auth_abort=auth_abort,
         )
     finally:
         # Stops the heartbeat thread. In the same `finally` as the signal

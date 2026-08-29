@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### An auth failure lost the whole round it happened in, not just that friend
+
+`dispatch_round` raised the moment ANY friend in a round classified as a
+deterministic auth failure (§14/§7.2) -- before its caller had a chance to
+persist a single result. A round with four friends, two of which produced
+real findings before the third hit a lapsed login, lost all four: the
+exception propagated straight out of `run_critique`/`run_rounds`, so
+`persist_result` never ran for anyone in that round, and `cmd_run`'s only
+local `except` catches `NeedsOrchestrator`, not a plain `AfError` -- so it
+reached `cli.py`'s top-level handler, which prints a message and exits.
+`run.json` and `report.md` were never written at all. Reported independently
+against a real run: an opencode auth failure discarded findings from two
+friends that had already answered.
+
+The raise inside the recording loop had a second effect nothing had
+noticed: it also skipped `RepeatTracker.record` for every friend later in
+iteration order than the one that tripped it, so their outcomes were never
+recorded either.
+
+`dispatch_round` now returns `(results, auth_abort_message)` instead of
+raising. `run_critique` and `run_rounds` persist and merge every result
+exactly as they would for a normal round, then surface the abort
+themselves: `CritiqueOutcome`/`CrossexamOutcome` gained an `auth_abort`
+field, `cmd_run` stops scheduling further rounds and iterations once it
+sees one, and `decide_exit` gained an `auth_abort` parameter that forces
+exit `1` ahead of every other outcome -- including a partial `any_success`,
+since a broken roster has not produced the review its exit code would
+otherwise claim. `run.json` and `report.md` are now written with whatever
+the run actually produced before the abort, the same as any other stop.
+
 ### A crash mid-resume could permanently strand a run
 
 `commands/resume.py`, cross-examined for the first time -- inevitable, given

@@ -112,8 +112,16 @@ def dispatch_round(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     reporter: Progress | None = None,
     kind: str = "critique",
-) -> list[RoundResult]:
+) -> tuple[list[RoundResult], str | None]:
     """Run every friend in `specs` concurrently and return their outcomes.
+
+    The second return value is an auth-abort message, or None. It is
+    returned rather than raised: raising here, before the caller has a
+    chance to call `persist_result` on anything, used to discard the whole
+    round's output -- including from friends that succeeded -- the moment
+    ANY friend in the round hit a deterministic auth failure. The caller
+    persists and merges every result exactly as it would for a normal
+    round, then decides what an auth abort means for it.
 
     Every friend gets its own private working directory, torn down at the end
     regardless of how dispatch finishes (including on a raised exception, or
@@ -148,7 +156,7 @@ def dispatch_round(
                 downgrades.append(note)
         specs = [s for s in specs if not tracker.is_disabled(s.name)]
         if not specs:
-            return []
+            return [], None
 
     report = reporter if reporter is not None else disabled()
     results: list[RoundResult] = []
@@ -222,7 +230,7 @@ def dispatch_round(
             # cwd_for for a spec whose setup never happened.
             dispatch_specs = [s for s in specs if s.name in cwd_for]
             if not dispatch_specs:
-                return []
+                return [], None
             # Bounded: see ceilings.DEFAULT_MAX_CONCURRENCY. `pool.map`
             # still returns results in `dispatch_specs` order, so a round's
             # aggregation is unchanged -- only how many friends are in
@@ -280,17 +288,24 @@ def dispatch_round(
             # under iso_root, which the TemporaryDirectory context manager
             # removes on exit independent of whether dispatch raised.
 
+    auth_abort: str | None = None
     if tracker is not None:
         for spec, _capability, outcome in results:
             tracker.record(spec.name, outcome)
             # §7.2: an auth failure is deterministic, so every remaining
-            # round and iteration would fail identically. Stop now rather
-            # than spending them. Raised only on a DECLARED marker -- an
+            # round and iteration would fail identically -- the caller
+            # should stop scheduling more of them. Every result in this
+            # round is still recorded and returned, though: this loop used
+            # to `raise` on the first AUTH hit, which both discarded every
+            # OTHER friend's result in this round and skipped `tracker
+            # .record` for every spec after it in iteration order. Only the
+            # first auth message is kept -- one is enough to tell the
+            # operator what to fix. Raised only on a DECLARED marker -- an
             # unrecognised failure is never guessed into an abort, because
             # a false auth classification ends the whole run.
-            if classify(outcome, registry.get(spec.cli)) == AUTH:
-                raise AfError(auth_abort_message(spec.name, registry.get(spec.cli)))
-    return results
+            if auth_abort is None and classify(outcome, registry.get(spec.cli)) == AUTH:
+                auth_abort = auth_abort_message(spec.name, registry.get(spec.cli))
+    return results, auth_abort
 
 
 def persist_result(

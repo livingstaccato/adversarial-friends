@@ -27,6 +27,7 @@ def decide_exit(
     ceiling_hit: str | None = None,
     succeeded_friends: int | None = None,
     require_friends: int | None = None,
+    auth_abort: str | None = None,
 ) -> int:
     if abort_signum is not None:
         # Distinct from both branches below: a run cancelled by signal
@@ -38,6 +39,14 @@ def decide_exit(
         # 11, 1, 0).
         print(f"afriend: aborted by signal {abort_signum}", file=sys.stderr)
         return 128 + abort_signum
+    # An auth failure is deterministic (§7.2): outranks every outcome below,
+    # including a successful `any_success`, because a roster missing a
+    # credentialed friend has not produced the review its exit code would
+    # otherwise claim -- the same reasoning that puts a ceiling ahead of
+    # everything, but this fires even when the budget was never touched.
+    if auth_abort is not None:
+        print(f"afriend: {auth_abort}", file=sys.stderr)
+        return 1
     # §7.6's exit precedence. A ceiling outranks every outcome below it
     # because a truncated run has not evaluated anything: a CI wrapper
     # can then treat 11 as "retry" and 1 as "block" without ambiguity.

@@ -42,6 +42,10 @@ class CritiqueOutcome:
     calls: int = 0
     any_success: bool = False
     any_failed: bool = False
+    # Set when a friend hit a deterministic auth failure this round. Every
+    # result this round produced is still persisted and merged below --
+    # only the caller's decision to schedule another round is affected.
+    auth_abort: str | None = None
     # How many distinct friends produced a usable answer this round.
     # `any_success` alone cannot distinguish "1 of 50" from "50 of 50" --
     # both report the same True, and a run reporting SUCCESS because one
@@ -150,7 +154,7 @@ def run_critique(
     )
     outcome.downgrades.extend(prompt_downgrades)
 
-    results = dispatch_round(
+    results, outcome.auth_abort = dispatch_round(
         specs,
         round_no,
         prompt_for,
@@ -253,7 +257,13 @@ def run_critique(
         all_claims.extend(kept)
         outcome.aliases.extend(aliases)
         outcome.claims.extend(kept)
-    if unparseable:
+    # Auth abort takes priority over an extraction request: an auth failure
+    # will recur identically on --resume, so asking a human to adjudicate
+    # merges or read unparseable output is asking them to fix something a
+    # broken credential will just fail again. This is not returned as a
+    # NeedsOrchestrator halt for the same reason -- there is nothing a
+    # RESPONSE.json could resolve.
+    if outcome.auth_abort is None and unparseable:
         path = write_extract_request(store.round_dir(round_no), run_id, round_no, unparseable)
         names = ", ".join(e["friend"] for e in unparseable)
         raise NeedsOrchestrator(

@@ -71,6 +71,10 @@ class CrossexamOutcome:
     # run_rounds once per iteration, so a per-call set re-announced the same
     # friend every iteration, when the spec asks for it once per run.
     dropped: set[str] = field(default_factory=set)
+    # Set when a judging round hit a deterministic auth failure. The round
+    # that found it is still settled and its verdicts kept -- only further
+    # rounds are skipped.
+    auth_abort: str | None = None
 
 
 def run_rounds(
@@ -230,7 +234,7 @@ def run_rounds(
         # A friend may not outlive the ceiling it was dispatched under.
         judge_specs = within_deadline(judge_specs, budget.seconds_left(now()))
 
-        results = dispatch_round(
+        results, round_auth_abort = dispatch_round(
             judge_specs,
             round_no,
             prompt_for,
@@ -356,6 +360,9 @@ def run_rounds(
         outcome.verdicts.extend(round_verdicts)
 
         _settle_round(outcome, contested, active, store, round_no, max_rounds, missing, final_block)
+        if round_auth_abort is not None:
+            outcome.auth_abort = round_auth_abort
+            break
         round_no += 1
 
     if budget.exhausted_by:

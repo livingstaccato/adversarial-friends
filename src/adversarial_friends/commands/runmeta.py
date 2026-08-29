@@ -319,6 +319,7 @@ def finish_run(
     downgrades: list[str],
     budget: Budget,
     rounds_reached: int,
+    auth_abort: str | None = None,
 ) -> int:
     """Wrap up a completed run: the gate's blocking claims, the finalized
     meta, run.json and report.md on disk, the printed path, and the exit
@@ -377,4 +378,5 @@ def finish_run(
         ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
         succeeded_friends=succeeded_friends,
         require_friends=args.require_friends,
+        auth_abort=auth_abort,
     )
