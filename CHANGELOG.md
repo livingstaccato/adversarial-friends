@@ -89,6 +89,13 @@ or "not produced by this build" is a flag.
 unanswerable: which commit is the version you installed. The `v0.1.6` tag is
 added here, at the commit that was uploaded.
 
+`ci/verify_wheel_assets.sh` opened with `rm -rf dist`. Harmless on a CI
+runner with nothing in it; destructive when a release is cut by hand, where
+it sits between `uv build` and `twine upload dist/*` and quietly deletes the
+sdist. 0.1.7 reached PyPI as a wheel with no source distribution, the only
+release of this project missing one, and the sdist was uploaded separately
+once that was noticed. The check now builds into a scratch directory.
+
 ## 0.1.6
 
 Everything here came out of pointing the tool at its own source twice more --
