@@ -167,7 +167,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             max_wall_clock_s=args.max_wall_clock,
             started=run_started,
         )
-        unreachable = warn_if_unreachable(len(specs), args.max_rounds, budget.max_calls)
+        # The same `max_iterations` the derived default uses, so the
+        # warning and the default cannot disagree about what a run costs.
+        unreachable = warn_if_unreachable(
+            len(specs), args.max_rounds, budget.max_calls, max_iterations
+        )
         if unreachable:
             downgrades.append(unreachable)
 

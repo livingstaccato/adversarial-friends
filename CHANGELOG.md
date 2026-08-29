@@ -5,7 +5,7 @@
 ### commands/run.py, cross-examined
 
 Thirteen claims against the largest module never examined, twelve upheld and
-one deadlocked. Nine are fixed here. They fell into three groups.
+one deadlocked. Twelve are fixed here. They fell into three groups.
 
 **Resume and loop, five claims and one cause.** `--mode loop --merge
 orchestrator` halts once per iteration, and almost nothing survived the halt.
@@ -68,12 +68,20 @@ now lives in `ceilings.within_deadline` and both paths call it.
 - Three comments describing code that is not there, including one asserting a
   lock ordering both branches above it violate.
 
-Two claims are not fixed and are recorded rather than hidden. **c-0012**
-(the pool) is fixed; **c-0013** -- one friend succeeding out of fifty exits
-`0`, so CI reads success and discards the rest -- is a change to the exit-code
-contract and is left for a decision. `cmd_run` crossed the 500-line cap twice
-more along the way, so `commands/setup.py` now holds everything decided before
-the first dispatch.
+- The startup ceiling warning counted one iteration. `--mode loop
+  --max-loop-iterations 5 --max-rounds 3 --max-calls 12` with four friends
+  computed 12 and said nothing, then hit `budget-exhausted` mid-run -- the
+  exact outcome the warning exists to pre-empt. `derive_max_calls` had always
+  multiplied by iterations, so the default and the warning disagreed about
+  what the same run costs.
+
+One claim is not fixed, and is recorded rather than hidden. **c-0013** -- one
+friend succeeding out of fifty exits `0`, so CI reads success and discards the
+rest -- is a change to the exit-code contract rather than a bug fix, and is
+left for a decision.
+
+`cmd_run` crossed the 500-line cap twice more along the way, so
+`commands/setup.py` now holds everything decided before the first dispatch.
 
 ### A friend's scratch no longer lands in the tree it is reviewing
 

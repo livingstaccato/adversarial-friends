@@ -58,3 +58,31 @@ def test_an_unreachable_ceiling_is_warned_about():
 
 def test_a_sufficient_ceiling_produces_no_warning():
     assert ceilings.warn_if_unreachable(friends=2, max_rounds=3, max_calls=99) is None
+
+
+def test_the_unreachable_warning_counts_loop_iterations():
+    """c-0007. It assumed one iteration, so a loop configured with an
+    operator-set --max-calls started silently and hit budget-exhausted
+    mid-run -- the exact outcome the warning exists to pre-empt.
+
+    `derive_max_calls` already multiplied by iterations, so the default and
+    the warning disagreed about what the same run costs.
+    """
+    from adversarial_friends.ceilings import warn_if_unreachable
+
+    # 4 friends x 3 rounds x 5 iterations = 60 calls, not 12.
+    assert warn_if_unreachable(4, 3, 12, iterations=1) is None
+    warning = warn_if_unreachable(4, 3, 12, iterations=5)
+    assert warning is not None
+    assert "60 calls minimum" in warning
+    assert "5 iterations" in warning
+
+
+def test_a_single_iteration_warning_does_not_mention_iterations():
+    """Every non-loop run passes 1. Saying "x 1 iterations" would be noise
+    in the common case."""
+    from adversarial_friends.ceilings import warn_if_unreachable
+
+    warning = warn_if_unreachable(4, 3, 5, iterations=1)
+    assert warning is not None
+    assert "iterations" not in warning

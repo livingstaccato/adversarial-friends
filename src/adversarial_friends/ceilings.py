@@ -109,20 +109,33 @@ class Budget:
             self.exhausted_by = reason
 
 
-def warn_if_unreachable(friends: int, max_rounds: int, max_calls: int) -> str | None:
+def warn_if_unreachable(
+    friends: int, max_rounds: int, max_calls: int, iterations: int = 1
+) -> str | None:
     """§7.4: "the runner emits a startup warning when configured ceilings
     cannot accommodate the configured mode."
 
     Emitted at startup rather than discovered at round 3, so an operator who
     tightened `--max-calls` learns that the run cannot finish before paying
     for the part of it that can.
+
+    **`iterations` is what the warning was missing.** It assumed one, so
+    `--mode loop --max-loop-iterations 5 --max-rounds 3 --max-calls 12` with
+    four friends computed `needed = 12`, said nothing, and then hit
+    `budget-exhausted` mid-run -- the exact outcome this warning exists to
+    pre-empt. A loop's configured mode is every iteration of it, not the
+    first one. `derive_max_calls` already multiplies by iterations, so the
+    default and the warning had disagreed about what the run costs.
     """
-    needed = friends * max_rounds
+    needed = friends * max_rounds * max(1, iterations)
     if max_calls >= needed:
         return None
+    scope = f"{max_rounds} rounds"
+    if iterations > 1:
+        scope = f"{max_rounds} rounds x {iterations} iterations"
     return (
         f"--max-calls={max_calls} cannot accommodate {friends} friends over "
-        f"{max_rounds} rounds ({needed} calls minimum); this run will stop at "
+        f"{scope} ({needed} calls minimum); this run will stop at "
         "a ceiling before reaching its configured round limit."
     )
 
