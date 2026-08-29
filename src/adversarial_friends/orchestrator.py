@@ -124,7 +124,9 @@ def _load(path: Path) -> dict[str, Any]:
     return data
 
 
-def read_response(round_dir: Path, known_ids: set[str]) -> list[MergeDecision]:
+def read_response(
+    round_dir: Path, known_ids: set[str], tolerate_duplicates: frozenset[str] = frozenset()
+) -> list[MergeDecision]:
     """Parse and validate RESPONSE.json against the claims that exist.
 
     Every rule here exists because breaking it corrupts the alias graph in a
@@ -137,6 +139,20 @@ def read_response(round_dir: Path, known_ids: set[str]) -> list[MergeDecision]:
       Rejected rather than resolved, because resolving it silently would
       pick a canonical the orchestrator never actually chose.
     * The same duplicate twice would record two different fates for one claim.
+
+    **`tolerate_duplicates` exists for exactly one caller and one moment: a
+    `--resume` retrying a round whose RESPONSE.json was already partly
+    applied before the process crashed.** `known_ids` is built from
+    `canonical_claims`, which has already folded away every id a completed
+    merge named as `duplicate` -- so re-validating the SAME response against
+    the SAME file, unaware anything already happened, refused with "not a
+    claim in this run" on precisely the merges the crashed attempt had
+    already finished. That turned a transient crash into a run permanently
+    unable to resume: every retry re-read the identical file and hit the
+    identical refusal. A duplicate named here is skipped rather than
+    validated -- the caller populates this from the ledger's own Alias
+    records for the round being resumed, so a tolerated id is one this
+    exact response is already known to have applied, not a guess.
     """
     path = response_path(round_dir)
     if not path.is_file():
@@ -168,12 +184,18 @@ def read_response(round_dir: Path, known_ids: set[str]) -> list[MergeDecision]:
         for field, value in (("canonical", canonical), ("duplicate", duplicate)):
             if not isinstance(value, str) or not value.strip():
                 raise UsageError(f"{path}: merges[{index}].{field} missing or empty")
+        assert isinstance(canonical, str) and isinstance(duplicate, str)
+        if duplicate not in known_ids and duplicate in tolerate_duplicates:
+            # Already applied by an earlier attempt at this exact round,
+            # before it crashed. Not re-validated against `known_ids`
+            # because it is, correctly, no longer there.
+            continue
+        for field, value in (("canonical", canonical), ("duplicate", duplicate)):
             if value not in known_ids:
                 raise UsageError(
                     f"{path}: merges[{index}].{field} names {value!r}, which is "
                     "not a claim in this run"
                 )
-        assert isinstance(canonical, str) and isinstance(duplicate, str)
         if canonical == duplicate:
             raise UsageError(f"{path}: merges[{index}] merges {canonical!r} into itself")
         if duplicate in duplicates:

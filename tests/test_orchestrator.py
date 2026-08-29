@@ -101,6 +101,56 @@ def test_an_unknown_id_is_rejected(tmp_path):
         orchestrator.read_response(tmp_path, {"c-0001@1"})
 
 
+# --- tolerate_duplicates: a resume retrying a partly-applied response ------
+
+
+def test_a_duplicate_already_gone_is_skipped_when_tolerated(tmp_path):
+    """The exact crash this exists for: a prior, interrupted attempt at this
+    round already merged c-0002@1 into c-0001@1 and appended the Alias, so
+    `known_ids` (built from canonical_claims) no longer contains c-0002@1.
+    Re-validating the identical response against that fact used to refuse
+    the whole file with 'not a claim in this run' -- on an id it is
+    CORRECTLY missing, because it was already merged."""
+    write_response(
+        tmp_path, [{"canonical": "c-0001@1", "duplicate": "c-0002@1", "rationale": "same"}]
+    )
+    decisions = orchestrator.read_response(
+        tmp_path, {"c-0001@1"}, tolerate_duplicates=frozenset({"c-0002@1"})
+    )
+    assert decisions == []
+
+
+def test_a_tolerated_duplicate_does_not_mask_a_genuinely_unknown_one(tmp_path):
+    """Tolerance is scoped to the exact ids the caller names, not a general
+    'ignore missing ids' switch -- a response naming a claim that never
+    existed at all must still be refused."""
+    write_response(
+        tmp_path,
+        [
+            {"canonical": "c-0001@1", "duplicate": "c-0002@1"},
+            {"canonical": "c-0001@1", "duplicate": "c-9999@1"},
+        ],
+    )
+    with pytest.raises(UsageError, match="not a claim in this run"):
+        orchestrator.read_response(
+            tmp_path, {"c-0001@1"}, tolerate_duplicates=frozenset({"c-0002@1"})
+        )
+
+
+def test_a_mix_of_fresh_and_already_applied_merges_applies_only_the_fresh_ones(tmp_path):
+    write_response(
+        tmp_path,
+        [
+            {"canonical": "c-0001@1", "duplicate": "c-0002@1"},
+            {"canonical": "c-0001@1", "duplicate": "c-0003@1"},
+        ],
+    )
+    decisions = orchestrator.read_response(
+        tmp_path, {"c-0001@1", "c-0003@1"}, tolerate_duplicates=frozenset({"c-0002@1"})
+    )
+    assert decisions == [orchestrator.MergeDecision("c-0001@1", "c-0003@1", "")]
+
+
 def test_merging_a_claim_into_itself_is_rejected(tmp_path):
     write_response(tmp_path, [{"canonical": "c-0001@1", "duplicate": "c-0001@1"}])
     with pytest.raises(UsageError, match="into itself"):

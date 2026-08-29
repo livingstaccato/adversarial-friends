@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### A crash mid-resume could permanently strand a run
+
+`commands/resume.py`, cross-examined for the first time -- inevitable, given
+today's changes to it were the highest-density source of defects this
+project has found in itself. Two of the eight findings (c-0004, c-0008) were
+a regression in this afternoon's own fix, and are closed here. The remaining
+six are recorded below rather than fixed, because they share a different,
+deeper root cause that deserves its own pass rather than a rushed one.
+
+**The regression.** `_mark_response_consumed` protects a resume against
+replaying a response that was already FULLY applied. It did not protect
+against a crash *between* writing a ledger record and renaming the file --
+the exact case that motivated it in the first place, just narrower. For
+extraction, a crash after finding 1 of 3 landed re-appended finding 1 on
+retry, under a fresh id: permanent duplicate content. For merge, worse:
+`canonical_claims` had already folded away the `duplicate` id a prior
+partial application removed, so the retry's own validation refused the
+now-unknown id with `UsageError` -- and every subsequent retry re-read the
+identical file and hit the identical refusal. A transient crash became a run
+that could never be resumed again.
+
+Fixed by reading progress from the ledger itself, the same source
+`canonical_claims` and the claim counter already read, rather than a new
+progress file: how many `lens="extracted"` claims already carry this round
+number, and which `duplicate` ids already have an Alias recorded for it.
+Extraction skips the leading N entries a fresh read of RESPONSE.json
+provides; `read_response` gained a `tolerate_duplicates` parameter so it
+skips re-validating exactly the merges a prior attempt already finished,
+instead of refusing the whole file. Verified against the actual crash: each
+new test writes the ledger records a real kill -9 between an append and a
+rename would leave behind, then calls the retry path directly.
+
+**Recorded, not fixed.** `Budget.calls` and `RepeatTracker`'s disabled-friend
+set are in-memory only, and `--resume` is a new process -- so a `--mode loop
+--merge orchestrator` run halting once per iteration forgets its own spend
+and its own repeat-failure history at every halt. A 5-iteration loop can
+blow past `--max-calls` by a large multiple, and a friend disabled for
+repeated failure in iteration 1 is un-disabled the moment that process
+exits. Two more claims found the same missing `final_block` propagation on
+the resumed judging call (always the default `True`, even mid-loop) and
+missing alias/verdict history in a halt's own report. All real, all left for
+a scoped follow-up rather than a same-session patch on top of a same-session
+patch.
+
 ### `--require-friends N`: c-0013, closed
 
 The last open finding from cross-examining `commands/run.py`. A run where 1

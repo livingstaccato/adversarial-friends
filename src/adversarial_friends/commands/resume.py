@@ -13,7 +13,7 @@ folded back in.
 """
 
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import concurrent.futures
 import contextlib
 from dataclasses import dataclass, field
@@ -105,6 +105,48 @@ def _mark_response_consumed(round_dir: Path) -> None:
         response.rename(response.with_suffix(response.suffix + CONSUMED_SUFFIX))
 
 
+def _resumed_progress(records: Sequence[object], round_no: int) -> tuple[int, frozenset[str]]:
+    """How much of THIS round's RESPONSE.json the ledger already reflects.
+
+    Read from the ledger itself, the same source `canonical_claims` and
+    `next_claim_number` already read, rather than a separate progress file
+    -- the append-only log is already this module's source of truth for
+    "what actually happened", including what happened in an attempt that
+    then crashed.
+
+    A crash between appending a ledger record and `_mark_response_consumed`
+    renaming RESPONSE.json used to mean every retry re-read the identical,
+    still-present file from the start: extraction re-appended findings
+    already written under fresh ids, and merge crashed outright, because
+    `canonical_claims` had already folded away a `duplicate` id the response
+    still names -- turning one crash into a run permanently unable to
+    resume.
+
+    Two independent counts, because the two branches record progress
+    differently:
+
+    * `extracted_count` -- how many `lens="extracted"` claims already carry
+      this round number. `read_extract_response` returns entries in a
+      stable file order every call (RESPONSE.json is not mutated until the
+      whole response is applied), so the leading `extracted_count` entries
+      of a fresh read are exactly the ones an earlier, crashed attempt at
+      this same round already wrote. The caller skips them rather than
+      re-appending.
+    * `merged_duplicates` -- the `duplicate` id of every Alias already
+      recorded for this round. Passed to `read_response` so it can skip
+      re-validating exactly the merges a prior attempt already finished,
+      instead of refusing the whole file over ids that are correctly gone.
+    """
+    extracted_count = 0
+    merged: set[str] = set()
+    for record in records:
+        if isinstance(record, Claim) and record.round == round_no and record.lens == "extracted":
+            extracted_count += 1
+        elif isinstance(record, Alias) and record.round == round_no:
+            merged.add(record.duplicate)
+    return extracted_count, frozenset(merged)
+
+
 def resume_round_one(
     args: argparse.Namespace,
     store: RunStore,
@@ -151,10 +193,15 @@ def resume_round_one(
     # The same handshake serves two questions (§4.2, §14.2), so the answer is
     # read according to what was actually asked rather than assumed.
     question = _question_asked(round_dir)
+    # What an EARLIER attempt at this exact round already applied, before it
+    # crashed between a ledger write and _mark_response_consumed. Read from
+    # the ledger, not guessed: see _resumed_progress.
+    already_extracted, already_merged = _resumed_progress(records, base_round)
     adjudicated: list[Alias] = []
     if question == QUESTION_EXTRACT:
         extracted = read_extract_response(round_dir)
-        for finding in extracted:
+        skipped = extracted[:already_extracted]
+        for finding in extracted[already_extracted:]:
             counter += 1
             claims.append(
                 Claim(
@@ -177,20 +224,34 @@ def resume_round_one(
             )
             store.ledger.append(claims[-1])
         _mark_response_consumed(round_dir)
-        resumed.downgrades.append(
+        note = (
             f"resumed from {store.run_id} after claim extraction: "
-            f"{len(extracted)} claim(s) read out of unparseable output by hand."
+            f"{len(extracted) - already_extracted} claim(s) read out of unparseable output by hand."
         )
+        if skipped:
+            note += (
+                f" ({len(skipped)} were already applied by an earlier, "
+                "interrupted attempt at this same round.)"
+            )
+        resumed.downgrades.append(note)
     else:
-        decisions = read_response(round_dir, {c.id for c in claims})
+        decisions = read_response(
+            round_dir, {c.id for c in claims}, tolerate_duplicates=already_merged
+        )
         claims, adjudicated = apply_merges(claims, decisions, base_round)
         for alias in adjudicated:
             store.ledger.append(alias)
         _mark_response_consumed(round_dir)
-        resumed.downgrades.append(
+        note = (
             f"resumed from {store.run_id} after orchestrator merge adjudication: "
             f"{len(adjudicated)} merge(s) applied."
         )
+        if already_merged:
+            note += (
+                f" ({len(already_merged)} were already applied by an earlier, "
+                "interrupted attempt at this same round.)"
+            )
+        resumed.downgrades.append(note)
     resumed.claims = claims
     resumed.counter = counter
     resumed.aliases = adjudicated
