@@ -21,8 +21,12 @@ from ..adapters import FriendSpec
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..errors import UsageError
 from ..ledger import Claim
-from ..runstore import default_root
+from ..merge import ledger_aliases
+from ..report import render
+from ..resolutions import blocking_claims
+from ..runstore import RunStore, default_root
 from ..verdicts import judges_for, loop_should_terminate
+from .exits import decide_exit
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
@@ -299,3 +303,78 @@ def finalize_meta(
         )
         meta["incomplete"] = cross.incomplete
     return meta
+
+
+def finish_run(
+    args: argparse.Namespace,
+    store: RunStore,
+    base_meta: dict[str, Any],
+    all_claims: list[Claim],
+    cross: "CrossexamOutcome | None",
+    abort_signum: int | None,
+    any_success: bool,
+    succeeded_friends: int | None,
+    iterations_run: int,
+    streak: int,
+    downgrades: list[str],
+    budget: Budget,
+    rounds_reached: int,
+) -> int:
+    """Wrap up a completed run: the gate's blocking claims, the finalized
+    meta, run.json and report.md on disk, the printed path, and the exit
+    code.
+
+    Split out of cmd_run's tail for the same reason `finalize_meta` was:
+    the function crossed this repo's 500-line cap, and finishing a run is
+    a self-contained concern separate from the loop that produced
+    everything it wraps up.
+    """
+    # §7.5's gate. Evaluated against the run's own (empty) resolution set,
+    # so a fresh gate run always reports what needs attention rather than
+    # passing: resolutions are recorded afterwards, by `afriend resolve`,
+    # which re-evaluates this same rule.
+    blocking: list[Claim] = []
+    if args.mode == "gate":
+        blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
+
+    meta = finalize_meta(
+        base_meta,
+        args.mode,
+        iterations_run=iterations_run,
+        streak=streak,
+        blocking=blocking,
+        budget=budget,
+        downgrades=downgrades,
+        cross=cross,
+        rounds_reached=rounds_reached,
+    )
+    store.write_run_json(meta)
+    store.write_report(
+        render(
+            all_claims,
+            # From the ledger, not a process-local accumulator: see
+            # merge.ledger_aliases. A halt exits the process, and the next
+            # resume's accumulator restarts at `[]`.
+            ledger_aliases(list(store.ledger.records())),
+            meta,
+            verdicts=cross.verdicts if cross else None,
+            states=cross.states if cross else None,
+        )
+    )
+    if args.json:
+        # The path is still what a shell pipeline wants; --json is for a
+        # caller that would otherwise have to read run.json itself.
+        print(json.dumps(meta, indent=2, sort_keys=True))
+    else:
+        print(store.run_dir)
+
+    return decide_exit(
+        abort_signum,
+        any_success,
+        args.mode,
+        cross,
+        blocking,
+        ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
+        succeeded_friends=succeeded_friends,
+        require_friends=args.require_friends,
+    )

@@ -128,6 +128,41 @@ class RepeatTracker:
         self._count: dict[str, int] = {}
         self.disabled: dict[str, str] = {}
 
+    def snapshot(self) -> dict[str, dict[str, str] | dict[str, int]]:
+        """This tracker's state, JSON-safe, for `run.json`.
+
+        A tracker lives only in the process that built it, and `--resume`
+        is a new process: without persisting this, a friend disabled for
+        repeated failure in iteration 1 was silently un-disabled the
+        instant that process exited for an orchestrator halt, and iteration
+        2's resume re-dispatched and could re-announce it as disabled --
+        wasting a call and, worse, letting a broken friend's noise back
+        into quorum and `--require-friends` counts that assumed it stayed
+        excluded.
+        """
+        return {
+            "last": dict(self._last),
+            "count": dict(self._count),
+            "disabled": dict(self.disabled),
+        }
+
+    @classmethod
+    def restore(cls, data: dict[str, object], limit: int = REPEAT_LIMIT) -> "RepeatTracker":
+        """The inverse of `snapshot`. `data` is typically absent (a fresh
+        run, or a halt written by a version that predates this) -- an empty
+        dict restores a tracker identical to a fresh `RepeatTracker()`."""
+        tracker = cls(limit=limit)
+        last = data.get("last")
+        count = data.get("count")
+        disabled = data.get("disabled")
+        if isinstance(last, dict):
+            tracker._last = {str(k): str(v) for k, v in last.items()}
+        if isinstance(count, dict):
+            tracker._count = {str(k): int(v) for k, v in count.items()}
+        if isinstance(disabled, dict):
+            tracker.disabled = {str(k): str(v) for k, v in disabled.items()}
+        return tracker
+
     def record(self, friend: str, outcome: SpawnResult) -> None:
         signature = failure_signature(outcome)
         if signature is None or signature != self._last.get(friend):

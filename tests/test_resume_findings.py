@@ -84,7 +84,7 @@ def test_a_dry_halted_round_advances_the_streak():
     always False -- so the streak `loop_position` had just restored was
     zeroed on every resume. `loop_should_terminate` needs two consecutive
     dry rounds, so a resumed loop could not converge at all."""
-    from adversarial_friends.commands.resume import resumed_streak
+    from adversarial_friends.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=True, halted_round_failed=False), 1) == 2
 
@@ -92,14 +92,14 @@ def test_a_dry_halted_round_advances_the_streak():
 def test_a_round_that_learned_something_resets_the_streak():
     """The other half. A streak that only ever advanced would terminate a
     loop that was still finding new claims."""
-    from adversarial_friends.commands.resume import resumed_streak
+    from adversarial_friends.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=False, halted_round_failed=False), 1) == 0
 
 
 def test_a_failed_halted_round_resets_the_streak():
     """§7.3: a round that did not complete is not evidence of convergence."""
-    from adversarial_friends.commands.resume import resumed_streak
+    from adversarial_friends.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=True, halted_round_failed=True), 1) == 0
 
@@ -109,7 +109,7 @@ def test_a_halt_with_no_recorded_dryness_is_treated_as_failed():
     and a run.json written by an older version has neither key. Assuming
     convergence there is the dangerous guess; assuming a failed round only
     costs an extra iteration."""
-    from adversarial_friends.commands.resume import resumed_streak
+    from adversarial_friends.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(), 1) == 0
 
@@ -121,14 +121,15 @@ def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):
     The rendered report is stubbed: what is under test is what reaches
     run.json, and building a meta complete enough for the renderer would
     make this a test of the renderer instead."""
-    from adversarial_friends.commands import resume as resume_mod
+    from adversarial_friends.commands import haltstate
     from adversarial_friends.runstore import RunStore
 
-    monkeypatch.setattr(resume_mod, "render", lambda *a, **k: "")
+    monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = RunStore(tmp_path, "run-x")
     store.lock()
     args = argparse.Namespace(mode="loop")
-    resume_mod.write_halt(args, store, {}, [], [], 2, 1, None, round_dry=True, round_failed=False)
+
+    haltstate.write_halt(args, store, {}, [], [], 2, 1, None, round_dry=True, round_failed=False)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert meta["halted_round_dry"] is True

@@ -185,3 +185,23 @@ def next_claim_number(records: Sequence[object]) -> int:
             number, _version = parse_claim_id(record.id)
             highest = max(highest, number)
     return highest
+
+
+def ledger_aliases(records: Sequence[object]) -> list[Alias]:
+    """Every Alias the ledger has ever recorded, in the order it was written.
+
+    c-0003. The report's 'Merged duplicates' section used to come from a
+    per-process accumulator (`all_aliases` in `commands/run.py`) built by
+    extending a list as each round's merges landed. That is correct only
+    within one continuous process -- a resume starts a NEW process with
+    that accumulator at `[]`, so a run halted after iteration 1 and resumed
+    for iteration 2 rendered a final report that had silently forgotten
+    iteration 1's merges, even though they were sitting in the ledger the
+    whole time.
+
+    Reading the ledger directly here, the same way `canonical_claims` and
+    `next_claim_number` already do, removes the need to remember to seed
+    anything on resume at all: correct for a run that was never halted, and
+    correct for one that was halted five times, by the same code path.
+    """
+    return [record for record in records if isinstance(record, Alias)]

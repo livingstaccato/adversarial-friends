@@ -6,10 +6,10 @@
 
 `commands/resume.py`, cross-examined for the first time -- inevitable, given
 today's changes to it were the highest-density source of defects this
-project has found in itself. Two of the eight findings (c-0004, c-0008) were
-a regression in this afternoon's own fix, and are closed here. The remaining
-six are recorded below rather than fixed, because they share a different,
-deeper root cause that deserves its own pass rather than a rushed one.
+project has found in itself. All eight findings are closed. Two (c-0004,
+c-0008) were a regression in this afternoon's own fix; the other six share a
+different root cause -- in-memory state that a `--resume` (always a new
+process) never inherits -- and are fixed below it.
 
 **The regression.** `_mark_response_consumed` protects a resume against
 replaying a response that was already FULLY applied. It did not protect
@@ -34,17 +34,40 @@ instead of refusing the whole file. Verified against the actual crash: each
 new test writes the ledger records a real kill -9 between an append and a
 rename would leave behind, then calls the retry path directly.
 
-**Recorded, not fixed.** `Budget.calls` and `RepeatTracker`'s disabled-friend
-set are in-memory only, and `--resume` is a new process -- so a `--mode loop
---merge orchestrator` run halting once per iteration forgets its own spend
-and its own repeat-failure history at every halt. A 5-iteration loop can
-blow past `--max-calls` by a large multiple, and a friend disabled for
-repeated failure in iteration 1 is un-disabled the moment that process
-exits. Two more claims found the same missing `final_block` propagation on
-the resumed judging call (always the default `True`, even mid-loop) and
-missing alias/verdict history in a halt's own report. All real, all left for
-a scoped follow-up rather than a same-session patch on top of a same-session
-patch.
+**The other six: state a resumed process never inherited.** `Budget.calls`
+and `RepeatTracker`'s disabled-friend set are in-memory dataclasses, and
+`--resume` is a new process -- so a `--mode loop --merge orchestrator` run
+halting once per iteration forgot its own spend and its own repeat-failure
+history at every halt (c-0001, c-0007, c-0002). A 5-iteration loop could
+blow past `--max-calls` by a large multiple with the ceiling never firing,
+each resuming process believing only its own round 1 had ever run; a friend
+disabled for repeated failure in iteration 1 came back after every resume.
+Both are now persisted into `run.json` at every halt (`spent_calls`,
+`repeat_tracker`) and restored on resume -- the true cumulative total, not
+the one-round guess `resume_round_one` charged back before.
+
+`resume_round_one` also never passed `final_block` to `run_rounds`, so a
+resumed judging call always took the default `True` even mid-loop -- an
+amendment nobody could judge in the last round of a non-final block was
+marked `incomplete` with a downgrade telling the operator to raise
+`--max-rounds`, even when the very next iteration was about to judge it
+(c-0005). And a halt's own report had forgotten what an EARLIER iteration,
+in a process that has since exited, had already produced: `all_aliases` was
+a process-local accumulator that restarts at `[]` on every resume, so a
+second halt's "Merged duplicates" section silently dropped the first
+iteration's merges (c-0003); `write_halt`'s own `render()` call never passed
+`states=`/`verdicts=` at all, so a halt mid-loop showed raw findings with
+none of the reasoning an earlier iteration's judges had already produced,
+even though `carry_over` held it directly (c-0006). Aliases are now read
+straight from the ledger (`merge.ledger_aliases`) rather than accumulated,
+the same fix pattern as everything else in this batch: state that must
+survive a halt lives in the ledger or in `run.json`, never only in a
+variable.
+
+`commands/haltstate.py` now holds everything a halt persists and a resume
+restores, split out of `resume.py` (which crossed the 500-line cap for the
+third time today) and `commands/run.py` gained a `finish_run` helper in
+`runmeta.py` for the same reason.
 
 ### `--require-friends N`: c-0013, closed
 

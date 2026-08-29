@@ -7,7 +7,6 @@ Split out of cli.py.
 import argparse
 import concurrent.futures
 import dataclasses
-import json
 from pathlib import Path
 import signal
 import time
@@ -17,7 +16,6 @@ import uuid
 from .. import isolation
 from ..adapters import friend_key
 from ..ceilings import (
-    BUDGET_EXHAUSTED,
     Budget,
     derive_max_calls,
     warn_if_unreachable,
@@ -25,22 +23,21 @@ from ..ceilings import (
 )
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
-from ..ledger import Alias, Claim
+from ..ledger import Claim
+from ..merge import ledger_aliases
 from ..orchestrator import (
     NeedsOrchestrator,
     write_request,
 )
-from ..report import render
-from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import _resolve_repo_root, clock_offset, freeze_revision
-from .exits import decide_exit
-from .resume import loop_position, resume_iteration, write_halt
-from .runmeta import JUDGING_MODES, _base_meta, finalize_meta, loop_is_done, validate_run_args
+from .haltstate import loop_position, write_halt
+from .resume import resume_iteration
+from .runmeta import JUDGING_MODES, _base_meta, finish_run, loop_is_done, validate_run_args
 from .setup import prepare_run
 
 
@@ -178,10 +175,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         # One tracker for the whole run: a friend that failed identically in
         # iteration 1 must stay disabled in iteration 2, or a loop would
         # rediscover the same broken friend five times.
-        tracker = RepeatTracker()
+        #
+        # Restored on `--resume`, not built fresh: a RepeatTracker lives
+        # only in the process that built it, so a friend disabled in an
+        # earlier iteration was silently un-disabled the moment that
+        # process exited for its orchestrator halt.
+        tracker = (
+            RepeatTracker.restore(getattr(args, "_resume_meta", {}).get("repeat_tracker") or {})
+            if resume_dir is not None
+            else RepeatTracker()
+        )
 
         all_claims: list[Claim] = []
-        all_aliases: list[Alias] = []
         friends_meta: list[dict[str, Any]] = []
         counter = 0
         any_success = False
@@ -302,10 +307,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                         extra_args=extra_args,
                         pass_env=tuple(args.pass_env),
                         reporter=reporter,
+                        # Same rule the non-resumed call below uses: only
+                        # the run's actual last block may mark an unjudged
+                        # amendment `incomplete` rather than leaving it for
+                        # the next iteration.
+                        final_block=(args.mode != "loop" or iteration == max_iterations),
                     )
                     resumed = step.resumed
                     all_claims = resumed.claims
-                    all_aliases.extend(resumed.aliases)
                     friends_meta.extend(resumed.friends_meta)
                     downgrades.extend(resumed.downgrades)
                     cross = resumed.cross or carry_over
@@ -354,7 +363,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 rounds_reached = max(rounds_reached, base_round)
                 friends_meta.extend(critique.friends_meta)
                 downgrades.extend(critique.downgrades)
-                all_aliases.extend(critique.aliases)
                 any_success = any_success or critique.any_success
                 # The most recent fresh critique round's count, not a
                 # running total: --require-friends asks "did the review
@@ -433,60 +441,34 @@ def cmd_run(args: argparse.Namespace) -> int:
                 store,
                 run_meta(),
                 all_claims,
-                all_aliases,
+                # From the ledger, not a process-local accumulator: see
+                # merge.ledger_aliases. A halt exits the process, and the
+                # next resume's accumulator restarts at `[]`.
+                ledger_aliases(list(store.ledger.records())),
                 iteration,
                 streak,
                 carry_over,
                 round_dry=halted_dry,
                 round_failed=halted_failed,
+                budget=budget,
+                tracker=tracker,
             )
             raise
 
-        # §7.5's gate. Evaluated against the run's own (empty) resolution
-        # set, so a fresh gate run always reports what needs attention rather
-        # than passing: resolutions are recorded afterwards, by `afriend
-        # resolve`, which re-evaluates this same rule.
-        blocking: list[Claim] = []
-        if args.mode == "gate":
-            blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
-
-        meta: dict[str, Any] = finalize_meta(
+        return finish_run(
+            args,
+            store,
             run_meta(),
-            args.mode,
-            iterations_run=iterations_run,
-            streak=streak,
-            blocking=blocking,
-            budget=budget,
-            downgrades=downgrades,
-            cross=cross,
-            rounds_reached=rounds_reached,
-        )
-        store.write_run_json(meta)
-        store.write_report(
-            render(
-                all_claims,
-                all_aliases,
-                meta,
-                verdicts=cross.verdicts if cross else None,
-                states=cross.states if cross else None,
-            )
-        )
-        if args.json:
-            # The path is still what a shell pipeline wants; --json is for a
-            # caller that would otherwise have to read run.json itself.
-            print(json.dumps(meta, indent=2, sort_keys=True))
-        else:
-            print(store.run_dir)
-
-        return decide_exit(
+            all_claims,
+            cross,
             abort_signum["value"],
             any_success,
-            args.mode,
-            cross,
-            blocking,
-            ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
-            succeeded_friends=succeeded_friends,
-            require_friends=args.require_friends,
+            succeeded_friends,
+            iterations_run,
+            streak,
+            downgrades,
+            budget,
+            rounds_reached,
         )
     finally:
         # Stops the heartbeat thread. In the same `finally` as the signal

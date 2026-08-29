@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-932-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-946-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -358,7 +358,7 @@ The skill invokes `afriend`, so the package must be installed for it to work —
 
 ```bash
 make install    # uv sync
-make test       # pytest — 932 tests
+make test       # pytest — 946 tests
 make quality    # lint + type-check + every sync gate + tests
 make diagrams   # re-render docs/architecture/*.puml
 ```

@@ -122,6 +122,79 @@ def test_friends_are_tracked_independently():
     assert not tracker.is_disabled("fine")
 
 
+def test_a_restored_tracker_keeps_a_friend_disabled():
+    """c-0002. A RepeatTracker lives only in the process that built it, and
+    `--resume` is a new process -- so a friend disabled for repeated
+    failure in an earlier iteration was silently un-disabled the moment
+    that process exited for its orchestrator halt, and could be
+    re-dispatched and re-announced as disabled after every resume."""
+    tracker = failures.RepeatTracker()
+    tracker.record("codex-ops", outcome())
+    tracker.record("codex-ops", outcome())
+    assert tracker.is_disabled("codex-ops")
+
+    restored = failures.RepeatTracker.restore(tracker.snapshot())
+
+    assert restored.is_disabled("codex-ops")
+    assert restored.note("codex-ops") == tracker.note("codex-ops")
+
+
+def test_a_restored_tracker_still_resets_on_success():
+    """Restoring must not freeze a friend's history -- a friend that was
+    disabled, then genuinely recovers, must be able to clear again exactly
+    as it would have in the process that disabled it."""
+    tracker = failures.RepeatTracker()
+    tracker.record("codex-ops", outcome())
+    tracker.record("codex-ops", outcome())
+    restored = failures.RepeatTracker.restore(tracker.snapshot())
+
+    restored.record("codex-ops", outcome(reason=None))
+
+    assert not restored.is_disabled("codex-ops")
+
+
+def test_a_restored_tracker_keeps_counting_toward_the_limit():
+    """One prior failure, restored, plus one more after resume must still
+    disable -- the count has to survive the round trip, not just the
+    disabled set, or a friend one failure away from disabled loses that
+    history on every halt."""
+    tracker = failures.RepeatTracker()
+    tracker.record("codex-ops", outcome())
+    assert not tracker.is_disabled("codex-ops")
+    restored = failures.RepeatTracker.restore(tracker.snapshot())
+
+    restored.record("codex-ops", outcome())
+
+    assert restored.is_disabled("codex-ops")
+
+
+def test_restoring_empty_data_is_the_same_as_a_fresh_tracker():
+    """A halt written by a version predating this field has no
+    `repeat_tracker` key. Absent must not crash and must not disable
+    anyone -- restoring nothing is restoring a clean slate."""
+    restored = failures.RepeatTracker.restore({})
+    assert not restored.is_disabled("codex-ops")
+    restored.record("codex-ops", outcome())
+    restored.record("codex-ops", outcome())
+    assert restored.is_disabled("codex-ops")
+
+
+def test_snapshot_round_trips_through_json():
+    """The whole point: this dict is written to run.json and read back."""
+    import json
+
+    tracker = failures.RepeatTracker()
+    tracker.record("codex-ops", outcome())
+    tracker.record("codex-ops", outcome())
+    tracker.record("claude-security", outcome(reason="timed out"))
+
+    reloaded = json.loads(json.dumps(tracker.snapshot()))
+    restored = failures.RepeatTracker.restore(reloaded)
+
+    assert restored.is_disabled("codex-ops")
+    assert not restored.is_disabled("claude-security")
+
+
 def test_the_signature_ignores_stderr():
     """A CLI printing a timestamp or request id would otherwise look like a
     different failure every round and never trip the rule."""

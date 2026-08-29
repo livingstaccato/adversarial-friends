@@ -22,12 +22,11 @@ from pathlib import Path
 import threading
 from typing import Any
 
-from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec
 from ..ceilings import Budget
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
-from ..ledger import Alias, Claim, Verdict
+from ..ledger import Alias, Claim
 from ..merge import canonical_claims, next_claim_number
 from ..orchestrator import (
     QUESTION_EXTRACT,
@@ -37,10 +36,10 @@ from ..orchestrator import (
     request_path,
 )
 from ..progress import Progress
-from ..report import render
 from ..runstore import RunStore
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
+from .haltstate import resumed_streak
 from .runmeta import JUDGING_MODES
 
 
@@ -167,6 +166,7 @@ def resume_round_one(
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
     reporter: Progress | None = None,
+    final_block: bool = True,
 ) -> ResumedRun:
     """Apply the orchestrator's merges, then carry on into judging.
 
@@ -183,6 +183,15 @@ def resume_round_one(
     `pass_env` -- so a resumed judging round silently ran with repeat
     detection off, isolation kept regardless of the flag, and the operator's
     own flags dropped. One omission, five behaviours.
+
+    **`final_block` was missing too, and its default is `True`.** An
+    amendment nobody judges in the LAST round of a block that is not the
+    run's own last block is left `contested` for the next iteration to
+    pick up; `final_block=True` instead marks it `incomplete` and tells the
+    operator to raise `--max-rounds`, even when another loop iteration is
+    seconds away and would have judged it. The caller computes this exactly
+    the way the non-resumed path does: `mode != "loop" or iteration ==
+    max_iterations`.
     """
     resumed = ResumedRun()
     records = list(store.ledger.records())
@@ -256,9 +265,16 @@ def resume_round_one(
     resumed.counter = counter
     resumed.aliases = adjudicated
     resumed.friends_meta = list(getattr(args, "_resume_meta", {}).get("friends", []))
-    # The halted process already paid for round 1; charge it here so a
-    # resumed run cannot spend the whole budget a second time.
-    budget.spend(len(specs))
+    # The FULL spend the halted process had accumulated, not just the round
+    # this call is directly resuming. `len(specs)` -- one round's cost --
+    # used to be charged back here instead, which under-counted every halt
+    # but the run's very first: see write_halt's docstring for the failure
+    # this reproduced. `spent_calls` is 0 when absent, which is correct for
+    # a run halted by a version that predates this field -- an undercount
+    # by omission, not a crash, and the honest choice when the true number
+    # was simply never recorded.
+    resume_meta = getattr(args, "_resume_meta", {}) or {}
+    budget.spend(int(resume_meta.get("spent_calls", 0) or 0))
 
     if args.mode not in JUDGING_MODES:
         return resumed
@@ -287,129 +303,12 @@ def resume_round_one(
         pass_env=pass_env,
         prior=prior,
         reporter=reporter,
+        final_block=final_block,
     )
     resumed.claims = resumed.cross.claims
     resumed.friends_meta.extend(resumed.cross.friends_meta)
     resumed.downgrades.extend(resumed.cross.downgrades)
     return resumed
-
-
-def carried_outcome(store: RunStore, meta: dict[str, Any]) -> "CrossexamOutcome | None":
-    """The previous iteration's outcome, rebuilt from what the run recorded.
-
-    A `loop` iteration inherits states, verdicts, notes and discard
-    signatures (§7.3). None of that survives in memory across an
-    orchestrator halt, and all of it survives on disk: states and notes in
-    `run.json`, verdicts in the ledger, and signatures are a pure function
-    of the verdicts. Rebuilt rather than re-derived by re-judging, which
-    would spend a fan-out to recompute something already written down.
-
-    Returns None when there is nothing to carry -- a halt in iteration 1,
-    before any judging round ran.
-    """
-    states = meta.get("claim_states") or {}
-    if not states:
-        return None
-    outcome = CrossexamOutcome()
-    outcome.states = dict(states)
-    outcome.notes = list(meta.get("amendment_notes") or [])
-    outcome.incomplete = bool(meta.get("incomplete"))
-    outcome.verdicts = [r for r in store.ledger.records() if isinstance(r, Verdict)]
-    outcome.signatures = {
-        claim_id: vd.verdict_set_signature(outcome.verdicts, claim_id)
-        for claim_id, state in outcome.states.items()
-        if state == vd.UNPROVEN
-    }
-    return outcome
-
-
-def loop_position(
-    args: argparse.Namespace, store: RunStore, resuming: bool
-) -> tuple[int, int, "CrossexamOutcome | None"]:
-    """Where a resumed `loop` re-enters: iteration, dry-round streak, and
-    what that iteration inherits.
-
-    (1, 0, None) for a fresh run and for any mode that does not loop. An
-    orchestrator halt happens once per iteration, so a resumed loop that
-    started over at iteration 1 would repeat work already adjudicated, and
-    one that treated itself as finished would silently drop the iterations
-    the operator asked for.
-    """
-    if not resuming or args.mode != "loop":
-        return 1, 0, None
-    meta = getattr(args, "_resume_meta", {}) or {}
-    return (
-        int(getattr(args, "_resume_iteration", 1) or 1),
-        int(getattr(args, "_resume_streak", 0) or 0),
-        carried_outcome(store, meta),
-    )
-
-
-def write_halt(
-    args: argparse.Namespace,
-    store: RunStore,
-    meta: dict[str, Any],
-    claims: list[Claim],
-    aliases: list[Alias],
-    iteration: int,
-    streak: int,
-    carry_over: "CrossexamOutcome | None",
-    round_dry: bool = False,
-    round_failed: bool = False,
-) -> None:
-    """Leave behind a run directory a resume can actually continue from.
-
-    A halt in a `loop` must record everything the resumed iteration
-    inherits, or it re-enters knowing only that it was interrupted: which
-    iteration it was in, the dry-round streak, and whatever earlier
-    iterations already decided. The completion path writes these; the halt
-    path did not, which is what made `--merge orchestrator` unusable with
-    `--mode loop` and is why that combination was refused rather than
-    supported.
-    """
-    if args.mode == "loop":
-        meta["iterations_run"] = iteration
-        meta["dry_streak"] = streak
-        # Whether the critique round that ran just before this halt learned
-        # anything. Without these two, the resumed iteration had nothing to
-        # compute dryness from and hard-coded `round_is_dry(False, True)` --
-        # which is always False, so `next_streak` zeroed the very streak
-        # this function had just persisted. `loop_should_terminate` needs
-        # two consecutive dry rounds, so a resumed loop could not converge
-        # at all: it ran to --max-loop-iterations, paying a full fan-out per
-        # iteration on a run that had already stopped learning.
-        meta["halted_round_dry"] = round_dry
-        meta["halted_round_failed"] = round_failed
-    if carry_over is not None:
-        meta["claim_states"] = carry_over.states
-        meta["amendment_notes"] = carry_over.notes
-        meta["incomplete"] = carry_over.incomplete
-    store.write_run_json(meta)
-    store.write_report(render(claims, aliases, meta))
-    print(store.run_dir)
-
-
-def resumed_streak(args: argparse.Namespace, streak: int) -> int:
-    """The dry-round streak after a resumed iteration completes.
-
-    Computed from what the halted round actually did, which `write_halt`
-    persists. It used to be `next_streak(streak, failed=False,
-    dry=round_is_dry(False, True))` -- and `round_is_dry(False, True)` is
-    always False, so this zeroed the very streak `loop_position` had just
-    restored, on every resume. `loop_should_terminate` needs two consecutive
-    dry rounds, so a resumed loop could not converge at all: it ran to
-    `--max-loop-iterations`, paying a full fan-out per iteration on a run
-    that had already stopped learning anything.
-
-    Absent keys read as "failed, not dry". That is the honest default for a
-    run halted by claim extraction, where the round's output could not be
-    parsed -- and for a halt written by an older version, where assuming
-    convergence would be the dangerous guess.
-    """
-    meta = getattr(args, "_resume_meta", {}) or {}
-    failed = bool(meta.get("halted_round_failed", True))
-    dry = bool(meta.get("halted_round_dry", False))
-    return vd.next_streak(streak, failed=failed, dry=vd.round_is_dry(dry, not failed))
 
 
 @dataclass
@@ -452,6 +351,7 @@ def resume_iteration(
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
     reporter: Progress | None = None,
+    final_block: bool = True,
 ) -> ResumedStep:
     """Apply the adjudication, judge, and decide whether the loop continues."""
     resumed = resume_round_one(
@@ -474,6 +374,7 @@ def resume_iteration(
         extra_args=extra_args,
         pass_env=pass_env,
         reporter=reporter,
+        final_block=final_block,
     )
     if args.mode != "loop":
         return ResumedStep(resumed=resumed, streak=streak, done=True)
