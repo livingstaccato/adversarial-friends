@@ -124,19 +124,21 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
         path.write_text("prompt", encoding="utf-8")
         prompt_for[spec.name] = path
 
-    registry = {"brokencli": Adapter(
-        name="brokencli",
-        binary="brokencli",
-        base_argv=[],
-        prompt_mode="stdin",
-        prompt_flag="",
-        readonly_argv=[],
-        schema_flag="",
-        model_flag="",
-        internal_timeout_flag="",
-        effort_kind="none",
-        auth=AuthMarkers(exit_codes=(41,)),
-    )}
+    registry = {
+        "brokencli": Adapter(
+            name="brokencli",
+            binary="brokencli",
+            base_argv=[],
+            prompt_mode="stdin",
+            prompt_flag="",
+            readonly_argv=[],
+            schema_flag="",
+            model_flag="",
+            internal_timeout_flag="",
+            effort_kind="none",
+            auth=AuthMarkers(exit_codes=(41,)),
+        )
+    }
     tracker = RepeatTracker()
     store = RunStore(tmp_path / "run", "run-auth")
     store.lock()
