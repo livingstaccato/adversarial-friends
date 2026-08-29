@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.1.8
+
+Three fixes, all found by cross-examining the runner's own `--resume` and
+failure-handling machinery for the first time. The most serious: a friend
+that could not authenticate used to discard the *whole round* it happened in
+-- including findings from other friends that had already answered -- and
+left no `run.json` or `report.md` behind at all. The other eight share one
+cause: state that lives only in the process a `--resume` starts fresh
+(`Budget.calls`, the repeat-failure tracker, merged aliases, a crash
+mid-application) was silently lost or corrupted across a halt. A third gap,
+unrelated to resume: a run where 1 of 50 friends answered used to exit `0`,
+identically to 50 of 50 -- `--require-friends N` closes it.
 
 ### An auth failure lost the whole round it happened in, not just that friend
 

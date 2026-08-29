@@ -1,6 +1,6 @@
 {
   "name": "adversarial-friends",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers for Codex.",
   "author": {
     "name": "Tim",
