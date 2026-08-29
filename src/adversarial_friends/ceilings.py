@@ -14,8 +14,12 @@ converts a normal run into a truncated one and reports budget exhaustion for
 a budget nobody chose.
 """
 
+import dataclasses
 from dataclasses import dataclass, field
 import math
+
+from .adapters import FriendSpec
+from .dispatch import KILL_GRACE_S
 
 # §7.4's defaults.
 DEFAULT_MAX_ROUNDS = 3
@@ -121,3 +125,39 @@ def warn_if_unreachable(friends: int, max_rounds: int, max_calls: int) -> str | 
         f"{max_rounds} rounds ({needed} calls minimum); this run will stop at "
         "a ceiling before reaching its configured round limit."
     )
+
+
+def within_deadline(specs: list[FriendSpec], seconds_left: float) -> list[FriendSpec]:
+    """Every spec, with its timeout capped at what remains of the run's
+    wall-clock ceiling. A friend dispatched just under the ceiling used to
+    run for its own full timeout past it.
+
+    The cap subtracts `KILL_GRACE_S`, because dispatch hands `run_process` a
+    kill deadline of `spec.timeout + KILL_GRACE_S` -- a full extra minute. A
+    cap that ignored it made the wall-clock ceiling a ceiling only for
+    friends that behaved: a single hung friend overshot it by that minute,
+    plus the group's own escalation windows. Reserving the grace up front
+    costs a well-behaved friend some of its timeout and makes the ceiling
+    mean what it says, which is the trade the ceiling exists to make.
+
+    Below one whole second of usable time, nothing is dispatched at all.
+    `int()` floors, so 0.6s remaining became a timeout of 0 -- a friend
+    launched only to be killed the instant it started, which still spends a
+    call from the budget and still reports as a failure that marks the run
+    incomplete. Worse for an adapter with an `internal_timeout_flag`: agy is
+    handed `--print-timeout 0s` and self-times-out before it reaches a model.
+    There is no honest dispatch left in under a second. Returning nothing
+    lets the caller say so plainly instead.
+
+    **Lives here, not in `commands/judging.py`, because both round types need
+    it.** It was written for judging rounds and the critique round kept an
+    inline `min()` that did neither correction -- so the ceiling meant one
+    thing for a judging round and another for the critique round that
+    preceded it. Two independent friends raised that asymmetry as a defect
+    from two different lenses, which is what an asymmetric fix looks like
+    from outside.
+    """
+    remaining = int(seconds_left) - KILL_GRACE_S
+    if remaining < 1:
+        return []
+    return [dataclasses.replace(s, timeout=min(s.timeout, remaining)) for s in specs]

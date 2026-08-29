@@ -7,7 +7,7 @@ about itself.
 import dataclasses
 
 from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.commands import judging
+from adversarial_friends.ceilings import within_deadline
 
 
 def _spec(name: str, timeout: int = 600) -> FriendSpec:
@@ -21,12 +21,12 @@ def test_a_sub_second_remainder_dispatches_nothing(**_):
     friend launched only to be killed the instant it started, spending a call
     from the budget and reporting a failure that marks the run incomplete.
     No agent CLI reaches its model in under a second."""
-    assert judging._within_deadline([_spec("a"), _spec("b")], 0.6) == []
-    assert judging._within_deadline([_spec("a")], 0.0) == []
+    assert within_deadline([_spec("a"), _spec("b")], 0.6) == []
+    assert within_deadline([_spec("a")], 0.0) == []
 
 
 def test_a_negative_remainder_dispatches_nothing():
-    assert judging._within_deadline([_spec("a")], -5.0) == []
+    assert within_deadline([_spec("a")], -5.0) == []
 
 
 def test_the_cap_reserves_the_kill_grace(**_):
@@ -36,26 +36,26 @@ def test_the_cap_reserves_the_kill_grace(**_):
     that minute plus the group escalation windows."""
     from adversarial_friends.dispatch import KILL_GRACE_S
 
-    got = judging._within_deadline([_spec("a", timeout=600)], 90.7)
+    got = within_deadline([_spec("a", timeout=600)], 90.7)
     assert [s.timeout for s in got] == [90 - KILL_GRACE_S]
 
 
 def test_nothing_is_dispatched_when_only_the_grace_would_fit():
     from adversarial_friends.dispatch import KILL_GRACE_S
 
-    assert judging._within_deadline([_spec("a")], float(KILL_GRACE_S)) == []
+    assert within_deadline([_spec("a")], float(KILL_GRACE_S)) == []
 
 
 def test_a_timeout_below_the_remainder_is_left_alone():
     """The cap is a ceiling, not an assignment: a friend asking for less than
     what remains keeps its own timeout."""
-    got = judging._within_deadline([_spec("a", timeout=5)], 300.0)
+    got = within_deadline([_spec("a", timeout=5)], 300.0)
     assert [s.timeout for s in got] == [5]
 
 
 def test_within_deadline_does_not_mutate_the_caller_specs():
     original = _spec("a", timeout=600)
-    judging._within_deadline([original], 10.0)
+    within_deadline([original], 10.0)
     assert original.timeout == 600
     assert dataclasses.asdict(original)["timeout"] == 600
 

@@ -24,8 +24,10 @@ is aliased away, its origin is merged into whichever claim it aliased so
 that claim's `origin` list still reflects everyone who actually raised it.
 """
 
+from collections.abc import Sequence
 from dataclasses import replace
 
+from .ids import parse_claim_id
 from .ledger import Alias, Claim
 
 
@@ -116,7 +118,7 @@ def exact_merge(
     return kept, aliases, updated_existing
 
 
-def canonical_claims(records: list[object]) -> list[Claim]:
+def canonical_claims(records: Sequence[object]) -> list[Claim]:
     """Rebuild the live claim set from an append-only ledger.
 
     A resumed run has to reconstruct what the original process held in
@@ -158,3 +160,28 @@ def canonical_claims(records: list[object]) -> list[Claim]:
         for c in claims
         if c.id not in aliased
     ]
+
+
+def next_claim_number(records: Sequence[object]) -> int:
+    """The next claim number that is certainly unused, from the WHOLE ledger.
+
+    Not `len(canonical_claims(...))`. Canonical reconstruction deliberately
+    drops claims that were aliased into another, so counting it under-counts
+    every id ever issued: merge `c-0002@1` into `c-0001@1` and the canonical
+    list has length one, so a resumed run mints `c-0002@1` a second time.
+    The ledger is append-only, so it then holds two different claims under
+    one id -- and aliases, verdicts, states and resolutions all key on that
+    id, so each of them silently attaches to whichever record is found
+    first.
+
+    Reads every claim record the ledger ever held, including the aliased
+    duplicates and superseded versions canonical reconstruction removes,
+    because an id is spent the moment it is written -- not while it happens
+    to still be live.
+    """
+    highest = 0
+    for record in records:
+        if isinstance(record, Claim):
+            number, _version = parse_claim_id(record.id)
+            highest = max(highest, number)
+    return highest

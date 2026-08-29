@@ -5,6 +5,7 @@ would let `codex review --uncommitted` -- "staged, unstaged, and untracked" --
 review the tool's own scratch files as part of the diff under review.
 """
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -133,12 +134,46 @@ class RunStore:
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         return target, f"sha256:{digest}"
 
-    def write_run_json(self, meta: dict[str, Any]) -> Path:
-        path = self.run_dir / "run.json"
-        path.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+    def _write_atomic(self, path: Path, text: str) -> Path:
+        """Write via a temporary file in the same directory, then rename.
+
+        `write_text` truncates first and writes second, so a process that
+        dies in between leaves the file existing and invalid. For `run.json`
+        that is unrecoverable: `--resume` reads it to reconstruct the run's
+        configuration, so a half-written one turns a crash into permanent
+        loss of a run that may represent an hour of metered CLI time. This
+        file is rewritten at the end of every iteration of a `loop`, so the
+        window is not a single moment at the end -- it recurs.
+
+        `rename` within one directory is atomic on POSIX and on Windows via
+        `os.replace`, which `Path.replace` uses. A reader therefore sees the
+        old complete file or the new complete file, never a partial one.
+
+        The directory is fsync'd after the rename so the rename itself
+        survives a power loss, not merely the bytes it points at. Both
+        fsyncs are best-effort: a filesystem that does not support them
+        (some network mounts) must not turn a completed run into a crash,
+        and the write has already succeeded by that point.
+        """
+        tmp = path.with_name(f".{path.name}.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            with contextlib.suppress(OSError):
+                os.fsync(handle.fileno())
+        tmp.replace(path)
+        with contextlib.suppress(OSError):
+            fd = os.open(self.run_dir, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         return path
 
+    def write_run_json(self, meta: dict[str, Any]) -> Path:
+        return self._write_atomic(
+            self.run_dir / "run.json", json.dumps(meta, indent=2, sort_keys=True)
+        )
+
     def write_report(self, text: str) -> Path:
-        path = self.run_dir / "report.md"
-        path.write_text(text, encoding="utf-8")
-        return path
+        return self._write_atomic(self.run_dir / "report.md", text)

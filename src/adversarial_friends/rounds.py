@@ -234,14 +234,37 @@ def dispatch_round(
             # listing friends that are not going to run would be the first
             # thing a reader had to learn to discount.
             report.round_started(round_no, kind, [s.name for s in dispatch_specs])
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+            on_pool(pool)
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    on_pool(pool)
-                    try:
-                        results = list(pool.map(_run_one, dispatch_specs))
-                    finally:
-                        on_pool(None)
+                results = list(pool.map(_run_one, dispatch_specs))
+                pool.shutdown(wait=True)
+            except BaseException:
+                # A deliberate stop from ONE friend must not wait out every
+                # other friend's full timeout. `pool.map` raises as soon as
+                # a worker does, but `ThreadPoolExecutor.__exit__` then
+                # calls `shutdown(wait=True)` and joins the workers still
+                # running -- so a flag validation error raised in the first
+                # second surfaced only after the remaining friends had each
+                # spent up to `--timeout`. With eight friends on the default
+                # 900s that is fifteen minutes of a CLI that is already
+                # certain to fail.
+                #
+                # `abort_event` is what actually shortens it: the friends
+                # still running poll it and stop, the same way they do for
+                # Ctrl-C. `cancel_futures` drops the ones that never
+                # started, and `wait=False` means this does not block on
+                # either. Correct precisely because an AfError ends the run
+                # -- it reaches cli.py's handler and exits.
+                #
+                # BaseException, not Exception: KeyboardInterrupt arrives
+                # here too, and it is the case that most needs the pool not
+                # to block.
+                abort_event.set()
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
             finally:
+                on_pool(None)
                 # In a `finally` because the heartbeat thread must stop even
                 # when the round raises. A background thread left naming
                 # friends that are no longer running would interleave with

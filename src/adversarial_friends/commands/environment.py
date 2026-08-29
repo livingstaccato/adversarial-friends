@@ -9,6 +9,7 @@ from collections.abc import Callable
 import concurrent.futures
 import contextlib
 import dataclasses
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -17,6 +18,7 @@ from types import FrameType
 from typing import Any
 
 from .. import isolation
+from ..errors import UsageError
 from ..runstore import RunStore
 
 # The type signal.signal() both accepts and returns, per typeshed: a handler
@@ -173,3 +175,46 @@ def freeze_revision(
         "decide them differently, and the repository was re-snapshotted so friends "
         "read the same revision the prompt quotes.",
     )
+
+
+CLOCK_OFFSET_VAR = "AF_CLOCK_OFFSET_S"
+
+
+def clock_offset(downgrades: list[str]) -> float:
+    """Seconds to add to every clock reading this run takes.
+
+    An injection point so an end-to-end test can reach the wall-clock branch
+    without waiting two hours. The arithmetic under test is the same
+    arithmetic; unset, `now()` is `time.monotonic` exactly.
+
+    Two things this used to get wrong, both from being a bare `float(...)`
+    on an environment variable in the middle of `cmd_run`:
+
+    * **A malformed value raised a bare `ValueError`** out of the command as
+      a traceback rather than a `UsageError` with a message.
+    * **A set value was invisible.** It shortens the wall-clock ceiling, so
+      an ambient value in CI -- a leaked export from a test job, a name
+      collision -- made a run report `budget-exhausted` and exit 11 while
+      the downgrade blamed `--max-wall-clock`, a ceiling the operator had
+      set correctly. Nothing anywhere said the clock had been moved.
+
+    So it is still read unconditionally, because gating a test hook behind a
+    flag only moves the problem, but a run it affects now says so in its own
+    report.
+    """
+    raw = os.environ.get(CLOCK_OFFSET_VAR, "") or ""
+    if not raw:
+        return 0.0
+    try:
+        offset = float(raw)
+    except ValueError:
+        raise UsageError(
+            f"{CLOCK_OFFSET_VAR}={raw!r} is not a number. It is a test hook that "
+            "shifts this run's clock; unset it unless you meant to set it."
+        ) from None
+    downgrades.append(
+        f"{CLOCK_OFFSET_VAR}={offset} shifted this run's clock forward, so every "
+        "wall-clock ceiling was that much shorter than it appears. This is a test "
+        "hook -- unset it unless you meant to set it."
+    )
+    return offset

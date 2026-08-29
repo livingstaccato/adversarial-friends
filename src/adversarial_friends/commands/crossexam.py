@@ -21,7 +21,7 @@ from typing import Any
 
 from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec, friend_key
-from ..ceilings import BUDGET_EXHAUSTED, Budget
+from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
@@ -35,7 +35,6 @@ from .judging import (
     _parse_verdicts,
     _prior_verdicts_by_claim,
     _slice_for,
-    _within_deadline,
 )
 
 
@@ -229,7 +228,7 @@ def run_rounds(
             budget.exhaust(f"--max-wall-clock reached before round {round_no}")
             break
         # A friend may not outlive the ceiling it was dispatched under.
-        judge_specs = _within_deadline(judge_specs, budget.seconds_left(now()))
+        judge_specs = within_deadline(judge_specs, budget.seconds_left(now()))
 
         results = dispatch_round(
             judge_specs,

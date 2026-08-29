@@ -8,17 +8,21 @@ import argparse
 import concurrent.futures
 import dataclasses
 import json
-import os
 from pathlib import Path
 import signal
-import threading
 import time
 from typing import Any
 import uuid
 
 from .. import isolation
-from ..adapters import friend_key, load_adapters
-from ..ceilings import BUDGET_EXHAUSTED, Budget, derive_max_calls, warn_if_unreachable
+from ..adapters import friend_key
+from ..ceilings import (
+    BUDGET_EXHAUSTED,
+    Budget,
+    derive_max_calls,
+    warn_if_unreachable,
+    within_deadline,
+)
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
 from ..ledger import Alias, Claim
@@ -26,22 +30,18 @@ from ..orchestrator import (
     NeedsOrchestrator,
     write_request,
 )
-from ..paths import ADAPTER_DIR
-from ..progress import Progress
 from ..report import render
 from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
-from ..trust import parse_unsafe_extra_args
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
-from .confinement import confinement_downgrades
 from .critique import run_critique
 from .crossexam import run_rounds
-from .environment import _resolve_repo_root, freeze_revision, install_abort_handlers
+from .environment import _resolve_repo_root, clock_offset, freeze_revision
 from .exits import decide_exit
-from .friends import roster_for_run
-from .resume import loop_position, resume_round_one, write_halt
+from .resume import loop_position, resume_iteration, write_halt
 from .runmeta import JUDGING_MODES, _base_meta, finalize_meta, loop_is_done, validate_run_args
+from .setup import prepare_run
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -55,66 +55,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     # _resolve_repo_root resolves its own local copy internally, so
     # nothing here needs an absolute/resolved path to work correctly.
 
-    registry = load_adapters(ADAPTER_DIR)
-    # AF_FAKE_FRIEND keeps the end-to-end tests off real CLIs and, critically,
-    # off any metered provider. `--friend fake:<mode>` runs
-    # `$AF_FAKE_FRIEND <mode>` directly (see dispatch._dispatch); the mode
-    # travels in the lens slot of the cli:lens flag syntax.
-    fake_env = os.environ.get("AF_FAKE_FRIEND")
-    fake_cmd = fake_env.split() if fake_env else None
-    downgrades: list[str] = []
-    # §13's escape hatch. Parsed early so a bad value fails before any
-    # dispatch, and recorded as a downgrade because a run carrying
-    # unvalidated flags has weaker guarantees than its friend table implies.
-    extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
-    if extra_args:
-        downgrades.append(
-            f"--unsafe-extra-args passed {extra_args} to every friend. These "
-            "flags are not validated, so read-only is reported as False for "
-            "every friend regardless of what its adapter emitted."
-        )
-
-    resolved, specs = roster_for_run(args, registry, fake_cmd, downgrades)
-    # §12.2: every friend that will run without OS confinement is named in
-    # the report, whether that is because the operator overrode the refusal
-    # or because the CLI has no read-only mode and one was available. A
-    # weakened guarantee has to be visible in the artifact a human reads,
-    # not only in the code that decided it.
-    env_withheld = confinement_downgrades(args, specs, registry, downgrades)
-
-    # Signal handling: a cancelled or CI-killed run must not leave a
-    # metered agent CLI process running unbounded, nor a stale
-    # `git worktree` registration behind in the repo under review. Neither
-    # SIGTERM nor (reliably, once the main thread is blocked deep inside a
-    # C-level wait) SIGINT would otherwise give this function's own
-    # `finally` blocks a chance to run at all: SIGTERM's default
-    # disposition kills the process immediately, with no Python-level
-    # unwinding whatsoever; SIGINT's default handler does raise
-    # KeyboardInterrupt, but that exception, once it propagates out of the
-    # blocked `pool.map()` call below, immediately re-blocks inside
-    # `ThreadPoolExecutor.__exit__`'s own `shutdown(wait=True)`, which
-    # waits for the same still-hung worker -- so cleanup never actually
-    # runs within any reasonable time either way. Installing explicit
-    # handlers for both signals, which only ever set `abort_event` and
-    # shut the active pool down without waiting, is what makes the
-    # `finally` blocks below reachable promptly. Handlers are restored
-    # unconditionally in the outer `finally` -- a library-ish function
-    # should not permanently hijack process-wide signal disposition.
-    abort_event = threading.Event()
-    abort_signum: dict[str, int | None] = {"value": None}
-    active_pool: list[concurrent.futures.ThreadPoolExecutor | None] = [None]
-    installed_handlers = install_abort_handlers(abort_event, abort_signum, active_pool)
-    if len(installed_handlers) < 2:
-        downgrades.append(
-            "signal-based abort handling is unavailable in this context "
-            "(cmd_run was not called from the main thread); Ctrl-C/SIGTERM "
-            "cannot cleanly abort this run -- isolation teardown on a kill "
-            "signal is not guaranteed."
-        )
-    # Progress goes to stderr; stdout stays the run directory and nothing
-    # else, so `cd "$(afriend run spec.md)"` keeps working. Built before the
-    # try because its `finally` closes it.
-    reporter = Progress(enabled=not args.no_progress)
+    setup = prepare_run(args)
+    registry = setup.registry
+    fake_cmd = setup.fake_cmd
+    downgrades = setup.downgrades
+    extra_args = setup.extra_args
+    resolved, specs = setup.resolved, setup.specs
+    env_withheld = setup.env_withheld
+    abort_event = setup.abort_event
+    abort_signum = setup.abort_signum
+    active_pool = setup.active_pool
+    installed_handlers = setup.installed_handlers
+    reporter = setup.reporter
     try:
         repo_root = _resolve_repo_root(artifact)
         if repo_root is None:
@@ -124,12 +76,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
             specs = [dataclasses.replace(s, scope="doc") for s in specs]
 
-        # Injectable so an end-to-end test can reach the wall-clock branch
-        # without hanging a worker for two hours: AF_CLOCK_OFFSET_S is added
-        # to every reading this run takes. Nothing else changes -- the
-        # arithmetic under test is the same arithmetic -- and with the
-        # variable unset `now()` is `time.monotonic` exactly.
-        offset = float(os.environ.get("AF_CLOCK_OFFSET_S", "0") or 0)
+        offset = clock_offset(downgrades)
 
         def now() -> float:
             return time.monotonic() + offset
@@ -148,8 +95,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
             store = RunStore(Path(args.out) if args.out else default_root(), run_id)
             frozen, digest = store.artifact_copy(artifact)
-        # One writer per run directory (see RunStore.lock). Taken before
-        # anything is read from it or written to it.
+        # One writer per run directory (see RunStore.lock). Taken as early
+        # as the two branches above allow -- both must construct the
+        # RunStore first, and the fresh-run branch also copies the artifact
+        # in, which `run_dir.mkdir(parents=True)` already makes exclusive
+        # (runstore.py). A losing resumer raises RunLocked before it uses
+        # anything it read. The comment here used to claim the lock was held
+        # before ANYTHING was read or written, which is not true of either
+        # branch -- and a maintainer trusting it would add a ledger read or
+        # a run.json write into that window against a directory another
+        # resumer may be mid-write on.
         store.lock()
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
@@ -234,6 +189,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         last_digest: str | None = None
         streak = 0
         iterations_run = 0
+        # Carried into write_halt so a resumed iteration can compute the
+        # streak from what actually happened. The defaults describe an
+        # EXTRACTION halt, where run_critique raises before returning
+        # anything to read -- a round whose output could not be parsed is
+        # not evidence of convergence, so "failed, not dry" is the honest
+        # reading rather than a placeholder.
+        halted_dry, halted_failed = False, True
         # Where a resumed loop re-enters, and what it inherits.
         first_iteration, streak, carry_over = loop_position(args, store, resume_dir is not None)
         # The highest round number the run reached, across every loop
@@ -271,10 +233,27 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # dispatched under. Without this the ceiling only bounded
                 # the gaps between rounds, and a friend started a second
                 # before it expired ran its own full timeout past it.
-                round_specs = [
-                    dataclasses.replace(s, timeout=min(s.timeout, int(budget.seconds_left(now()))))
-                    for s in specs
-                ]
+                #
+                # The SAME helper the judging round uses. This was an inline
+                # `min()` doing neither of that helper's two corrections, so
+                # the ceiling meant one thing for a judging round and
+                # another for the critique round immediately before it: a
+                # critique friend dispatched with 20s left got a real kill
+                # deadline of 80s, and with 0.6s left got a timeout of 0 --
+                # which agy turns into `--print-timeout 0s` and dies
+                # instantly, having spent a call and marked the run
+                # incomplete. Raised from two lenses independently, which is
+                # what a fix applied to one of two paths looks like from
+                # outside.
+                round_specs = within_deadline(specs, budget.seconds_left(now()))
+                if not round_specs:
+                    # Same shape crossexam uses when the helper returns
+                    # nothing: say so and stop, rather than dispatching
+                    # friends that cannot honestly run.
+                    budget.exhaust(
+                        f"--max-wall-clock leaves no usable time for iteration {iteration}"
+                    )
+                    break
 
                 revision = freeze_revision(
                     store,
@@ -295,7 +274,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 last_digest = revision.digest
 
                 if resume_dir is not None and iteration == first_iteration:
-                    resumed = resume_round_one(
+                    step = resume_iteration(
                         args,
                         store,
                         round_specs,
@@ -309,25 +288,32 @@ def cmd_run(args: argparse.Namespace) -> int:
                         budget,
                         base_round,
                         _track_pool,
+                        streak,
+                        prior=carry_over,
+                        tracker=tracker,
+                        keep=args.keep,
+                        extra_args=extra_args,
+                        pass_env=tuple(args.pass_env),
+                        reporter=reporter,
                     )
+                    resumed = step.resumed
                     all_claims = resumed.claims
                     all_aliases.extend(resumed.aliases)
                     friends_meta.extend(resumed.friends_meta)
                     downgrades.extend(resumed.downgrades)
                     cross = resumed.cross or carry_over
                     carry_over = cross
-                    counter = len(all_claims)
+                    # From the ledger, not from len(all_claims): canonical
+                    # reconstruction drops claims a merge retired, so
+                    # counting the live set re-issues ids already spent.
+                    counter = resumed.counter
                     any_success = True
                     iterations_run = iteration
                     rounds_reached = max(rounds_reached, base_round)
-                    if args.mode != "loop":
-                        break
-                    # The resumed iteration is now complete. Fall through to
-                    # the same streak arithmetic every other iteration runs,
-                    # and let the loop decide whether another is due; the
-                    # next one will halt for its own adjudication.
-                    streak = next_streak(streak, failed=False, dry=round_is_dry(False, True))
-                    if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
+                    streak = step.streak
+                    if step.done or loop_is_done(
+                        streak, all_claims, cross, [friend_key(s) for s in specs]
+                    ):
                         break
                     resume_dir = None
                     continue
@@ -423,6 +409,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # convergence.
                 dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
                 streak = next_streak(streak, failed=critique.any_failed, dry=dry)
+                halted_dry, halted_failed = dry, critique.any_failed
                 if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
                     break
                 if budget.exhausted_by:
@@ -438,6 +425,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 iteration,
                 streak,
                 carry_over,
+                round_dry=halted_dry,
+                round_failed=halted_failed,
             )
             raise
 
@@ -491,9 +480,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # installed, and a Ctrl-C that skipped this would leave a thread
         # narrating friends that are no longer running.
         reporter.close()
-        # A distinct loop variable name from the `for sig in (...)` loop
-        # above: reusing `sig` here would bind it to a different type
-        # (installed_handlers' int keys vs. that loop's Signals values)
-        # in the same function scope.
+        # Handlers are restored unconditionally: a library-ish function
+        # should not leave process-wide signal disposition changed.
         for restored_sig, previous in installed_handlers.items():
             signal.signal(restored_sig, previous)

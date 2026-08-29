@@ -2,6 +2,79 @@
 
 ## Unreleased
 
+### commands/run.py, cross-examined
+
+Thirteen claims against the largest module never examined, twelve upheld and
+one deadlocked. Nine are fixed here. They fell into three groups.
+
+**Resume and loop, five claims and one cause.** `--mode loop --merge
+orchestrator` halts once per iteration, and almost nothing survived the halt.
+
+- **A merged claim's id was handed out twice.** The resumed counter was
+  `len(all_claims)`, and that list is the CANONICAL one, which drops claims a
+  merge retired. Merge `c-0002@1` into `c-0001@1` and the next iteration
+  minted `c-0002@1` again -- into an append-only ledger, where aliases,
+  verdicts, states and resolutions all key on that id. The counter now comes
+  from the whole ledger (`merge.next_claim_number`): an id is spent when it is
+  written, not while it happens to still be live.
+- **The resumed judging round inherited nothing.** `resume_round_one` called
+  `run_rounds` with no `prior`, so a loop resumed at iteration 2 re-seeded
+  every claim `contested` and re-judged what iteration 1 had settled, at full
+  fan-out, with judges shown none of the prior arguments. The same call was
+  also missing `tracker`, `keep`, `extra_args` and `pass_env` -- one omission,
+  five behaviours.
+- **A resumed loop could not converge.** The streak arithmetic on that path
+  was `next_streak(streak, failed=False, dry=round_is_dry(False, True))`, and
+  `round_is_dry(False, True)` is always False -- so it zeroed the streak
+  `loop_position` had just restored, every time. Termination needs two
+  consecutive dry rounds, so the run went to `--max-loop-iterations` paying a
+  full fan-out per iteration after it had stopped learning anything.
+  `write_halt` now records what the halted round actually did.
+- **An adjudication response could be applied twice.** `ledger.append` is a
+  bare JSONL write with no dedupe, and nothing marked `RESPONSE.json` used, so
+  a second `--resume` re-appended every extracted claim under fresh ids. This
+  was the deadlocked claim, and the deadlock was the useful part: two judges
+  amended it to say the defect is real but on the extraction branch rather
+  than the merge branch the claim named, and the third refuted it precisely
+  because amending would invalidate the stated scenario. The merge branch is
+  genuinely guarded. The response is now renamed `.applied` -- kept, not
+  deleted, because it is the operator's own written judgment.
+
+**A fix applied to one of two paths.** The wall-clock cap reserved
+`KILL_GRACE_S` and floored at one second for judging rounds and did neither
+for critique rounds, so a critique friend dispatched with 20s left got a real
+kill deadline of 80s, and with 0.6s left got a timeout of `0` -- which agy
+turns into `--print-timeout 0s` and dies instantly, having spent a call and
+marked the run incomplete. Two friends raised this independently from two
+lenses, which is what an asymmetric fix looks like from outside. The helper
+now lives in `ceilings.within_deadline` and both paths call it.
+
+**Durability and hygiene.**
+
+- `run.json` and `report.md` are written to a sibling temporary file and
+  renamed. `write_text` truncates first and writes second, so a crash between
+  the two left the file existing and invalid -- and `--resume` reads run.json
+  to reconstruct the run, so that was permanent loss of an hour of metered CLI
+  time. A `loop` rewrites it every iteration, so the window recurred.
+- A deliberate stop no longer waits out every other friend. `pool.map` raises
+  as soon as one worker does, but `ThreadPoolExecutor.__exit__` then joined
+  the rest -- so a flag-validation error raised in the first second surfaced
+  only after seven other friends had each spent up to `--timeout`.
+- `AF_CLOCK_OFFSET_S` is validated and recorded. It was a bare `float()` on an
+  environment variable, so a malformed value was a traceback; and because it
+  shortens every wall-clock ceiling, an ambient value in CI made a run report
+  `budget-exhausted` while the downgrade blamed a `--max-wall-clock` the
+  operator had set correctly.
+- Three comments describing code that is not there, including one asserting a
+  lock ordering both branches above it violate.
+
+Two claims are not fixed and are recorded rather than hidden. **c-0012**
+(the pool) is fixed; **c-0013** -- one friend succeeding out of fifty exits
+`0`, so CI reads success and discards the rest -- is a change to the exit-code
+contract and is left for a decision. `cmd_run` crossed the 500-line cap twice
+more along the way, so `commands/setup.py` now holds everything decided before
+the first dispatch.
+
 ### A friend's scratch no longer lands in the tree it is reviewing
 
 `c-0009`, the one claim from the `dispatch.py` cross-examination that
