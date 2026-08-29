@@ -9,9 +9,10 @@ reviewers.
 
 Read `src/adversarial_friends/assets/SKILL.md` for the workflow. Run the tool
 with `afriend run <artifact> --mode report`, and `afriend doctor` when a run
-comes back thinner than expected. `report` is the only mode this build
-implements; see `src/adversarial_friends/assets/references/modes.md` for the
-rest.
+comes back thinner than expected. All four modes -- `report`, `crossexam`,
+`gate`, `loop` -- ship; see
+`src/adversarial_friends/assets/references/modes.md` for what each one costs
+and which exit codes it can produce.
 
 ## Layout
 

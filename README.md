@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-365-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-912-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -88,11 +88,11 @@ afriend doctor
 ```
 
 ```
-agy        found    schema=True  readonly=True  effort=native      /Users/you/.local/bin/agy
-claude     found    schema=True  readonly=True  effort=native      /Users/you/.local/bin/claude
-codex      found    schema=True  readonly=True  effort=native      /opt/homebrew/bin/codex
-opencode   found    schema=False readonly=False effort=unverified  /Users/you/.opencode/bin/opencode
-ollama     found    schema=False readonly=False effort=none       http://127.0.0.1:11434/api/generate
+agy        found        schema=True readonly=True effort=native /Users/you/.local/bin/agy
+claude     found        schema=True readonly=True effort=native /Users/you/.local/bin/claude
+codex      found        schema=True readonly=True effort=native /opt/homebrew/bin/codex
+ollama     found        schema=False readonly=False effort=none http://127.0.0.1:11434/api/generate
+opencode   found        schema=False readonly=False effort=unverified /Users/you/.opencode/bin/opencode
 ```
 
 For `ollama`, `found` means a reachable endpoint rather than a binary on
@@ -111,7 +111,7 @@ it has no read-only mode, so the tool says so instead of pretending.
 afriend run docs/my-design.md --mode report
 ```
 
-It prints one thing — the run directory. Read `report.md` inside it:
+**Stdout** carries one thing — the run directory. Read `report.md` inside it:
 
 ```bash
 cat "$(afriend run docs/my-design.md --mode report)/report.md"
@@ -133,6 +133,12 @@ afriend run spec.md --friend ollama:security:qwen3:0.6b
 > `--friend` flag means a one-friend run — which cannot cross-examine
 > anything. The tool records that as a downgrade in `run.json` and
 > `report.md` rather than letting it look like a full review.
+
+A run takes minutes, not seconds — a friend is a whole agent CLI reading a
+document. Progress goes to **stderr**: a line per friend as it finishes, and
+a heartbeat naming whatever is still outstanding, so a quiet run is
+distinguishable from a hung one. `--no-progress` silences it for a caller
+that captures both streams together.
 
 ---
 
@@ -225,7 +231,8 @@ as a reproducible defect.
     ├── <friend>.prompt ← exactly what this friend was asked
     ├── <friend>.raw    ← its unmodified stdout
     ├── <friend>.err    ← its stderr (always present, even when empty)
-    └── <friend>.meta   ← argv, exit code, duration, timeout, orphan status
+    ├── <friend>.meta   ← argv, exit code, duration, timeout, orphan status
+    └── <friend>.sandbox ← the OS policy it ran under, when one was applied
 ```
 
 Runs land under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
@@ -306,11 +313,16 @@ is Antigravity — which is `agy`.
 
 | Code | Meaning |
 |---|---|
-| `0` | at least one friend produced a usable critique |
-| `1` | ran, but every dispatched friend failed |
-| `2` | usage error — bad flag, unknown CLI, unimplemented mode |
+| `0` | the run reached terminal states with nothing blocked |
+| `1` | a `gate` still has claims needing a resolution, or every dispatched friend failed |
+| `2` | usage error — bad flag, unknown CLI, missing artifact |
 | `3` | no usable friends found at all |
+| `10` | `--merge orchestrator` is waiting for you to adjudicate merges |
+| `11` | a ceiling was hit — the run was truncated, not decided |
 | `128+N` | aborted by signal N — isolation torn down, friends killed |
+
+A ceiling outranks everything below it, so a CI wrapper can read `11` as
+"retry" and `1` as "block" without ambiguity.
 
 ---
 
@@ -345,7 +357,7 @@ The skill invokes `afriend`, so the package must be installed for it to work —
 
 ```bash
 make install    # uv sync
-make test       # pytest — 365 tests
+make test       # pytest — 912 tests
 make quality    # lint + type-check + every sync gate + tests
 make diagrams   # re-render docs/architecture/*.puml
 ```

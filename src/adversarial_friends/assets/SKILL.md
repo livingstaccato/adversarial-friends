@@ -47,9 +47,10 @@ writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-fri
 or `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
 `artifact/` copy, and per friend under `round-N/`: `<friend>.prompt` (exactly
 what it was asked), `.raw` (its unmodified stdout), `.err` (its stderr —
-always written, even when empty), and `.meta` (argv, exit code, duration,
-timeout and orphan status). `afriend run` prints only the run directory path
-to stdout; read `report.md` from there and present the findings.
+always written, even when empty), `.meta` (argv, exit code, duration,
+timeout and orphan status), and `.sandbox` (the OS confinement policy it ran
+under, when one was applied). `afriend run` prints only the run directory
+path to stdout; read `report.md` from there and present the findings.
 
 ### This takes minutes, not seconds
 
@@ -87,14 +88,17 @@ Do not reach for `gate` or `loop` on a user's behalf without saying so: both
 cost several times what `report` does, and `gate` deliberately exits
 non-zero until every claim is answered.
 
-Exit codes: `0` the run reached terminal states with nothing blocked; `1`
-every dispatched friend failed, or a `crossexam` left claims undecided or
-lost a required friend mid-round; `2` a usage or config error — a missing
-artifact, an unrecognized `--friend` value, or `--mode gate`/`loop`; `3` no
+Exit codes: `0` the run reached terminal states with nothing blocked; `1` a
+`gate` still has claims needing a resolution, every dispatched friend
+failed, or a `crossexam` left claims undecided or lost a required friend
+mid-round; `2` a usage or config error — a missing artifact, an
+unrecognized `--friend` value, `--max-rounds 1` with a judging mode; `3` no
 usable friend could be found at all (install a second agent CLI, or pass
-`--include-self` to let the host CLI review its own artifact); `11` a
-a judging mode stopped at a ceiling, having neither converged nor cleared
-anything.
+`--include-self` to let the host CLI review its own artifact); `10`
+`--merge orchestrator` is waiting for you to adjudicate merges (see
+`references/modes.md`); `11` a judging mode stopped at a ceiling, having
+neither converged nor cleared anything. A run cancelled by a signal exits
+`128 + signal number`.
 
 A `gate` run exits `1` while any claim still needs an answer. Resolve them
 one at a time; each call re-reports what is left:

@@ -305,6 +305,9 @@ the default usable with no harness attached.
 | `--keep` | Leave friend worktrees under the run directory to inspect |
 | `--json` | Print run.json instead of the run directory path |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
+| `--include-self` | Let the host CLI review its own artifact, when it is the only one installed |
+| `--pass-env VAR` (repeatable) | Also pass `VAR` through to confined friends |
+| `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
 | `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
 | `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |
 
@@ -341,7 +344,7 @@ every command in this build:
 |---|---|---|
 | `0` | success | a run that reached terminal states with nothing blocked, `afriend doctor` (at least one friend found) |
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
-| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, `--preset` set to anything but `inherit`, or an `afriend resolve` naming no location / an unknown claim / a `fixed` at an unchanged location |
+| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` at an unchanged location |
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |

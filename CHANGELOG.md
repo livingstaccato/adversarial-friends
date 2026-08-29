@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.1.7
+
+A documentation release. Every shipped doc was read against the code it
+describes -- `README.md`, `AGENTS.md`, `SKILL.md`, all three `references/`
+pages, and the `docs/` index -- and ten claims were found to be false. Three
+of them told a reader that a feature which ships does not exist, which is the
+worst thing a doc can do: it does not merely fail to help, it actively stops
+someone using what they already installed.
+
+Nothing about the runner changed. If you are on 0.1.6, the code you have is
+the code this describes.
+
+### Docs that described a build from several releases ago
+
+- **`AGENTS.md` said `report` was "the only mode this build implements".**
+  `crossexam`, `gate` and `loop` have all shipped since 0.1.0. This is the
+  file an agent reads first when working in the repository.
+- **`ledger.md` said `verdict` records were "schema only -- not produced by
+  this build"**, three paragraphs after its own opening line says all four
+  record types are written. Every judging mode has written verdicts since
+  `crossexam` landed. The section now documents the record as it is actually
+  written -- `confidence`, `counter_evidence` and `amended_claim` included,
+  none of which were mentioned -- with an example taken from the real dataclass
+  rather than from memory, and the correct `evidence_assessment` values
+  (`confirmed`/`disputed`/`unverifiable`, not the `verified` a reader could
+  reasonably have inferred).
+- **`ledger.md` said an `orchestrator` alias "has no implementation to produce
+  it yet".** `--merge orchestrator` ships, and that alias is the only way two
+  differently-worded claims are ever linked -- which the same page's closing
+  paragraph flatly denied was possible at all.
+
+### Exit codes, in three places, none of them agreeing
+
+- **The README's table listed five codes and omitted `10` and `11`** -- while
+  the prose two sections above it told you to expect exit `10` from `--merge
+  orchestrator`. A CI wrapper written from that table treats a halt for merge
+  adjudication as an unknown failure.
+- **`SKILL.md` listed `--mode gate` and `--mode loop` as *causes* of exit
+  `2`,** a usage error. Both are supported modes. It also omitted `10`
+  entirely and carried a doubled word.
+- **`modes.md` claimed `--preset` set to anything but `inherit` was a usage
+  error,** in a table three sections below the one documenting what
+  `thorough` and `cheap` do. Replaced with the usage errors that are real: a
+  `--resume` naming a run that never halted, and an `--out` directory that
+  already exists.
+
+### Numbers and output nobody had re-checked
+
+- **The README advertised 365 tests, twice.** The suite collects 912.
+- **The `doctor` sample output had the wrong rows in the wrong order** with
+  column widths that never matched the format string. It is now literal
+  captured output.
+- **`--pass-env` and `--no-progress` appeared in no document at all.** Both
+  are now in `modes.md`, along with `--include-self`, which only ever appeared
+  parenthetically inside an exit-code description.
+- **The README still said a run "prints one thing".** Since 0.1.6 it also
+  prints per-friend progress and a heartbeat to stderr -- the change that
+  exists specifically so a long run is not mistaken for a hung one, described
+  nowhere a user would look for it.
+- **`docs/architecture/README.md` listed three of the five diagrams**;
+  `crossexam-states` and `gate-workflow` had been rendered, committed, and
+  linked from two other pages without ever being added to the index that
+  claims to enumerate them.
+- The run-directory listing in both the README and `SKILL.md` omitted
+  `<friend>.sandbox`, the file that records what a confined friend was
+  actually allowed to read.
+
+### Two gates, so this is the last time
+
+The existing guard scanned shipped docs for absence claims and checked them
+against `--help`. Every defect above slipped past it, because it only knew
+how to recognise a **flag**: nothing in "the only mode this build implements"
+or "not produced by this build" is a flag.
+
+- `test_no_shipped_doc_calls_a_shipped_mode_unimplemented` checks any
+  paragraph claiming absence against the modes in `IMPLEMENTED_MODES` and the
+  record types in the ledger, and covers `AGENTS.md` and `docs/README.md`,
+  which the flag guard never read.
+- `test_the_advertised_test_count_is_the_real_one` takes the count from
+  collection rather than from a constant someone has to remember to update, so
+  the only way to change the advertised number is to change the suite.
+
+### Also
+
+`v0.1.6` was published to PyPI and never tagged in git -- the mirror image of
+0.1.4, which was tagged and never uploaded. Both leave the same question
+unanswerable: which commit is the version you installed. The `v0.1.6` tag is
+added here, at the commit that was uploaded.
+
 ## 0.1.6
 
 Everything here came out of pointing the tool at its own source twice more --

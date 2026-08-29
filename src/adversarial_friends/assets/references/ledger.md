@@ -38,10 +38,30 @@ Example, taken from a real run:
  "suggested_fix":"check exp before dispatch"}
 ```
 
-**verdict** *(schema only — not produced by this build)* — one judge's ruling
-on one claim version: `upheld`, `refuted`, `amended`, `unproven`, or
-`out-of-scope`. `evidence_assessment` would record whether the judge could
-actually find the evidence the claim cited.
+**verdict** — one judge's ruling on one claim version, written by every
+judging mode (`crossexam`, `gate`, `loop`) from round 2 on. `verdict` is
+`upheld`, `refuted`, `amended`, `unproven`, or `out-of-scope`; the first
+three are dispositive and the last two are not, which is what decides
+whether a claim can settle. `judge` is that friend's roster identity and
+`round` is the round it was cast in — a judge appearing twice on one claim
+in different rounds is normal, and only its **latest** verdict counts toward
+the claim's state.
+
+`evidence_assessment` (`confirmed`, `disputed`, or `unverifiable`) records
+whether the judge could actually check the evidence the claim cited, and is
+required on the dispositive verdicts. `unverifiable` there downgrades the
+verdict to `unproven` before anything counts it, so a claim is never
+dismissed on the strength of nobody having looked; `disputed` requires
+`counter_evidence` saying what the judge found instead. `amended_claim`
+carries the rewrite on an `amended` verdict — unanimous amendments mint the
+successor `claim` record that `supersedes` this one.
+
+```json
+{"type":"verdict","claim_id":"c-0001@1","judge":"fake/ops","round":2,
+ "verdict":"upheld","confidence":"high","evidence_assessment":"confirmed",
+ "reasoning":"dispatch happens before any exp check",
+ "counter_evidence":null,"amended_claim":null}
+```
 
 **alias** — a merge decision: `duplicate` is an exact (whitespace/case-
 insensitive text-and-location) match of `canonical`. **Both ids have their
@@ -49,9 +69,10 @@ own, full `claim` record in the ledger** — a claim that gets aliased away is
 never dropped, only marked as a duplicate of another; this is what lets a
 reader recover full corroboration from `claims.jsonl` alone, without needing
 the in-memory state a live `afriend run` process held (see "Reading it directly"
-below). `source` is `exact` for the deterministic merge `report` performs
-(the only merge strategy this build has); `orchestrator` is reserved for a
-judgment-call merge that has no implementation to produce it yet.
+below). `source` is `exact` for the deterministic merge every mode performs, or
+`orchestrator` for a merge an operator adjudicated under `--merge
+orchestrator` — that one carries the `rationale` the operator wrote, and is
+the only way two *differently worded* claims ever become linked.
 
 ```json
 {"type":"alias","canonical":"c-0001@1","duplicate":"c-0002@1",
@@ -99,13 +120,18 @@ computed for you; read it there rather than reconstructing it from raw `jq`
 unless you specifically need the ledger-only view.
 
 Every claim in a `report`-mode run has `round: 1`, since there is only ever
-one round. `exact_merge` normalizes only whitespace runs and case (plus a
-bare strip on `location`) before comparing claim text — it deliberately
-under-merges rather than guess at equivalence. Two friends describing the
-same defect in *different words* produce two `claim` records with **no
-`alias` between them at all** — that pair is genuinely two separate,
-unlinked findings as far as the ledger is concerned, and duplicates you
-notice yourself should be merged in your presentation, not in the ledger.
+one round; a judging mode's ledger spans several, and a `loop` gives each
+iteration its own block of round numbers rather than reusing round 1.
+`exact_merge` normalizes only whitespace runs and case (plus a bare strip on
+`location`) before comparing claim text — it deliberately under-merges
+rather than guess at equivalence. Under the default `--merge exact`, two
+friends describing the same defect in *different words* produce two `claim`
+records with **no `alias` between them at all** — that pair is genuinely two
+separate, unlinked findings as far as the ledger is concerned, and
+duplicates you notice yourself should be merged in your presentation, not in
+the ledger. `--merge orchestrator` is the one path that links them, and the
+`alias` it writes carries `source: "orchestrator"` plus the rationale
+whoever adjudicated it gave.
 Two friends producing the exact *same* text are a different case: still two
 full `claim` records (nothing is ever dropped — see **alias** above), but
 this time linked by an `alias` record that says so, which is exactly the

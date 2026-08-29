@@ -251,3 +251,76 @@ def test_evals_file_is_valid_and_has_cases():
     assert data["skill_name"] == "adversarial-friends"
     assert len(data["evals"]) >= 3
     assert all("prompt" in e and "expected_output" in e for e in data["evals"])
+
+
+def test_the_advertised_test_count_is_the_real_one():
+    """The README states a test count twice -- a badge and a `make test`
+    comment -- and nothing kept either honest. Both said 365 while the suite
+    had grown past 900, which is the most quietly embarrassing kind of stale:
+    a number a reader has no way to check and every reason to believe.
+
+    Collection is the source of truth rather than a hand-maintained constant,
+    so the only way to change the advertised number is to change the suite.
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+    collected = sum(
+        int(m.group(1)) for m in re.finditer(r"^\S+\.py: (\d+)$", proc.stdout, re.MULTILINE)
+    )
+    assert collected > 0, f"could not read a collection count from pytest:\n{proc.stdout[-2000:]}"
+
+    readme = REPO.joinpath("README.md").read_text()
+    advertised = set(re.findall(r"badge/tests-(\d+)-", readme))
+    advertised |= set(re.findall(r"make test\s+# pytest — (\d+) tests", readme))
+    assert advertised == {str(collected)}, (
+        f"README advertises tests={sorted(advertised)}, pytest collects {collected}"
+    )
+
+
+def test_no_shipped_doc_calls_a_shipped_mode_unimplemented():
+    """The flag-scoped guard above missed three years of nothing and then
+    three sentences at once: `AGENTS.md` said `report` was the only mode this
+    build implements, and `ledger.md` said verdict records were "schema only"
+    and an orchestrator merge had "no implementation to produce it yet". All
+    three named a feature that ships, and none named a flag, so the existing
+    check saw nothing.
+
+    This one keys on the sentence pattern rather than the flag: any paragraph
+    claiming absence is checked against the modes and record types the code
+    actually has.
+    """
+    from adversarial_friends.commands.runmeta import IMPLEMENTED_MODES
+    from adversarial_friends.ledger import _TYPE_NAMES
+
+    shipped_names = {m.lower() for m in IMPLEMENTED_MODES}
+    shipped_names |= {n.lower() for n in _TYPE_NAMES.values()}
+
+    absence = re.compile(
+        r"not in this build|not implemented|not produced|no implementation"
+        r"|only mode|schema only|reserved for|has no implementation",
+        re.IGNORECASE,
+    )
+    docs = [
+        REPO / "README.md",
+        REPO / "AGENTS.md",
+        REPO / "docs" / "README.md",
+        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+    ]
+    offenders = []
+    for path in docs:
+        for block in re.split(r"\n\s*\n", path.read_text()):
+            if not absence.search(block):
+                continue
+            for name in sorted(shipped_names):
+                if re.search(rf"`{re.escape(name)}`", block):
+                    offenders.append(
+                        f"{path.relative_to(REPO)}: {name!r} ships, doc says otherwise"
+                    )
+    assert not offenders, "docs call a shipped feature absent:\n" + "\n".join(offenders)
