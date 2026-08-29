@@ -1,6 +1,0 @@
-{
-  "name": "adversarial-friends",
-  "version": "0.1.0",
-  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers.",
-  "contextFileName": "AGENTS.md"
-}

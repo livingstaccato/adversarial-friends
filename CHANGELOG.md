@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.1.6
+
+Everything here came out of pointing the tool at its own source twice more --
+`commands/run.py` and the leftover deadlock from `dispatch.py` -- plus the
+first time it was ever run against a different project.
+
+**Two things a user notices immediately.**
+
+A run is no longer silent. A crossexam took tens of minutes and printed
+nothing until it was over, which is indistinguishable from a hang; there is
+now a line per friend and a heartbeat naming whatever is still outstanding.
+And `SKILL.md` states the runtime, so an agent invoking this skill no longer
+reads a normal twenty-minute wait as a failure.
+
+**One that matters if you use `--merge orchestrator`.** That mode combined
+with `--mode loop` was effectively broken: claim ids were re-issued after a
+merge, the resumed judging round inherited nothing from earlier iterations,
+the loop could not converge, and a second `--resume` could apply the same
+adjudication twice. All four are fixed.
+
+**Still open, deliberately.** `c-0013`: a run where one friend out of fifty
+succeeds exits `0`. The report is honest about it -- it says plainly that a
+single answer is one opinion rather than cross-examination -- but the exit
+code does not carry that, so CI reads success. Changing it is a change to the
+exit-code contract, not a bug fix, and is left for a decision rather than
+made quietly.
 
 ### commands/run.py, cross-examined
 
