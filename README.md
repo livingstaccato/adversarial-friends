@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-951-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-988-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -358,13 +358,17 @@ The skill invokes `afriend`, so the package must be installed for it to work —
 
 ```bash
 make install    # uv sync
-make test       # pytest — 951 tests
-make quality    # lint + type-check + every sync gate + tests
+make test       # pytest
+make quality    # every portable CI gate, wheel checks, and tests
 make diagrams   # re-render docs/architecture/*.puml
 ```
 
-`make quality` runs exactly what CI runs. Two gates catch drift that is
-otherwise silent:
+`make quality` runs every portable CI gate, including wheel construction and
+isolated installation. Linux CI additionally installs bubblewrap and requires
+the real OS-confinement tests to execute; macOS cannot reproduce that Linux-
+specific assertion locally. Use `make act-ci` for the closest local Linux run.
+
+Two gates catch drift that is otherwise silent:
 
 - **`plugin-sync`** — `src/adversarial_friends/assets/` is canonical; the
   `plugins/` tree is a byte-identical mirror. Edit assets, then

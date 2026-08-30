@@ -1,4 +1,4 @@
-.PHONY: help install lint type-check test plugin-sync version-sync max-loc diagrams plugin-sync-copy quality check act-dry act-ci
+.PHONY: help install lint type-check test plugin-sync version-sync max-loc wheel-assets wheel-install diagrams plugin-sync-copy quality check act-dry act-ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -26,6 +26,12 @@ plugin-sync: ## Verify plugins/ matches the packaged assets/ mirror
 version-sync: ## Verify VERSION matches every plugin manifest's version field
 	python3 scripts/check_version_sync.py
 
+wheel-assets: ## Build the wheel and verify bundled assets
+	ci/verify_wheel_assets.sh
+
+wheel-install: ## Install the wheel outside the checkout and smoke-test afriend
+	ci/verify_wheel_install.sh
+
 # Mirror assets/ -> plugins/.../skills/adversarial-friends/ byte-for-byte
 # (including deletions). Manual convenience -- `plugin-sync` only verifies.
 plugin-sync-copy: ## Copy assets/ -> the plugins/ mirror (manual)
@@ -41,7 +47,7 @@ diagrams: ## Re-render docs/architecture/*.puml to PNG + SVG
 	plantuml -tpng docs/architecture/*.puml
 	plantuml -tsvg docs/architecture/*.puml
 
-quality: lint type-check max-loc plugin-sync version-sync test ## Run all quality gates
+quality: lint type-check max-loc plugin-sync version-sync wheel-assets wheel-install test ## Run all portable quality gates
 
 check: quality ## Alias for quality
 

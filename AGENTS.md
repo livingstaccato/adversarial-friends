@@ -33,10 +33,15 @@ and which exit codes it can produce.
 ```bash
 make install      # uv sync
 make test         # pytest
-make quality      # lint + type-check + all sync gates + tests
+make quality      # every portable CI gate, wheel checks, and tests
 ```
 
-`make quality` runs the same gates CI does. Two of them are easy to trip:
+`make quality` runs every portable CI gate, including wheel construction and
+isolated installation. Linux CI additionally installs bubblewrap and requires
+the real OS-confinement tests to execute; macOS cannot reproduce that Linux-
+specific assertion locally. Use `make act-ci` for the closest local Linux run.
+
+Two gates are especially easy to trip:
 
 - **`plugin-sync`** fails if `assets/` and the `plugins/` mirror drift. After
   editing anything under `assets/`, re-copy it into the mirror.
