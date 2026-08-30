@@ -1,7 +1,7 @@
 # Adversarial Friends Staged Hardening Design
 
 Date: 2026-08-29
-Status: Approach approved; written design pending user review
+Status: Approved; adversarial review incorporated
 
 ## 1. Purpose
 
@@ -171,9 +171,12 @@ Migration occurs consumer by consumer behind equivalence tests:
 6. deletion of superseded reconstruction helpers.
 
 The reducer rejects impossible transitions—duplicate claim ids with different
-content, aliases to unknown canonical claims after replay completes, verdicts
-for unknown claim versions, and successor cycles—with a diagnostic identifying
-the offending record.
+content, verdicts for unknown claim versions, and successor cycles—with a
+diagnostic identifying the offending record. Alias replay has one deliberate
+compatibility exception: a dangling or historically non-topological alias is
+recorded, its duplicate is retired exactly as `canonical_claims` does today,
+and a transition warning is exposed without inventing missing provenance.
+Current writers continue to reject those alias shapes before append.
 
 Property tests generate valid claim, alias, verdict, successor, and resolution
 sequences and assert incremental/replay equality after every prefix. Saved
@@ -229,10 +232,13 @@ amendments and discard timing; those changes apply when a run is resumed under
 the new version and are recorded as behavior changes in the changelog.
 
 The reducer must not rewrite historical ledgers. It reports invalid historical
-transitions rather than repairing them invisibly. If compatibility fixtures
-expose a historical pattern that was previously accepted, the implementation
-must either model it explicitly or provide a targeted migration command; it
-must not silently reinterpret evidence or provenance.
+transitions rather than repairing them invisibly. The known dangling-alias
+reconstruction behavior is modeled explicitly as a warning-producing
+compatibility case because prior versions intentionally tolerated it. If other
+compatibility fixtures expose a historical pattern that was previously
+accepted, the implementation must either model it explicitly or provide a
+targeted migration command; it must not silently reinterpret evidence or
+provenance.
 
 ## 5. Error handling
 
