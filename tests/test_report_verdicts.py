@@ -31,3 +31,30 @@ def test_report_shows_every_conflicting_amendment():
 
     assert "proposed amendment: first wording" in out
     assert "proposed amendment: second wording" in out
+
+
+def test_friend_table_separates_write_protection_from_os_confinement():
+    review = ReviewState.replay([])
+    meta = {
+        "artifact": "spec.md",
+        "mode": "report",
+        "preset": "inherit",
+        "friends": [
+            {
+                "name": "claude-security-0",
+                "model": None,
+                "effort": None,
+                "transport": "exec",
+                "write_protected": True,
+                "declared_scope": "repo",
+                "os_confined": False,
+                "status": "ok",
+            }
+        ],
+    }
+
+    out = render(review, meta)
+
+    assert "| write-protected | declared scope | OS-confined |" in out
+    assert "| True | repo | False |" in out
+    assert "same-user filesystem read access" in out

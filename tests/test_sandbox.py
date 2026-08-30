@@ -391,6 +391,30 @@ def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
     )
     assert "refused" not in (outcome.failure_reason or "")
     assert outcome.argv[0] == "true", "it should have run unwrapped"
+    assert outcome.os_confined is False
+
+
+def test_confinement_is_recorded_only_after_the_command_is_wrapped(monkeypatch, tmp_path):
+    from adversarial_friends import dispatch
+
+    wrapped = []
+    monkeypatch.setattr(sandbox, "detect", lambda *a, **k: sandbox.BWRAP)
+
+    def _wrap(argv, *_args, **_kwargs):
+        wrapped.append(list(argv))
+        return argv
+
+    monkeypatch.setattr(sandbox, "wrap", _wrap)
+    registry = {"unconfinable": _unconfinable_adapter(binary="true")}
+    prompt = tmp_path / "p.prompt"
+    prompt.write_text("hi")
+
+    _spec, _cap, outcome = dispatch._dispatch(
+        _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
+    )
+
+    assert wrapped
+    assert outcome.os_confined is True
 
 
 def test_a_friend_whose_binary_is_missing_is_not_sandboxed(tmp_path):
@@ -424,5 +448,6 @@ def test_a_confined_friend_gets_the_sandbox_prefix(tmp_path):
         _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.argv[0] in (sandbox.SANDBOX_EXEC, sandbox.BWRAP)
+    assert outcome.os_confined is True
     if outcome.argv[0] == sandbox.SANDBOX_EXEC:
         assert prompt.with_suffix(".sandbox").is_file()

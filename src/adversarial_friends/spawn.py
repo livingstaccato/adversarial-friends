@@ -110,6 +110,9 @@ class SpawnResult:
     # reader comparing a short stdout against a long duration otherwise has
     # no way to tell truncation from a friend that simply said little.
     output_truncated: bool = False
+    # True only when dispatch successfully wrapped this executable in an OS
+    # confinement command. Read-only CLI flags are a separate guarantee.
+    os_confined: bool = False
 
 
 def _early_failure(argv: list[str], duration: float, reason: str) -> SpawnResult:

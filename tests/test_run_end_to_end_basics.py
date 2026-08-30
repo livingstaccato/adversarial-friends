@@ -116,8 +116,11 @@ def test_ollama_without_a_model_fails_with_the_fix_not_an_opaque_error(tmp_path)
     assert result.returncode == 0, result.stderr
     runs = sorted((tmp_path / "runs").iterdir())
     meta = json.loads((runs[0] / "run.json").read_text())
-    ollama_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("ollama"))
+    ollama = next(f for f in meta["friends"] if f["name"].startswith("ollama"))
+    ollama_status = ollama["status"]
     assert "requires an explicit model" in ollama_status
+    assert ollama["transport"] == "http"
+    assert ollama["os_confined"] is False
     # The working friend on the same run is unaffected.
     fake_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("fake"))
     assert fake_status == "ok"

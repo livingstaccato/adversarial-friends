@@ -20,6 +20,9 @@ have no meaning here are filled honestly rather than plausibly:
 * `orphans_suspected` is always False. It is not "no orphans were detected";
   an HTTP request cannot leave a descendant behind, so the question does not
   arise.
+* `os_confined` is always False. No local executable receives the prompt, so
+  OS process confinement is not applicable; `transport="http"` preserves
+  that distinction in the report.
 
 Requests use urllib from the stdlib. The project ships no runtime
 dependencies, and adding one for a single POST would be a poor trade.
@@ -83,6 +86,7 @@ def _failure(
         result=NormalizeResult(None, [reason], False),
         failure_reason=reason,
         orphans_suspected=False,
+        os_confined=False,
     )
 
 
@@ -327,4 +331,5 @@ def run_request(
         result=result,
         failure_reason=None if result.succeeded else "unusable output",
         orphans_suspected=False,
+        os_confined=False,
     )

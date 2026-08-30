@@ -19,6 +19,11 @@ def confinement_downgrades(
 ) -> list[str]:
     """Append confinement notes to `downgrades`; return withheld env names.
 
+    These notes describe what can be known before dispatch. The report's
+    per-friend `os_confined` field is derived later from whether dispatch
+    actually produced a sandbox wrapper; it is deliberately not inferred
+    here from a read-only flag or requested scope.
+
     The returned list is the run's record that secrets were kept from
     friends, so it must describe what dispatch will actually do
     (`childenv.build(adapter.env_pass, pass_env)`, for every exec friend).

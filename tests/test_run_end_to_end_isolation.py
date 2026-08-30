@@ -172,7 +172,12 @@ def test_repo_scope_friend_gets_a_real_private_worktree(tmp_path):
     # where a re-derivation and the real capability actually diverge, so
     # it is the only place this can be caught without an in-process call.
     meta = json.loads((runs[0] / "run.json").read_text())
-    assert meta["friends"][0]["readonly"] is False
+    friend = meta["friends"][0]
+    assert friend["readonly"] is False
+    assert friend["write_protected"] is False
+    assert friend["declared_scope"] == "repo"
+    assert friend["transport"] == "fake"
+    assert friend["os_confined"] is False
 
     worktrees = subprocess.run(
         ["git", "worktree", "list"],

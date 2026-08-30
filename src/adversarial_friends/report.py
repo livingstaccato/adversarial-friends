@@ -269,19 +269,45 @@ def render(
     lines.append("")
     lines.append("## Friends")
     lines.append("")
-    lines.append("| friend | model | effort | read-only | scope | status |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append(
+        "| friend | model | effort | transport | write-protected | "
+        "declared scope | OS-confined | status |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
     for friend in run_meta["friends"]:
+        transport = friend.get("transport", "exec")
+        write_protected = friend.get("write_protected", friend.get("readonly", False))
+        declared_scope = friend.get("declared_scope", friend.get("scope", "unknown"))
+        os_confined = friend.get("os_confined", False)
         lines.append(
             f"| {_escape_cell(friend['name'])} | "
             f"{_escape_cell(friend['model'] or 'inherited')} | "
             f"{_escape_cell(friend['effort'] or 'inherited')} | "
-            f"{_escape_cell(friend['readonly'])} | "
-            f"{_escape_cell(friend['scope'])} | "
+            f"{_escape_cell(transport)} | "
+            f"{_escape_cell(write_protected)} | "
+            f"{_escape_cell(declared_scope)} | "
+            f"{_escape_cell(os_confined)} | "
             f"{_escape_cell(friend['status'])} |"
         )
     if not run_meta["friends"]:
-        lines.append("| _(no friends were spawned)_ |  |  |  |  |  |")
+        lines.append("| _(no friends were spawned)_ |  |  |  |  |  |  |  |")
+    read_exposed = [
+        friend["name"]
+        for friend in run_meta["friends"]
+        if friend.get("transport", "exec") != "http"
+        and friend.get("write_protected", friend.get("readonly", False))
+        and not friend.get("os_confined", False)
+    ]
+    if read_exposed:
+        lines.extend(
+            [
+                "",
+                "**Filesystem read scope:** "
+                + ", ".join(read_exposed)
+                + " were write-protected but not OS-confined; each retained "
+                "same-user filesystem read access outside the declared prompt scope.",
+            ]
+        )
     lines.append("")
 
     if run_meta.get("downgrades"):

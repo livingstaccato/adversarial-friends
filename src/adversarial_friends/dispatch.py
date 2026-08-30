@@ -238,6 +238,7 @@ def _dispatch(
     # being confined. Initialised before the branches because the fake and
     # http paths never reach the exec branch that sets it.
     child_env: dict[str, str] | None = None
+    os_confined = False
     if spec.cli == "fake":
         # A spec with cli == "fake" only ever comes from
         # cliargs._specs_from_flags, which refuses to build one unless
@@ -376,6 +377,7 @@ def _dispatch(
                     (*adapter.sandbox_write, str(private_root)),
                 )
                 argv = sandbox.wrap(argv, mechanism, policy, prompt_file.with_suffix(".sandbox"))
+                os_confined = True
                 # Confining the filesystem while handing over every exported
                 # secret would leave the boundary open straight through the
                 # middle: a friend could read another service's token
@@ -432,4 +434,5 @@ def _dispatch(
         contract=contract,
         env=child_env,
     )
+    outcome.os_confined = os_confined
     return spec, capability, outcome

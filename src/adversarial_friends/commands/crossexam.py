@@ -315,7 +315,10 @@ def run_rounds(
         round_verdicts: list[Verdict] = []
         any_failed = bool(withheld)
         for spec, capability, result in results:
-            outcome.friends_meta.append(persist_result(store, round_no, spec, capability, result))
+            transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
+            outcome.friends_meta.append(
+                persist_result(store, round_no, spec, capability, result, transport)
+            )
             if result.failure_reason is not None:
                 # §7.2's M12: a round in which a required friend fails marks
                 # the RUN incomplete, regardless of per-claim states.

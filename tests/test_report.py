@@ -216,7 +216,7 @@ def test_friend_model_none_reports_inherited():
 def test_empty_friends_list_does_not_crash():
     m = meta(friends=[])
     out = render([claim("c-0001@1")], [], m)
-    assert "| friend | model | effort | read-only | scope | status |" in out
+    assert "| friend | model | effort | transport | write-protected |" in out
 
 
 def test_render_does_not_mutate_inputs():

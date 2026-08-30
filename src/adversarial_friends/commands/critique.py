@@ -184,7 +184,10 @@ def run_critique(
     counter = claim_counter
     unparseable: list[dict[str, Any]] = []
     for spec, capability, result in results:
-        outcome.friends_meta.append(persist_result(store, round_no, spec, capability, result))
+        transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
+        outcome.friends_meta.append(
+            persist_result(store, round_no, spec, capability, result, transport)
+        )
         if result.failure_reason is not None:
             # §14.2: repair is a pure transformation, so when it fails the
             # only thing left that can read the raw text is something with

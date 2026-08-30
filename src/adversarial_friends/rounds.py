@@ -314,6 +314,7 @@ def persist_result(
     spec: FriendSpec,
     capability: Capability,
     outcome: SpawnResult,
+    transport: str,
 ) -> dict[str, Any]:
     """Write one friend's raw output, stderr and metadata; return its row.
 
@@ -336,7 +337,8 @@ def persist_result(
         # said little. That only holds if the reader can SEE it -- and it was
         # recorded on the result and written nowhere, unlike every sibling
         # flag on this line.
-        f"output_truncated={outcome.output_truncated}\n",
+        f"output_truncated={outcome.output_truncated}\n"
+        f"transport={transport}\nos_confined={outcome.os_confined}\n",
         encoding="utf-8",
     )
     err_path = store.friend_err_path(round_no, spec.name)
@@ -357,6 +359,11 @@ def persist_result(
         "name": spec.name,
         "model": spec.model,
         "effort": spec.effort,
+        "transport": transport,
+        "write_protected": capability.readonly,
+        "declared_scope": spec.scope,
+        "os_confined": outcome.os_confined,
+        # Compatibility keys for consumers of the pre-0.2 run.json shape.
         "readonly": capability.readonly,
         "scope": spec.scope,
         "round": round_no,
