@@ -9,6 +9,22 @@ def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8") if WORKFLOW.is_file() else ""
 
 
+def top_level_block(name: str) -> str:
+    lines = workflow_text().splitlines()
+    marker = f"{name}:"
+    try:
+        start = lines.index(marker)
+    except ValueError:
+        return ""
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line and not line.startswith(" "):
+            end = index
+            break
+    return "\n".join(lines[start:end]).rstrip()
+
+
 def job_block(name: str) -> str:
     lines = workflow_text().splitlines()
     marker = f"  {name}:"
@@ -29,11 +45,7 @@ def job_block(name: str) -> str:
 
 
 def test_release_workflow_is_triggered_only_by_version_tags():
-    text = workflow_text()
-
-    assert 'tags: ["v*"]' in text
-    assert "workflow_dispatch:" not in text
-    assert "branches:" not in text
+    assert top_level_block("on") == 'on:\n  push:\n    tags: ["v*"]'
 
 
 def test_release_workflow_rejects_mismatched_or_unmerged_tags():
@@ -61,9 +73,12 @@ def test_release_workflow_keeps_publish_identity_out_of_build_job():
     text = workflow_text()
     build = job_block("build")
     publish = job_block("publish")
+    release = job_block("github-release")
 
     assert "permissions:\n  contents: read" in text
+    assert text.count("id-token: write") == 1
     assert "id-token: write" not in build
+    assert "id-token: write" not in release
     assert "needs: build" in publish
     assert "name: pypi" in publish
     assert "id-token: write" in publish
