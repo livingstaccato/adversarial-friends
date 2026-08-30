@@ -27,8 +27,9 @@ from .ids import bump_claim_id
 from .ledger import Claim, Verdict
 
 # A claim's verdicts reduced to a comparable, order-independent shape:
-# (judge, verdict) pairs, sorted. See verdict_set_signature.
-_Signature = tuple[tuple[str, str], ...]
+# (judge, verdict, evidence assessment, counter-evidence, amendment) tuples,
+# sorted. See verdict_set_signature.
+_Signature = tuple[tuple[str, str, str, str, str], ...]
 
 # Verdicts that decide a claim. `unproven` and `out-of-scope` are recorded
 # and reported but never dispositive -- a judge saying "I could not verify
@@ -97,6 +98,19 @@ def quorum_for(judges: Iterable[str]) -> int:
 
 def _dispositive(verdicts: Iterable[Verdict]) -> list[Verdict]:
     return [v for v in verdicts if v.verdict in DISPOSITIVE]
+
+
+def _normalized_amendment(value: str | None) -> str:
+    return (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _amendments_agree(verdicts: Iterable[Verdict]) -> bool:
+    amendments = {
+        _normalized_amendment(verdict.amended_claim)
+        for verdict in verdicts
+        if verdict.verdict == "amended"
+    }
+    return len(amendments) == 1 and "" not in amendments
 
 
 def latest_per_judge(verdicts: Iterable[Verdict]) -> list[Verdict]:
@@ -175,7 +189,7 @@ def state_for(
         # on its own claim is that it stands -- i.e. `upheld`.
         if kinds == {"upheld"}:
             return SETTLED_UPHELD
-        if kinds == {"amended"}:
+        if kinds == {"amended"} and _amendments_agree(dispositive):
             # "Real, but wrongly worded" from the only judge there is: the
             # rewrite becomes a successor like any other unanimous
             # amendment, even though that successor -- authored by both
@@ -193,7 +207,9 @@ def state_for(
             return SETTLED_UPHELD
         if only == "refuted":
             return SETTLED_REFUTED
-        return SUPERSEDED  # unanimous `amended`: the successor carries it on
+        if _amendments_agree(dispositive):
+            return SUPERSEDED
+        return DEADLOCKED if round_no >= max_rounds else CONTESTED
 
     return DEADLOCKED if round_no >= max_rounds else CONTESTED
 
@@ -214,7 +230,22 @@ def verdict_set_signature(verdicts: Iterable[Verdict], claim_id: str) -> _Signat
     would have been an expensive kind of broken.
     """
     relevant = latest_per_judge(v for v in verdicts if v.claim_id == claim_id)
-    return tuple(sorted((v.judge, v.verdict) for v in relevant))
+    return tuple(
+        sorted(
+            (
+                verdict.judge,
+                verdict.verdict,
+                verdict.evidence_assessment,
+                _normalized_optional(verdict.counter_evidence),
+                _normalized_amendment(verdict.amended_claim),
+            )
+            for verdict in relevant
+        )
+    )
+
+
+def _normalized_optional(value: str | None) -> str:
+    return " ".join((value or "").split())
 
 
 def should_discard(previous_signature: _Signature | None, current_signature: _Signature) -> bool:
@@ -292,19 +323,9 @@ def build_successor(
 ) -> tuple[Claim, str | None]:
     """The `c-0007@2` a unanimous `amended` produces -- §6.1.
 
-    Returns the successor and, when the amenders did not propose the same
-    wording, a note recording the proposals that were not adopted.
-
-    **Which wording wins is not in the spec, and something has to.** Judges
-    agree on the verdict word `amended` without agreeing on a rewrite, and
-    the successor can only carry one. The adopted wording is the amender's
-    first in sorted judge order: deterministic, so a replay of the same
-    ledger produces the same successor, and arbitrary in a way that does not
-    quietly favour any particular friend. Every other proposal goes into the
-    returned note rather than being dropped -- a rewrite a judge took the
-    trouble to write is exactly the kind of thing this tool exists to
-    surface, and silently discarding it would be the worst available
-    outcome.
+    Direct callers receive a ValueError unless every amender supplied the
+    same substantive wording. `state_for` normally prevents this function
+    from being reached for conflicting proposals.
 
     `origin` is the union of the prior version's origin and every amender
     (§6.1): none of them is independent of the successor's wording, so all
@@ -314,27 +335,8 @@ def build_successor(
     letting an author judge its own rewrite.
     """
     ordered = sorted(amendments, key=lambda v: v.judge)
-    adopted = next((v for v in ordered if v.amended_claim), None)
-    if adopted is None:
-        # Guarded by verdictschema (an `amended` verdict must carry wording),
-        # so reaching here means a caller built Verdicts directly.
-        raise ValueError(f"no amender supplied wording for {claim.id}")
-
-    # Compared by WORDING, not by identity: judges that independently
-    # proposed the same rewrite have not disagreed about anything, and
-    # reporting that as a conflict would train a reader to ignore the note.
-    rejected = []
-    for verdict in ordered:
-        proposal = verdict.amended_claim
-        if proposal and proposal != adopted.amended_claim and proposal not in rejected:
-            rejected.append(proposal)
-    note = None
-    if rejected:
-        alternates = "; ".join(repr(p) for p in rejected)
-        note = (
-            f"{claim.id}: judges agreed to amend but proposed different wordings. "
-            f"Adopted {adopted.amended_claim!r}; also proposed: {alternates}"
-        )
+    if not _amendments_agree(ordered):
+        raise ValueError(f"amenders supplied conflicting wording for {claim.id}")
 
     origin = list(claim.origin)
     for verdict in ordered:
@@ -347,9 +349,9 @@ def build_successor(
         supersedes=claim.id,
         origin=origin,
         round=round_no,
-        claim=adopted.amended_claim or claim.claim,
+        claim=_normalized_amendment(ordered[0].amended_claim),
     )
-    return successor, note
+    return successor, None
 
 
 def round_is_dry(all_claims_were_aliases: bool, every_required_friend_ok: bool) -> bool:

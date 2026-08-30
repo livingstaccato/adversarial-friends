@@ -9,11 +9,11 @@ The rest of the state machine -- §7.2's discard rule and downgrades, §6.1
 successors, §7.3 termination -- lives in test_verdicts_lifecycle.py.
 """
 
+from test_merge import chained_alias_records
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
 from adversarial_friends.merge import canonical_claims
-from test_merge import chained_alias_records
 
 
 def test_originator_is_excluded_from_the_judges():
@@ -120,6 +120,23 @@ def test_unanimous_amended_supersedes():
         max_rounds=3,
     )
     assert state == verdicts.SUPERSEDED
+
+
+def test_conflicting_amendment_texts_are_contested_until_deadlock():
+    cast = [
+        verdict("claude-security", "amended", amended="first wording"),
+        verdict("agy-assumptions", "amended", amended="second wording"),
+    ]
+    assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.CONTESTED
+    assert verdicts.state_for(claim(), cast, ROSTER, 3, 3) == verdicts.DEADLOCKED
+
+
+def test_amendment_consensus_normalizes_only_edges_and_newlines():
+    cast = [
+        verdict("claude-security", "amended", amended="  same\r\nwording  "),
+        verdict("agy-assumptions", "amended", amended="same\nwording"),
+    ]
+    assert verdicts.state_for(claim(), cast, ROSTER, 2, 3) == verdicts.SUPERSEDED
 
 
 # --- Below quorum ----------------------------------------------------------

@@ -241,6 +241,10 @@ def _render_verdict_sections(
                 )
                 if verdict.counter_evidence:
                     lines.append(f"  - counter-evidence: {_escape_block(verdict.counter_evidence)}")
+                if verdict.amended_claim:
+                    lines.append(
+                        f"  - proposed amendment: {_escape_block(verdict.amended_claim)}"
+                    )
             lines.append("")
 
     if run_meta.get("amendment_notes"):

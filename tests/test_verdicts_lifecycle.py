@@ -66,6 +66,27 @@ def test_signature_ignores_ordering():
     assert a == b
 
 
+def test_new_counter_evidence_prevents_discard():
+    first = verdict("claude-security", "unproven")
+    second = dataclasses.replace(first, round=3, counter_evidence="src/auth.py:38")
+    assert verdicts.verdict_set_signature([first], first.claim_id) != (
+        verdicts.verdict_set_signature([first, second], first.claim_id)
+    )
+
+
+def test_reasoning_and_confidence_alone_do_not_prevent_discard():
+    first = verdict("claude-security", "unproven", reasoning="could not find it")
+    second = dataclasses.replace(
+        first,
+        round=3,
+        reasoning="looked twice and still could not find it",
+        confidence="low",
+    )
+    assert verdicts.verdict_set_signature([first], first.claim_id) == (
+        verdicts.verdict_set_signature([first, second], first.claim_id)
+    )
+
+
 # --- §6.5 evidence symmetry ------------------------------------------------
 
 
@@ -127,19 +148,13 @@ def test_the_successor_origin_is_the_union_of_author_and_amenders():
     assert verdicts.judges_for(successor, ROSTER) == []
 
 
-def test_disagreeing_amenders_produce_a_note_naming_what_was_not_adopted():
-    """Judges can agree on `amended` without agreeing on a rewrite, and the
-    successor can only carry one. A discarded proposal is exactly the kind
-    of thing this tool exists to surface, so it must not vanish."""
+def test_disagreeing_amenders_cannot_build_an_arbitrary_successor():
     amendments = [
         verdict("agy-assumptions", "amended", amended="first wording"),
         verdict("claude-security", "amended", amended="second wording"),
     ]
-    successor, note = verdicts.build_successor(claim(), amendments, round_no=2)
-    # Sorted judge order, so a replay of the same ledger picks the same one.
-    assert successor.claim == "first wording"
-    assert note is not None
-    assert "second wording" in note
+    with pytest.raises(ValueError, match="conflicting wording"):
+        verdicts.build_successor(claim(), amendments, round_no=2)
 
 
 def test_agreeing_amenders_produce_no_note():
@@ -249,7 +264,7 @@ def test_a_lone_judges_unanimous_amendment_supersedes():
     in the final round, rewritten to `upheld` -- the judge reported as
     agreeing with wording it had just rejected."""
     c = claim(origin=("codex/ops",))
-    v = verdict("claude/security", "amended")
+    v = verdict("claude/security", "amended", amended="reworded")
     roster = ["codex/ops", "claude/security"]
     assert verdicts.state_for(c, [v], roster, 2, 3) == verdicts.SUPERSEDED
     assert verdicts.state_for(c, [v], roster, 3, 3) == verdicts.SUPERSEDED

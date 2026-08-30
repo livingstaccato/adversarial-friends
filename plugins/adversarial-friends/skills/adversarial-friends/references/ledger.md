@@ -62,8 +62,17 @@ required on the dispositive verdicts. `unverifiable` there downgrades the
 verdict to `unproven` before anything counts it, so a claim is never
 dismissed on the strength of nobody having looked; `disputed` requires
 `counter_evidence` saying what the judge found instead. `amended_claim`
-carries the rewrite on an `amended` verdict — unanimous amendments mint the
-successor `claim` record that `supersedes` this one.
+carries the rewrite on an `amended` verdict. Agreement on the verdict word
+alone is insufficient: unanimous amendments mint a successor only when every
+amender proposes the same non-empty wording after normalizing line endings
+and trimming edge whitespace. Conflicting rewrites remain `contested` (or
+`deadlocked` in the last round), and `report.md` preserves every proposal.
+
+The two-consecutive-round discard check compares each judge's latest
+`judge`, `verdict`, `evidence_assessment`, normalized `counter_evidence`, and
+normalized `amended_claim`. New evidence therefore keeps a claim open;
+reasoning or confidence changes alone do not make an otherwise identical
+verdict set look substantively new.
 
 ```json
 {"type":"verdict","claim_id":"c-0001@1","judge":"fake/ops","round":2,
