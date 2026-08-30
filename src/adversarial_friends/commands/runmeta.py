@@ -110,6 +110,7 @@ def _base_meta(
         "roster_source": roster_source,
         "merge": args.merge,
         "artifact": artifact.name,
+        "artifact_path": str(stable_artifact_path(artifact)),
         "artifact_hash": digest,
         # Persisted so `afriend resolve` can verify a location against how
         # this run first saw it (§6.4). Without them a resolution could only
@@ -178,6 +179,11 @@ IMPLEMENTED_MODES = frozenset({"report", "crossexam", "gate", "loop"})
 # they do with its result. (The explanation lived in commands/run.py, above
 # the import, after the constant itself moved here.)
 JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+
+
+def stable_artifact_path(artifact: Path) -> Path:
+    """Return an absolute invocation path without following the final symlink."""
+    return artifact.parent.resolve() / artifact.name
 
 
 def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Path]:

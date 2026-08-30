@@ -93,12 +93,21 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     repo_root = Path(meta["repo_root"]) if meta.get("repo_root") else None
     frozen_dir = run_dir / "artifact"
     frozen = next(iter(frozen_dir.iterdir()), None) if frozen_dir.is_dir() else None
+    artifact_path = Path(meta["artifact_path"]) if meta.get("artifact_path") else None
+    if artifact_path is None:
+        old = Path((meta.get("invocation") or {}).get("artifact") or "")
+        if old.is_absolute():
+            artifact_path = old
+        elif repo_root is not None and old:
+            candidate = repo_root / old
+            if candidate.is_file():
+                artifact_path = candidate
     verified = verify_location(
         location,
         repo_root,
         meta.get("snapshot_sha"),
         frozen_artifact=frozen,
-        artifact_name=meta.get("artifact"),
+        artifact_path=artifact_path,
     )
 
     refusal = rejection_reason(args.disposition, verified)

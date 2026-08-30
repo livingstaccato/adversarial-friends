@@ -120,6 +120,7 @@ def test_the_run_records_what_a_resolution_will_need(tmp_path):
     meta = _run_json(tmp_path)
     assert meta["snapshot_sha"]
     assert meta["repo_root"]
+    assert meta["artifact_path"] == str((repo / "spec.md").absolute())
 
 
 def test_a_doc_scope_roster_still_gets_a_snapshot_under_gate(tmp_path):
@@ -255,17 +256,15 @@ def test_an_unknown_claim_id_is_refused(tmp_path):
     assert "no claim" in result.stderr
 
 
-def test_an_unreconstructible_location_is_recorded_as_an_attestation(tmp_path):
-    """§6.4: a location the runner cannot reconstruct is `unverifiable`, not
-    invalid -- but the operator is told the runner checked nothing, rather
-    than reading silence as confirmation."""
+def test_fixed_at_an_unreconstructible_location_is_refused(tmp_path):
     repo = _repo(tmp_path)
     _gate(tmp_path, repo, "judge_uphold_a", "judge_uphold_b")
     cid = _run_json(tmp_path)["gate_blocking_claims"][0]
     result = _resolve(tmp_path, repo, cid, "fixed", str(tmp_path / "outside.py"))
-    assert "attestation only" in result.stderr
+    assert result.returncode == 2
+    assert "accepted-risk" in result.stderr
     recorded = [r for r in _ledger(tmp_path) if r["type"] == "resolution"]
-    assert recorded[0]["verified"] == "unverifiable"
+    assert recorded == []
 
 
 def test_a_missing_run_directory_is_a_usage_error(tmp_path):

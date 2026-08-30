@@ -100,7 +100,7 @@ def verify_location(
     repo_root: Path | None,
     snapshot_sha: str | None,
     frozen_artifact: Path | None = None,
-    artifact_name: str | None = None,
+    artifact_path: Path | None = None,
 ) -> str:
     """Compare the named location now against how the run first saw it.
 
@@ -109,30 +109,47 @@ def verify_location(
     anything else inside the repo. Neither available means `unverifiable` --
     which is a real answer, not a failure.
     """
-    current_path = Path(location.path)
+    named = Path(location.path)
+    artifact = artifact_path.absolute() if artifact_path is not None else None
 
-    if artifact_name and frozen_artifact and current_path.name == artifact_name:
-        if not frozen_artifact.is_file():
+    if named.is_absolute() and artifact is not None and named.absolute() == artifact:
+        current_path = named
+    elif artifact is not None and named == Path(artifact.name):
+        current_path = artifact
+    elif repo_root is not None:
+        resolved_root = repo_root.resolve()
+        candidate = named if named.is_absolute() else resolved_root / named
+        current_path = candidate.resolve(strict=False)
+        try:
+            current_path.relative_to(resolved_root)
+        except ValueError:
             return UNVERIFIABLE
-        target = current_path if current_path.is_file() else None
-        if target is None:
+    else:
+        return UNVERIFIABLE
+
+    is_artifact = artifact is not None and current_path.absolute() == artifact
+    if is_artifact and frozen_artifact is not None:
+        if not frozen_artifact.is_file() or not current_path.is_file():
             return UNVERIFIABLE
         before = _slice_lines(
             frozen_artifact.read_text(encoding="utf-8", errors="replace"), location
         )
-        after = _slice_lines(target.read_text(encoding="utf-8", errors="replace"), location)
+        after = _slice_lines(
+            current_path.read_text(encoding="utf-8", errors="replace"), location
+        )
         return LOCATION_CHANGED if before != after else LOCATION_UNCHANGED
 
     if repo_root is None or snapshot_sha is None:
         return UNVERIFIABLE
 
     try:
-        relpath = str(current_path.resolve().relative_to(repo_root))
+        resolved_root = repo_root.resolve()
+        relpath = str(current_path.resolve(strict=False).relative_to(resolved_root))
     except ValueError:
         # Outside the repository: nothing to reconstruct it from.
         return UNVERIFIABLE
 
-    before_text = _git_show(repo_root, snapshot_sha, relpath)
+    before_text = _git_show(resolved_root, snapshot_sha, relpath)
     exists_now = current_path.is_file()
     if before_text is None and not exists_now:
         return UNVERIFIABLE
@@ -154,6 +171,11 @@ def rejection_reason(disposition: str, verified: str) -> str | None:
     `accepted-risk` make no claim about a change, so an unchanged location is
     consistent with both.
     """
+    if disposition == "fixed" and verified == UNVERIFIABLE:
+        return (
+            "a fixed resolution must name evidence this run can verify; "
+            "use accepted-risk when verification is intentionally unavailable"
+        )
     if disposition == "fixed" and verified == LOCATION_UNCHANGED:
         return (
             "disposition 'fixed' names a location that has not changed since "

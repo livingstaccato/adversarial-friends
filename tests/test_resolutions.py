@@ -120,6 +120,15 @@ def test_an_untouched_file_reports_location_unchanged(repo, monkeypatch):
     assert verified == resolutions.LOCATION_UNCHANGED
 
 
+def test_repo_relative_location_ignores_invocation_cwd(repo, monkeypatch, tmp_path):
+    root, sha = repo
+    monkeypatch.chdir(tmp_path)
+
+    verified = resolutions.verify_location(resolutions.Location("auth.py"), root, sha)
+
+    assert verified == resolutions.LOCATION_UNCHANGED
+
+
 def test_a_line_range_ignores_changes_elsewhere_in_the_file(repo, monkeypatch):
     """A fix to line 38 of a 900-line file should not be judged by whether
     anything else in the file moved."""
@@ -174,9 +183,46 @@ def test_the_reviewed_artifact_is_verified_against_its_frozen_copy(tmp_path, mon
     live.write_text("revised\n")
     monkeypatch.chdir(tmp_path)
     verified = resolutions.verify_location(
-        resolutions.Location("spec.md"), None, None, frozen_artifact=frozen, artifact_name="spec.md"
+        resolutions.Location("spec.md"),
+        None,
+        None,
+        frozen_artifact=frozen,
+        artifact_path=live,
     )
     assert verified == resolutions.LOCATION_CHANGED
+
+
+def test_the_reviewed_artifact_uses_its_recorded_path_from_another_cwd(tmp_path, monkeypatch):
+    live = tmp_path / "project" / "spec.md"
+    live.parent.mkdir()
+    live.write_text("revised\n")
+    frozen = tmp_path / "run" / "artifact" / "spec.md"
+    frozen.parent.mkdir(parents=True)
+    frozen.write_text("original\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    verified = resolutions.verify_location(
+        resolutions.Location("spec.md"),
+        None,
+        None,
+        frozen_artifact=frozen,
+        artifact_path=live,
+    )
+
+    assert verified == resolutions.LOCATION_CHANGED
+
+
+def test_repo_containment_resolves_a_symlinked_root(repo, monkeypatch, tmp_path):
+    root, sha = repo
+    link = tmp_path / "linked-repo"
+    link.symlink_to(root, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+
+    verified = resolutions.verify_location(resolutions.Location("auth.py"), link, sha)
+
+    assert verified == resolutions.LOCATION_UNCHANGED
 
 
 # --- The one rule the runner can enforce -----------------------------------
@@ -193,10 +239,10 @@ def test_fixed_naming_a_changed_location_is_accepted():
     assert resolutions.rejection_reason("fixed", resolutions.LOCATION_CHANGED) is None
 
 
-def test_fixed_with_an_unverifiable_location_is_accepted():
-    """Unverifiable is not disproof. §6.4: a location the runner cannot
-    reconstruct is unverifiable, not invalid."""
-    assert resolutions.rejection_reason("fixed", resolutions.UNVERIFIABLE) is None
+def test_fixed_with_an_unverifiable_location_is_rejected():
+    reason = resolutions.rejection_reason("fixed", resolutions.UNVERIFIABLE)
+    assert reason is not None
+    assert "accepted-risk" in reason
 
 
 @pytest.mark.parametrize("disposition", ["rejected", "accepted-risk"])
