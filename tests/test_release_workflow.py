@@ -51,6 +51,8 @@ def test_release_build_verifies_both_distributions_and_installed_cli():
     assert "twine==7.0.0 twine check --strict dist/*" in build
     assert "adversarial_friends-${version}-py3-none-any.whl" in build
     assert "adversarial_friends-${version}.tar.gz" in build
+    assert "-name '*.whl'" in build
+    assert "-name '*.tar.gz'" in build
     assert ' --version)" = "afriend ${version}"' in build
     assert "/venv/bin/afriend" in build
 
