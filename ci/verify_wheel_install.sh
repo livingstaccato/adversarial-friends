@@ -11,13 +11,16 @@ set -euo pipefail
 
 EXPECTED_VERSION="$(cat VERSION)"
 
-# `ls` rather than `test -f`: the glob can match more than one file, which
-# test(1) rejects rather than treating as "present".
-ls dist/*.whl >/dev/null 2>&1 || uv build --wheel
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
 
-venv="$(mktemp -d)/venv"
+# Always build from the current checkout. Reusing dist/*.whl can silently test
+# a stale release after VERSION changes.
+uv build --wheel --out-dir "$scratch/dist"
+
+venv="$scratch/venv"
 uv venv "$venv"
-VIRTUAL_ENV="$venv" uv pip install --quiet dist/*.whl
+VIRTUAL_ENV="$venv" uv pip install --quiet "$scratch"/dist/*.whl
 
 reported="$(cd /tmp && "$venv/bin/afriend" --version)"
 if [ "$reported" != "afriend $EXPECTED_VERSION" ]; then
