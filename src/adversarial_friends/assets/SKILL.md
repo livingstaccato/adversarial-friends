@@ -113,8 +113,9 @@ afriend resolve <run-id> --claim c-0001@1 \
 attestation: the runner checks only whether that location changed since the
 run started, and records `location-changed`, `location-unchanged`, or
 `unverifiable`. Never present a recorded resolution to the user as proof the
-defect is gone — say what was actually verified. The one case the runner
-refuses outright is `fixed` naming a location that did not change.
+defect is gone — say what was actually verified. `fixed` requires
+`location-changed`; unchanged or unverifiable evidence is refused. Use
+`accepted-risk` when verification is intentionally unavailable.
 
 Check what is available first when a run comes back thin:
 

@@ -267,10 +267,10 @@ quotes both sides verbatim instead of resolving it by majority.
 
 A resolution is an **attestation**, and the tool says so. It cannot know a
 defect is gone — only whether the location you named actually changed since
-the run started. A fix that landed outside the reviewed artifact is fine; a
-location it cannot reconstruct is recorded as `unverifiable` rather than
-waved through. The one thing it refuses is `--disposition fixed` naming a
-location that did not change.
+the run started. A fix that landed outside the reviewed artifact is fine.
+`--disposition fixed` requires a verifiably changed location; unchanged or
+unverifiable evidence is refused. Use `accepted-risk` when verification is
+intentionally unavailable.
 
 Deduplication is judgment the runner declines to fake. `--merge exact`
 (the default) merges only identical claims and always finishes unaided;

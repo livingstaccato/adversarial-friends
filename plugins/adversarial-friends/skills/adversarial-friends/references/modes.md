@@ -126,10 +126,12 @@ Three consequences worth knowing:
   `docs/design.md` frequently lands in `src/auth.py`. Name the location that
   actually changed; requiring the reviewed artifact to change would force
   dummy edits to clear a gate.
-* **`unverifiable` is recorded, not refused.** You are told the runner
-  checked nothing, so silence is never mistaken for confirmation.
-* **One thing is refused:** `--disposition fixed` naming a location that did
-  not change. That is the single case the runner can positively contradict.
+* **`unverifiable` can record `rejected` or `accepted-risk`.** You are told
+  the runner checked nothing, so silence is never mistaken for confirmation.
+* **`fixed` requires `location-changed`.** Unchanged evidence contradicts the
+  attestation, and unverifiable evidence cannot support it. Name the changed
+  location, or use `accepted-risk` when verification is intentionally
+  unavailable.
 
 `--evidence` must name a location. Prose alone leaves nothing to check, and
 recording it would make every resolution look equally well-supported.
@@ -345,7 +347,7 @@ every command in this build:
 |---|---|---|
 | `0` | success | a run that reached terminal states with nothing blocked, `afriend doctor` (at least one friend found) |
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
-| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` at an unchanged location |
+| `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` without verifiably changed evidence |
 | `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |

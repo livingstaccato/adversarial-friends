@@ -13,12 +13,13 @@ around that limit:
   in `src/auth.py`, and requiring the artifact to change would force dummy
   edits to clear a gate. So what gets verified is the location the evidence
   names, wherever that is.
-* A location the runner cannot reconstruct is `unverifiable`, not invalid.
-  The report labels those attestations and moves on.
+* A location the runner cannot reconstruct is `unverifiable`. That is valid
+  for `rejected` and `accepted-risk`, but cannot support a claim that the
+  defect was `fixed`.
 
-The one hard rule: `location-unchanged` on a `fixed` disposition is rejected.
-Claiming a fix while naming a location nothing happened at is the single
-case where the runner knows the attestation is wrong.
+A `fixed` disposition therefore requires `location-changed`: unchanged
+evidence contradicts the attestation, while unverifiable evidence proves
+nothing. Use `accepted-risk` when verification is intentionally unavailable.
 """
 
 from dataclasses import dataclass
@@ -162,12 +163,11 @@ def verify_location(
 
 
 def rejection_reason(disposition: str, verified: str) -> str | None:
-    """The one case §6.4 lets the runner reject outright.
+    """Whether the verification result can support this disposition.
 
-    A `fixed` disposition naming a location that did not change is the only
-    attestation the runner can positively contradict. `rejected` and
-    `accepted-risk` make no claim about a change, so an unchanged location is
-    consistent with both.
+    A `fixed` disposition must name a verifiably changed location. `rejected`
+    and `accepted-risk` make no claim about a change, so unchanged or
+    unverifiable evidence is consistent with both.
     """
     if disposition == "fixed" and verified == UNVERIFIABLE:
         return (

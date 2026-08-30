@@ -103,7 +103,8 @@ runner could actually check about the `evidence` location:
 `location-changed`, `location-unchanged`, or `unverifiable`. Read it as an
 attestation rather than proof — the runner cannot know a defect is gone, only
 whether the named location moved. `unverifiable` means it could not even
-check that much. See `modes.md` under **Gate** for the full rule.
+check that much. It may support `rejected` or `accepted-risk`, but `fixed`
+requires `location-changed`. See `modes.md` under **Gate** for the full rule.
 
 ## Reading it directly
 

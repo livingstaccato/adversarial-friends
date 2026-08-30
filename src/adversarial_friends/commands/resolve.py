@@ -13,7 +13,8 @@ the gate, so the workflow is a loop the shell can drive:
 defect is gone. What it verifies is narrower and honest: whether the location
 the author named actually changed since the run started (§6.4). See
 resolutions.py for why a whole-artifact hash would be worthless here, and
-why an unverifiable location is a real answer rather than a rejection.
+why unverifiable evidence can record risk or rejection but cannot support
+`fixed`.
 """
 
 import argparse
@@ -127,8 +128,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     review.apply(resolution)
 
     if verified == UNVERIFIABLE:
-        # Recorded, not refused -- but the operator should know the runner
-        # checked nothing, rather than reading silence as confirmation.
+        # A fixed disposition was refused above. For accepted risk or a
+        # rejected claim, record the attestation but say that nothing was
+        # independently checked.
         print(
             f"afriend: recorded, but {location.path} could not be reconstructed "
             "from this run; the resolution is an attestation only.",
