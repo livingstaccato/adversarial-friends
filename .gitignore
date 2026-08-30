@@ -15,5 +15,6 @@ __pycache__/
 
 # Local agent/session scratch
 .superpowers/
+.worktrees/
 .claude/settings.local.json
 .claude/worktrees/
