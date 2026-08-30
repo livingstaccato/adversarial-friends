@@ -14,6 +14,10 @@ than conclusions reconstructed independently by each command or renderer.
 This is a focused hardening release. It does not replace the ledger, redesign
 the four modes, or introduce a general event-sourced runtime.
 
+The repository-wide Python source limit is raised from 500 to 777 lines per
+file. Enforcement, current documentation, and tests use 777 consistently;
+unrelated values such as HTTP status 500 remain unchanged.
+
 ## Verified Problems
 
 The design addresses these observed failures and limitations:
