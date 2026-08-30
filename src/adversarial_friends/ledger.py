@@ -8,6 +8,7 @@ can be replayed and audited; nothing is ever rewritten in place.
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, fields
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -108,17 +109,44 @@ class Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def append(self, record: Record) -> None:
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record_to_dict(record), sort_keys=True) + "\n")
+        encoded = (json.dumps(record_to_dict(record), sort_keys=True) + "\n").encode("utf-8")
+        created = not self.path.exists()
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("ledger append made no progress")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if created:
+            parent_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
 
     def records(self) -> Iterator[Record]:
         if not self.path.exists():
             return
         with self.path.open(encoding="utf-8") as handle:
-            for line in handle:
+            for line_no, line in enumerate(handle, start=1):
                 line = line.strip()
-                if line:
-                    yield record_from_dict(json.loads(line))
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise UsageError(
+                        f"{self.path}:{line_no}: malformed JSON: {exc.msg}"
+                    ) from exc
+                try:
+                    yield record_from_dict(payload)
+                except UsageError as exc:
+                    raise UsageError(f"{self.path}:{line_no}: {exc}") from exc
 
     def claims(self) -> list[Claim]:
         return [r for r in self.records() if isinstance(r, Claim)]

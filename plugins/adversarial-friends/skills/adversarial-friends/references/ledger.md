@@ -7,6 +7,15 @@ modes: `--mode report` writes `claim` and `alias`; `--mode crossexam` (and
 records a unanimous amendment produces; `afriend resolve` writes
 `resolution`.
 
+## Durability and recovery
+
+The runner has one ledger writer per locked run. `Ledger.append` writes one
+complete UTF-8 JSON record, synchronizes the file, and, on first creation,
+synchronizes the parent directory before returning. This is a POSIX local-
+filesystem guarantee. A malformed record is never skipped automatically;
+the error names its file and line so an operator can preserve the run and
+repair it explicitly without silently dropping a verdict or resolution.
+
 **claim** — an assertion about the artifact. `id` is versioned (`c-0007@2`);
 an amendment creates a new version rather than editing in place, so a
 verdict is never ambiguous about which wording it judged. A successor carries

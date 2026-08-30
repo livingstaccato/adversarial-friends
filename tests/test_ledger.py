@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -130,5 +131,58 @@ def test_malformed_line_is_surfaced_not_skipped(tmp_path):
     ledger.append(make_claim())
     with path.open("a", encoding="utf-8") as handle:
         handle.write("{not valid json\n")
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(UsageError, match=r"claims\.jsonl:2: malformed JSON"):
         list(ledger.records())
+
+
+def test_append_synchronizes_the_record(monkeypatch, tmp_path):
+    synced = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd):
+        synced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    Ledger(tmp_path / "claims.jsonl").append(make_claim())
+    assert len(synced) >= 1
+
+
+def test_fsync_failure_is_not_reported_as_success(monkeypatch, tmp_path):
+    def fail(_fd):
+        raise OSError("disk refused sync")
+
+    monkeypatch.setattr(os, "fsync", fail)
+    with pytest.raises(OSError, match="disk refused sync"):
+        Ledger(tmp_path / "claims.jsonl").append(make_claim())
+
+
+def test_append_retries_a_short_write(monkeypatch, tmp_path):
+    real_write = os.write
+    calls = []
+
+    def short_write(fd, data):
+        calls.append(len(data))
+        return real_write(fd, data[:7])
+
+    monkeypatch.setattr(os, "write", short_write)
+    expected = make_claim()
+    ledger = Ledger(tmp_path / "claims.jsonl")
+    ledger.append(expected)
+    assert len(calls) > 1
+    assert list(ledger.records()) == [expected]
+
+
+def test_corrupt_middle_record_names_its_line(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    valid = json.dumps(record_to_dict(make_claim()))
+    path.write_text(f"{valid}\n{{broken\n{valid}\n")
+    with pytest.raises(UsageError, match=r"claims\.jsonl:2: malformed JSON"):
+        list(Ledger(path).records())
+
+
+def test_malformed_record_names_its_line(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    path.write_text('{"type": "claim", "id": "c-0001@1"}\n')
+    with pytest.raises(UsageError, match=r"claims\.jsonl:1: malformed 'claim' record"):
+        list(Ledger(path).records())
