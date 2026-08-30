@@ -13,16 +13,18 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      # act compat only (no-op on GitHub, where env.ACT is unset): act runs
-      # a JS action's *post* step via a bare `docker exec` that does not
-      # inherit the image's PATH, so `Post setup-uv`'s cache-save fails with
-      # "node: executable file not found" and reports the whole job failed
-      # after every real step has already passed. Symlinking node into a
-      # default docker-exec PATH entry fixes the local signal. See
-      # https://github.com/nektos/act/issues/107
-      - name: act compat — expose node to docker exec
+      # act compat only (no-op on GitHub, where env.ACT is unset): the runner
+      # image leaves RUNNER_TOOL_CACHE root-owned, and act runs JS actions as
+      # its unprivileged runner user. Its post steps also run via a bare
+      # `docker exec` that does not inherit the image's PATH. Prepare the cache
+      # and expose node in a default docker-exec PATH entry so setup-uv can run
+      # and clean up successfully. See https://github.com/nektos/act/issues/107
+      - name: act compat — prepare JS action runtime
         if: ${{ env.ACT }}
-        run: sudo ln -sf "$(command -v node)" /usr/local/bin/node
+        run: |
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "$RUNNER_TOOL_CACHE"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TOOL_CACHE"
+          sudo ln -sf "$(command -v node)" /usr/local/bin/node
 
       # Checkout source
       - uses: actions/checkout@v7

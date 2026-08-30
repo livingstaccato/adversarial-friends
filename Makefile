@@ -57,4 +57,8 @@ act-dry: ## List CI jobs without running them (validates the workflow + .actrc)
 	env -u DOCKER_HOST act --list
 
 act-ci: ## Run the CI quality job locally via act (slow; pulls an image first run)
-	env -u DOCKER_HOST act -j quality --matrix python-version:3.13 --rm
+	# Privilege is limited to act's disposable job container. The Linux gate
+	# deliberately starts bubblewrap inside Docker, which requires nested
+	# namespace creation; --init preserves the process-reaping parity in .actrc.
+	env -u DOCKER_HOST act -j quality --matrix python-version:3.13 --rm \
+		--container-options '--init --privileged'
