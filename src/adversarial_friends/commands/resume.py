@@ -27,7 +27,7 @@ from ..ceilings import Budget
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
 from ..ledger import Alias, Claim
-from ..merge import canonical_claims, next_claim_number
+from ..merge import next_claim_number
 from ..orchestrator import (
     QUESTION_EXTRACT,
     apply_merges,
@@ -36,6 +36,7 @@ from ..orchestrator import (
     request_path,
 )
 from ..progress import Progress
+from ..reviewstate import ReviewState
 from ..runstore import RunStore
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
@@ -149,6 +150,7 @@ def _resumed_progress(records: Sequence[object], round_no: int) -> tuple[int, fr
 def resume_round_one(
     args: argparse.Namespace,
     store: RunStore,
+    review: ReviewState,
     specs: list[FriendSpec],
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
@@ -194,9 +196,9 @@ def resume_round_one(
     max_iterations`.
     """
     resumed = ResumedRun()
-    records = list(store.ledger.records())
-    claims = canonical_claims(records)
-    counter = next_claim_number(records)
+    claims = review.claims
+    historical = [*review.claims_by_id.values(), *review.aliases]
+    counter = next_claim_number(historical)
     round_dir = store.round_dir(base_round)
 
     # The same handshake serves two questions (§4.2, §14.2), so the answer is
@@ -205,7 +207,7 @@ def resume_round_one(
     # What an EARLIER attempt at this exact round already applied, before it
     # crashed between a ledger write and _mark_response_consumed. Read from
     # the ledger, not guessed: see _resumed_progress.
-    already_extracted, already_merged = _resumed_progress(records, base_round)
+    already_extracted, already_merged = _resumed_progress(historical, base_round)
     adjudicated: list[Alias] = []
     if question == QUESTION_EXTRACT:
         extracted = read_extract_response(round_dir)
@@ -232,6 +234,7 @@ def resume_round_one(
                 )
             )
             store.ledger.append(claims[-1])
+            review.apply(claims[-1])
         _mark_response_consumed(round_dir)
         note = (
             f"resumed from {store.run_id} after claim extraction: "
@@ -250,6 +253,8 @@ def resume_round_one(
         claims, adjudicated = apply_merges(claims, decisions, base_round)
         for alias in adjudicated:
             store.ledger.append(alias)
+            review.apply(alias)
+        claims = review.claims
         _mark_response_consumed(round_dir)
         note = (
             f"resumed from {store.run_id} after orchestrator merge adjudication: "
@@ -283,6 +288,7 @@ def resume_round_one(
         specs,
         claims,
         store,
+        review,
         registry,
         fake_cmd,
         verdict_schema_path(store.run_dir),
@@ -333,6 +339,7 @@ class ResumedStep:
 def resume_iteration(
     args: argparse.Namespace,
     store: RunStore,
+    review: ReviewState,
     specs: list[FriendSpec],
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
@@ -357,6 +364,7 @@ def resume_iteration(
     resumed = resume_round_one(
         args,
         store,
+        review,
         specs,
         registry,
         fake_cmd,

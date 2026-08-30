@@ -24,11 +24,11 @@ from ..ceilings import (
 from ..claimschema import schema_path
 from ..failures import RepeatTracker
 from ..ledger import Claim
-from ..merge import ledger_aliases
 from ..orchestrator import (
     NeedsOrchestrator,
     write_request,
 )
+from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
@@ -103,6 +103,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # a run.json write into that window against a directory another
         # resumer may be mid-write on.
         store.lock()
+        review = ReviewState.replay(store.ledger.records())
+        review.copy_transition_warnings(downgrades)
         schema_file = schema_path(store.run_dir)
         artifact_text = frozen.read_text(encoding="utf-8")
 
@@ -212,7 +214,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # reading rather than a placeholder.
         halted_dry, halted_failed = False, True
         # Where a resumed loop re-enters, and what it inherits.
-        first_iteration, streak, carry_over = loop_position(args, store, resume_dir is not None)
+        first_iteration, streak, carry_over = loop_position(args, review, resume_dir is not None)
         # The highest round number the run reached, across every loop
         # iteration. Not the last iteration's own count: once a loop stops
         # re-judging what an earlier iteration already settled, its final
@@ -292,6 +294,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     step = resume_iteration(
                         args,
                         store,
+                        review,
                         round_specs,
                         registry,
                         fake_cmd,
@@ -347,6 +350,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     counter,
                     artifact_text,
                     store,
+                    review,
                     registry,
                     fake_cmd,
                     schema_file,
@@ -405,6 +409,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         round_specs,
                         all_claims,
                         store,
+                        review,
                         registry,
                         fake_cmd,
                         verdict_schema_path(store.run_dir),
@@ -455,11 +460,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 args,
                 store,
                 run_meta(),
-                all_claims,
-                # From the ledger, not a process-local accumulator: see
-                # merge.ledger_aliases. A halt exits the process, and the
-                # next resume's accumulator restarts at `[]`.
-                ledger_aliases(list(store.ledger.records())),
+                review,
                 iteration,
                 streak,
                 carry_over,
@@ -474,7 +475,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             args,
             store,
             run_meta(),
-            all_claims,
             cross,
             abort_signum["value"],
             any_success,

@@ -28,7 +28,8 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from .ids import parse_claim_id
-from .ledger import Alias, Claim
+from .ledger import Alias, Claim, Record
+from .reviewstate import ReviewState
 
 
 def _key(claim: Claim) -> tuple[str, str]:
@@ -140,26 +141,8 @@ def canonical_claims(records: Sequence[object]) -> list[Claim]:
     versions remain part of the record. It is the state machine's job to
     decide which is live, not this function's.
     """
-    claims = [r for r in records if isinstance(r, Claim)]
-    aliases = [r for r in records if isinstance(r, Alias)]
-    by_id = {c.id: c for c in claims}
-
-    origins: dict[str, list[str]] = {c.id: list(c.origin) for c in claims}
-    aliased: set[str] = set()
-    for alias in aliases:
-        aliased.add(alias.duplicate)
-        duplicate_origin = origins.get(alias.duplicate)
-        if duplicate_origin is None or alias.canonical not in origins:
-            # A dangling alias. Recorded rather than repaired: this function
-            # reconstructs, it does not adjudicate.
-            continue
-        origins[alias.canonical] = _merge_origin(origins[alias.canonical], duplicate_origin)
-
-    return [
-        replace(c, origin=origins[c.id]) if origins[c.id] != list(c.origin) else c
-        for c in claims
-        if c.id not in aliased
-    ]
+    typed = [record for record in records if isinstance(record, Record)]
+    return ReviewState.replay(typed).claims
 
 
 def next_claim_number(records: Sequence[object]) -> int:

@@ -31,7 +31,8 @@ from collections import Counter
 import re
 from typing import Any
 
-from .ledger import Alias, Claim, Verdict
+from .ledger import Claim, Verdict
+from .reviewstate import ReviewState
 from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -252,12 +253,13 @@ def _render_verdict_sections(
 
 
 def render(
-    claims: list[Claim],
-    aliases: list[Alias],
+    review: ReviewState,
     run_meta: dict[str, Any],
-    verdicts: list[Verdict] | None = None,
     states: dict[str, str] | None = None,
 ) -> str:
+    claims = review.claims
+    aliases = review.aliases
+    verdicts = review.verdicts
     lines: list[str] = [f"# Adversarial review — {run_meta['artifact']}", ""]
     lines.append(f"Mode: `{run_meta['mode']}` · preset: `{run_meta['preset']}`")
     lines.append("")

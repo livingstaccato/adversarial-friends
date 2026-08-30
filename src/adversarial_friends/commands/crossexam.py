@@ -27,6 +27,7 @@ from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
 from ..progress import Progress
+from ..reviewstate import ReviewState
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
@@ -81,6 +82,7 @@ def run_rounds(
     specs: list[FriendSpec],
     claims: list[Claim],
     store: RunStore,
+    review: ReviewState,
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     schema_file: Path,
@@ -219,7 +221,9 @@ def run_rounds(
             # "judges disagreed" -- the opposite of what happened, which is
             # that no judge existed. state_for returns `unproven` for a claim
             # with no judges, which is the honest answer.
-            _settle_round(outcome, contested, active, store, round_no, max_rounds, {}, final_block)
+            _settle_round(
+                outcome, contested, active, store, review, round_no, max_rounds, {}, final_block
+            )
             break
 
         if budget.would_exceed_calls(len(judge_specs)):
@@ -300,6 +304,7 @@ def run_rounds(
                 # exists to prevent.
                 active,
                 store,
+                review,
                 round_no,
                 max_rounds,
                 missing,
@@ -357,9 +362,20 @@ def run_rounds(
 
         for verdict in round_verdicts:
             store.ledger.append(verdict)
+            review.apply(verdict)
         outcome.verdicts.extend(round_verdicts)
 
-        _settle_round(outcome, contested, active, store, round_no, max_rounds, missing, final_block)
+        _settle_round(
+            outcome,
+            contested,
+            active,
+            store,
+            review,
+            round_no,
+            max_rounds,
+            missing,
+            final_block,
+        )
         if round_auth_abort is not None:
             outcome.auth_abort = round_auth_abort
             break
@@ -376,6 +392,7 @@ def _settle_round(
     contested: list[Claim],
     specs: list[FriendSpec],
     store: RunStore,
+    review: ReviewState,
     round_no: int,
     max_rounds: int,
     missing: dict[str, set[str]],
@@ -386,9 +403,8 @@ def _settle_round(
     id to the judges that never reported on it this round."""
     roster = [friend_key(s) for s in specs]
     for claim in contested:
-        state = vd.state_for(
+        state = review.claim_state(
             claim,
-            outcome.verdicts,
             roster,
             round_no,
             max_rounds,
@@ -435,6 +451,7 @@ def _settle_round(
             # other, or `supersedes` on it points at a version the ledger
             # records while the successor itself exists nowhere.
             store.ledger.append(successor)
+            review.apply(successor)
             outcome.claims.append(successor)
             # Created by the run's last judging round, so nothing will judge
             # it: it stays non-terminal and the run says so. The rule this

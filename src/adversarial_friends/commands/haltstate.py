@@ -24,13 +24,13 @@ from typing import Any
 from .. import verdicts as vd
 from ..ceilings import Budget
 from ..failures import RepeatTracker
-from ..ledger import Alias, Claim, Verdict
 from ..report import render
+from ..reviewstate import ReviewState
 from ..runstore import RunStore
 from .crossexam import CrossexamOutcome
 
 
-def carried_outcome(store: RunStore, meta: dict[str, Any]) -> "CrossexamOutcome | None":
+def carried_outcome(review: ReviewState, meta: dict[str, Any]) -> "CrossexamOutcome | None":
     """The previous iteration's outcome, rebuilt from what the run recorded.
 
     A `loop` iteration inherits states, verdicts, notes and discard
@@ -50,7 +50,7 @@ def carried_outcome(store: RunStore, meta: dict[str, Any]) -> "CrossexamOutcome 
     outcome.states = dict(states)
     outcome.notes = list(meta.get("amendment_notes") or [])
     outcome.incomplete = bool(meta.get("incomplete"))
-    outcome.verdicts = [r for r in store.ledger.records() if isinstance(r, Verdict)]
+    outcome.verdicts = list(review.verdicts)
     outcome.signatures = {
         claim_id: vd.verdict_set_signature(outcome.verdicts, claim_id)
         for claim_id, state in outcome.states.items()
@@ -60,7 +60,7 @@ def carried_outcome(store: RunStore, meta: dict[str, Any]) -> "CrossexamOutcome 
 
 
 def loop_position(
-    args: argparse.Namespace, store: RunStore, resuming: bool
+    args: argparse.Namespace, review: ReviewState, resuming: bool
 ) -> tuple[int, int, "CrossexamOutcome | None"]:
     """Where a resumed `loop` re-enters: iteration, dry-round streak, and
     what that iteration inherits.
@@ -77,7 +77,7 @@ def loop_position(
     return (
         int(getattr(args, "_resume_iteration", 1) or 1),
         int(getattr(args, "_resume_streak", 0) or 0),
-        carried_outcome(store, meta),
+        carried_outcome(review, meta),
     )
 
 
@@ -85,8 +85,7 @@ def write_halt(
     args: argparse.Namespace,
     store: RunStore,
     meta: dict[str, Any],
-    claims: list[Claim],
-    aliases: list[Alias],
+    review: ReviewState,
     iteration: int,
     streak: int,
     carry_over: "CrossexamOutcome | None",
@@ -142,11 +141,12 @@ def write_halt(
         meta["claim_states"] = carry_over.states
         meta["amendment_notes"] = carry_over.notes
         meta["incomplete"] = carry_over.incomplete
+    downgrades = meta.setdefault("downgrades", [])
+    review.copy_transition_warnings(downgrades)
     store.write_run_json(meta)
     store.write_report(
         render(
-            claims,
-            aliases,
+            review,
             meta,
             # c-0006: `meta["claim_states"]` was set from `carry_over`
             # above, but never reached `render`, whose verdict sections
@@ -155,7 +155,6 @@ def write_halt(
             # iterations had already produced -- present in `carry_over`
             # and in the ledger the whole time, just never handed to the
             # renderer that displays them.
-            verdicts=carry_over.verdicts if carry_over is not None else None,
             states=carry_over.states if carry_over is not None else None,
         )
     )

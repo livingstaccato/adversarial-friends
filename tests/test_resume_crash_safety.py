@@ -29,7 +29,9 @@ from adversarial_friends import orchestrator
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands.resume import resume_round_one
 from adversarial_friends.ids import format_claim_id
-from adversarial_friends.ledger import Alias, Claim
+from adversarial_friends.ledger import Alias, Claim, Resolution, Verdict
+from adversarial_friends.merge import canonical_claims
+from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.runstore import RunStore
 
 _FINDING = {
@@ -106,6 +108,7 @@ def _call_resume_round_one(store, base_round):
     return resume_round_one(
         _args(mode="report"),
         store,
+        ReviewState.replay(store.ledger.records()),
         [],
         {},
         None,
@@ -118,6 +121,18 @@ def _call_resume_round_one(store, base_round):
         base_round,
         lambda _p: None,
     )
+
+
+def _assert_reducer_matches_existing_reconstruction(store):
+    records = list(store.ledger.records())
+    review = ReviewState.replay(records)
+    assert review.claims == canonical_claims(records)
+    assert review.verdicts == [record for record in records if isinstance(record, Verdict)]
+    assert review.aliases == [record for record in records if isinstance(record, Alias)]
+    assert review.resolutions == [
+        record for record in records if isinstance(record, Resolution)
+    ]
+    return review
 
 
 # --- extraction --------------------------------------------------------------
@@ -208,6 +223,8 @@ def test_a_retry_after_a_crash_mid_merge_does_not_crash(tmp_path):
             rationale="same",
         )
     )
+    partial = _assert_reducer_matches_existing_reconstruction(store)
+    assert [alias.duplicate for alias in partial.aliases] == ["c-0002@1"]
 
     resumed = _call_resume_round_one(store, 2)
 
@@ -218,6 +235,7 @@ def test_a_retry_after_a_crash_mid_merge_does_not_crash(tmp_path):
     # already in the ledger before this call ever ran.
     assert [a.duplicate for a in resumed.aliases] == ["c-0003@1"]
     assert any("already applied by an earlier" in d for d in resumed.downgrades)
+    _assert_reducer_matches_existing_reconstruction(store)
 
 
 def test_a_clean_merge_retry_reports_no_earlier_attempt(tmp_path):

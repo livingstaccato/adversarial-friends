@@ -132,3 +132,10 @@ class ReviewState:
         from .resolutions import blocking_claims
 
         return blocking_claims(self.claims, states, self.resolutions)
+
+    def copy_transition_warnings(self, downgrades: list[str]) -> None:
+        """Surface tolerated historical transitions without duplicating notes."""
+        for warning in self.transition_warnings:
+            note = f"ledger compatibility warning: {warning}"
+            if note not in downgrades:
+                downgrades.append(note)

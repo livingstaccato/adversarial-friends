@@ -5,9 +5,15 @@ import subprocess
 import pytest
 
 from adversarial_friends.ledger import Claim
-from adversarial_friends.report import _code_span, _escape_block, render
+from adversarial_friends.report import _code_span, _escape_block, render as render_review
+from adversarial_friends.reviewstate import ReviewState
 
 CMARK = shutil.which("cmark")
+
+
+def render(claims, aliases, run_meta):
+    """Keep the focused renderer tests terse while exercising its state API."""
+    return render_review(ReviewState.replay([*claims, *aliases]), run_meta)
 
 
 def _render_with_cmark(markdown_text: str) -> str:
@@ -72,6 +78,14 @@ def meta(**over):
 def test_report_lists_findings_by_severity():
     out = render([claim("c-0001@1", "low"), claim("c-0002@1", "high")], [], meta())
     assert out.index("c-0002@1") < out.index("c-0001@1")
+
+
+def test_report_accepts_one_replayed_review_state():
+    review = ReviewState.replay([claim("c-0001@1")])
+
+    out = render_review(review, meta())
+
+    assert "c-0001@1" in out
 
 
 def test_report_header_states_model_and_effort_per_friend():

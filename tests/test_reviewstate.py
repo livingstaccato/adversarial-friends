@@ -4,6 +4,7 @@ import pytest
 
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Alias, Claim, Resolution, Verdict
+from adversarial_friends.merge import canonical_claims
 from adversarial_friends.reviewstate import ReviewState
 
 
@@ -70,6 +71,14 @@ def test_dangling_alias_is_recorded_as_a_compatibility_warning():
         "alias 'c-0002@1' -> 'c-0001@1' has a missing endpoint"
     ]
 
+    downgrades: list[str] = []
+    state.copy_transition_warnings(downgrades)
+    state.copy_transition_warnings(downgrades)
+    assert downgrades == [
+        "ledger compatibility warning: alias 'c-0002@1' -> 'c-0001@1' "
+        "has a missing endpoint"
+    ]
+
 
 def test_successor_cycle_is_rejected_even_for_a_preloaded_invalid_graph():
     first = claim("c-0001@1", supersedes="c-0002@1")
@@ -121,3 +130,36 @@ def test_latest_verdicts_are_reduced_per_judge():
     second = dataclasses.replace(first, round=3, reasoning="second")
     state = ReviewState.replay([item, first, second])
     assert state.latest_verdicts_for(item.id) == [second]
+
+
+def test_reducer_matches_legacy_observables():
+    item = claim("c-0004@1")
+    duplicate = claim("c-0005@1")
+    alias = Alias(item.id, duplicate.id, 1, "exact", "same")
+    verdict = Verdict(
+        item.id,
+        "judge",
+        2,
+        "upheld",
+        "high",
+        "verified",
+        "confirmed",
+        None,
+        None,
+    )
+    resolution = Resolution(
+        item.id,
+        "accepted-risk",
+        "operator",
+        "src/example.py:1",
+        2,
+        "changed",
+    )
+    records = [item, duplicate, alias, verdict, resolution]
+
+    state = ReviewState.replay(records)
+
+    assert state.claims == canonical_claims(records)
+    assert state.verdicts == [verdict]
+    assert state.aliases == [alias]
+    assert state.resolutions == [resolution]

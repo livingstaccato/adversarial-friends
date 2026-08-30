@@ -26,6 +26,7 @@ from ..merge import exact_merge
 from ..orchestrator import NeedsOrchestrator, write_extract_request
 from ..progress import Progress
 from ..prompt import _build_friend_prompt
+from ..reviewstate import ReviewState
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..spawn import SpawnResult
@@ -124,6 +125,7 @@ def run_critique(
     claim_counter: int,
     artifact_text: str,
     store: RunStore,
+    review: ReviewState,
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     schema_file: Path,
@@ -229,7 +231,7 @@ def run_critique(
                     suggested_fix=finding["suggested_fix"],
                 )
             )
-        kept, aliases, updated_existing = exact_merge(all_claims, incoming, round_no=round_no)
+        kept, aliases, _updated_existing = exact_merge(all_claims, incoming, round_no=round_no)
         if kept:
             # Something survived dedup, so this round taught the run
             # something. §7.3's dry-round test is exactly this, inverted.
@@ -241,20 +243,14 @@ def run_critique(
         # recover full corroboration from the ledger alone) hits a dead end.
         for record in incoming:
             store.ledger.append(record)
+            review.apply(record)
         for alias in aliases:
             store.ledger.append(alias)
-        if updated_existing:
-            # A canonical claim from an EARLIER friend just gained this
-            # friend's origin too. The ledger keeps its original, immutable
-            # record as first written -- Alias plus the duplicate's own claim
-            # record already let a reader reconstruct the same corroboration
-            # -- but the in-memory list this run still uses (for the NEXT
-            # friend's dedup pass, and for the final report) must reflect the
-            # grown origin, or report.md would undercount how many friends
-            # actually agreed.
-            updated_by_id = {c.id: c for c in updated_existing}
-            all_claims = [updated_by_id.get(c.id, c) for c in all_claims]
-        all_claims.extend(kept)
+            review.apply(alias)
+        # The reducer owns canonicalization and accumulated provenance. It
+        # now replaces the parallel process-local reconstruction that used
+        # `updated_existing` and `kept` to approximate the ledger's state.
+        all_claims = review.claims
         outcome.aliases.extend(aliases)
         outcome.claims.extend(kept)
     # Auth abort takes priority over an extraction request: an auth failure

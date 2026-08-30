@@ -28,11 +28,11 @@ from ..ids import parse_claim_id
 from ..ledger import Ledger, Resolution
 from ..resolutions import (
     UNVERIFIABLE,
-    blocking_claims,
     parse_location,
     rejection_reason,
     verify_location,
 )
+from ..reviewstate import ReviewState
 from ..runstore import default_root
 
 
@@ -69,9 +69,10 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     run_dir = _find_run(args.run_id, args.out)
     meta = _load_meta(run_dir)
     ledger = Ledger(run_dir / "claims.jsonl")
+    review = ReviewState.replay(ledger.records())
 
     parse_claim_id(args.claim)  # rejects a malformed id with a usage error
-    claims = ledger.claims()
+    claims = review.claims
     by_id = {c.id: c for c in claims}
     if args.claim not in by_id:
         raise UsageError(
@@ -123,6 +124,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         verified=verified,
     )
     ledger.append(resolution)
+    review.apply(resolution)
 
     if verified == UNVERIFIABLE:
         # Recorded, not refused -- but the operator should know the runner
@@ -134,8 +136,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         )
 
     states = meta.get("claim_states") or {}
-    resolutions = [r for r in ledger.records() if isinstance(r, Resolution)]
-    blocking = blocking_claims(claims, states, resolutions)
+    blocking = review.blocking(states)
 
     print(f"{resolution.claim_id} {args.disposition} ({verified})")
     if blocking:

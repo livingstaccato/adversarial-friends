@@ -20,6 +20,8 @@ from pathlib import Path
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Alias, Claim
 from adversarial_friends.merge import canonical_claims, next_claim_number
+from adversarial_friends.reviewstate import ReviewState
+from adversarial_friends.verdicts import judges_for
 
 
 def _claim(number: int, text: str = "a finding") -> Claim:
@@ -129,7 +131,17 @@ def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):
     store.lock()
     args = argparse.Namespace(mode="loop")
 
-    haltstate.write_halt(args, store, {}, [], [], 2, 1, None, round_dry=True, round_failed=False)
+    haltstate.write_halt(
+        args,
+        store,
+        {},
+        ReviewState(),
+        2,
+        1,
+        None,
+        round_dry=True,
+        round_failed=False,
+    )
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert meta["halted_round_dry"] is True
@@ -231,6 +243,7 @@ def test_the_resumed_judging_round_is_handed_the_prior_outcome(monkeypatch, tmp_
         resume_mod.resume_round_one(
             args,
             store,
+            ReviewState.replay(store.ledger.records()),
             [],
             {},
             None,
@@ -252,6 +265,67 @@ def test_the_resumed_judging_round_is_handed_the_prior_outcome(monkeypatch, tmp_
     assert seen.get("keep") is True
     assert seen.get("extra_args") == ["--foo"]
     assert seen.get("pass_env") == ("VAR",)
+
+
+def test_resume_excludes_every_transitive_origin_from_judging(monkeypatch, tmp_path):
+    from adversarial_friends.commands import resume as resume_mod
+
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _fake_run_rounds(_specs, claims, *_args, **_kwargs):
+        seen["claims"] = claims
+        raise _Stop
+
+    monkeypatch.setattr(resume_mod, "run_rounds", _fake_run_rounds)
+    store = resume_mod.RunStore(tmp_path, "run-origin-chain")
+    store.lock()
+    records = [
+        Claim(**{**_claim(1).__dict__, "origin": ["friend-a"]}),
+        Claim(**{**_claim(2).__dict__, "origin": ["friend-b"]}),
+        Alias("c-0001@1", "c-0002@1", 1, "exact", "same"),
+        Claim(**{**_claim(3).__dict__, "origin": ["friend-c"]}),
+        Alias("c-0003@1", "c-0001@1", 2, "orchestrator", "same"),
+    ]
+    for record in records:
+        store.ledger.append(record)
+    round_dir = store.round_dir(3)
+    (round_dir / "REQUEST.json").write_text('{"question": "merge"}')
+    (round_dir / "RESPONSE.json").write_text('{"version": 1, "merges": []}')
+    args = argparse.Namespace(
+        mode="crossexam",
+        max_rounds=4,
+        attributed=False,
+        allow_unsandboxed_friend=False,
+        _resume_meta={},
+    )
+
+    with contextlib.suppress(_Stop):
+        resume_mod.resume_round_one(
+            args,
+            store,
+            ReviewState.replay(store.ledger.records()),
+            [],
+            {},
+            None,
+            Path("spec.md"),
+            "text",
+            None,
+            None,
+            resume_mod.threading.Event(),
+            _budget(),
+            3,
+            lambda _p: None,
+        )
+
+    claims = seen["claims"]
+    assert isinstance(claims, list)
+    assert claims[0].origin == ["friend-c", "friend-a", "friend-b"]
+    assert judges_for(claims[0], ["friend-a", "friend-b", "friend-c", "friend-d"]) == [
+        "friend-d"
+    ]
 
 
 def _budget():

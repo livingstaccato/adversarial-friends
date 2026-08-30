@@ -22,6 +22,7 @@ from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands.haltstate import write_halt
 from adversarial_friends.commands.resume import resume_round_one
 from adversarial_friends.failures import RepeatTracker
+from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.spawn import NormalizeResult, SpawnResult
 
@@ -62,6 +63,7 @@ def _resume(store, base_round, budget, resume_meta):
     return resume_round_one(
         _args(resume_meta=resume_meta),
         store,
+        ReviewState.replay(store.ledger.records()),
         [],
         {},
         None,
@@ -87,7 +89,7 @@ def test_write_halt_records_the_budgets_true_spend(monkeypatch, tmp_path):
     budget = Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0)
     budget.spend(37)
 
-    write_halt(_args(), store, {}, [], [], 1, 0, None, budget=budget)
+    write_halt(_args(), store, {}, ReviewState(), 1, 0, None, budget=budget)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert meta["spent_calls"] == 37
@@ -101,7 +103,7 @@ def test_write_halt_without_a_budget_omits_the_field(monkeypatch, tmp_path):
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-no-budget")
 
-    write_halt(_args(), store, {}, [], [], 1, 0, None)
+    write_halt(_args(), store, {}, ReviewState(), 1, 0, None)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert "spent_calls" not in meta
@@ -148,7 +150,7 @@ def test_cumulative_spend_compounds_across_two_halts(monkeypatch, tmp_path):
 
     first_halt_budget = Budget(max_calls=1000, max_wall_clock_s=3600.0, started=0.0)
     first_halt_budget.spend(9)
-    write_halt(_args(), store, {}, [], [], 1, 0, None, budget=first_halt_budget)
+    write_halt(_args(), store, {}, ReviewState(), 1, 0, None, budget=first_halt_budget)
 
     # The resume: a FRESH Budget, as a new process would construct.
     resumed_budget = Budget(max_calls=1000, max_wall_clock_s=3600.0, started=0.0)
@@ -156,7 +158,7 @@ def test_cumulative_spend_compounds_across_two_halts(monkeypatch, tmp_path):
     assert resumed_budget.calls == 9
     resumed_budget.spend(5)  # iteration 2's own round 1
 
-    write_halt(_args(), store, {}, [], [], 2, 0, None, budget=resumed_budget)
+    write_halt(_args(), store, {}, ReviewState(), 2, 0, None, budget=resumed_budget)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert meta["spent_calls"] == 14
@@ -186,7 +188,7 @@ def test_write_halt_persists_the_repeat_tracker(monkeypatch, tmp_path):
     tracker.record("codex-ops", failed)
     assert tracker.is_disabled("codex-ops")
 
-    write_halt(_args(), store, {}, [], [], 1, 0, None, tracker=tracker)
+    write_halt(_args(), store, {}, ReviewState(), 1, 0, None, tracker=tracker)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     restored = RepeatTracker.restore(meta["repeat_tracker"])
@@ -199,7 +201,7 @@ def test_write_halt_without_a_tracker_omits_the_field(monkeypatch, tmp_path):
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-no-tracker")
 
-    write_halt(_args(), store, {}, [], [], 1, 0, None)
+    write_halt(_args(), store, {}, ReviewState(), 1, 0, None)
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert "repeat_tracker" not in meta

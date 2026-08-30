@@ -21,9 +21,8 @@ from ..adapters import FriendSpec
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..errors import UsageError
 from ..ledger import Claim
-from ..merge import ledger_aliases
 from ..report import render
-from ..resolutions import blocking_claims
+from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
 from ..trust import MODEL_RE
 from ..verdicts import judges_for, loop_should_terminate
@@ -337,7 +336,6 @@ def finish_run(
     args: argparse.Namespace,
     store: RunStore,
     base_meta: dict[str, Any],
-    all_claims: list[Claim],
     cross: "CrossexamOutcome | None",
     abort_signum: int | None,
     any_success: bool,
@@ -358,13 +356,14 @@ def finish_run(
     a self-contained concern separate from the loop that produced
     everything it wraps up.
     """
-    # §7.5's gate. Evaluated against the run's own (empty) resolution set,
-    # so a fresh gate run always reports what needs attention rather than
-    # passing: resolutions are recorded afterwards, by `afriend resolve`,
-    # which re-evaluates this same rule.
+    # Reconstruct once from the durable ledger, then use this exact state for
+    # both the gate decision and the report. Process-local accumulators must
+    # not be able to disagree with what a resumed reader will observe.
+    review = ReviewState.replay(store.ledger.records())
+    review.copy_transition_warnings(downgrades)
     blocking: list[Claim] = []
     if args.mode == "gate":
-        blocking = blocking_claims(all_claims, cross.states if cross else {}, [])
+        blocking = review.blocking(cross.states if cross else {})
 
     meta = finalize_meta(
         base_meta,
@@ -380,13 +379,8 @@ def finish_run(
     store.write_run_json(meta)
     store.write_report(
         render(
-            all_claims,
-            # From the ledger, not a process-local accumulator: see
-            # merge.ledger_aliases. A halt exits the process, and the next
-            # resume's accumulator restarts at `[]`.
-            ledger_aliases(list(store.ledger.records())),
+            review,
             meta,
-            verdicts=cross.verdicts if cross else None,
             states=cross.states if cross else None,
         )
     )

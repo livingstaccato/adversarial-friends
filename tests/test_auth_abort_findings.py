@@ -25,6 +25,7 @@ from adversarial_friends.failures import RepeatTracker
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Claim
 from adversarial_friends.normalize import NormalizeResult
+from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.spawn import SpawnResult
 
@@ -184,6 +185,7 @@ def test_run_critique_persists_every_friend_before_surfacing_an_auth_abort(monke
 
     store = RunStore(tmp_path, "run-auth")
     store.lock()
+    review = ReviewState()
 
     outcome, all_claims, counter = run_critique(
         [good, broken],
@@ -192,6 +194,7 @@ def test_run_critique_persists_every_friend_before_surfacing_an_auth_abort(monke
         0,
         "artifact text",
         store,
+        review,
         {},
         None,
         Path("schema.json"),
@@ -254,12 +257,15 @@ def test_run_rounds_settles_the_current_round_then_stops_scheduling_more(monkeyp
 
     store = RunStore(tmp_path, "run-auth")
     store.lock()
+    store.ledger.append(claim)
+    review = ReviewState.replay(store.ledger.records())
     budget = Budget(max_calls=100, max_rounds=5, max_wall_clock_s=1e9, started=0.0)
 
     outcome = run_rounds(
         [judge_a, judge_b],
         [claim],
         store,
+        review,
         {},
         None,
         Path("schema.json"),
