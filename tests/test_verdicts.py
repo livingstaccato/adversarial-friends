@@ -12,6 +12,8 @@ successors, §7.3 termination -- lives in test_verdicts_lifecycle.py.
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
 from adversarial_friends import verdicts
+from adversarial_friends.merge import canonical_claims
+from test_merge import chained_alias_records
 
 
 def test_originator_is_excluded_from_the_judges():
@@ -23,6 +25,12 @@ def test_every_origin_is_excluded_not_just_the_first():
     carries more than one friend."""
     c = claim(origin=("codex-ops", "claude-security"))
     assert verdicts.judges_for(c, ROSTER) == ["agy-assumptions"]
+
+
+def test_reconstructed_transitive_origin_cannot_judge():
+    rebuilt = canonical_claims(chained_alias_records())[0]
+    roster = ["friend-a", "friend-b", "friend-c", "friend-d"]
+    assert verdicts.judges_for(rebuilt, roster) == ["friend-d"]
 
 
 def test_quorum_is_two_when_enough_judges_exist():

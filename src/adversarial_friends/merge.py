@@ -148,12 +148,12 @@ def canonical_claims(records: Sequence[object]) -> list[Claim]:
     aliased: set[str] = set()
     for alias in aliases:
         aliased.add(alias.duplicate)
-        duplicate = by_id.get(alias.duplicate)
-        if duplicate is None or alias.canonical not in origins:
+        duplicate_origin = origins.get(alias.duplicate)
+        if duplicate_origin is None or alias.canonical not in origins:
             # A dangling alias. Recorded rather than repaired: this function
             # reconstructs, it does not adjudicate.
             continue
-        origins[alias.canonical] = _merge_origin(origins[alias.canonical], duplicate.origin)
+        origins[alias.canonical] = _merge_origin(origins[alias.canonical], duplicate_origin)
 
     return [
         replace(c, origin=origins[c.id]) if origins[c.id] != list(c.origin) else c

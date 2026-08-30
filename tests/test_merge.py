@@ -1,5 +1,5 @@
-from adversarial_friends.ledger import Claim
-from adversarial_friends.merge import exact_merge
+from adversarial_friends.ledger import Alias, Claim
+from adversarial_friends.merge import canonical_claims, exact_merge
 
 
 def claim(cid, text, location="src/a.py:1", origin=None):
@@ -196,3 +196,24 @@ def test_non_aliased_existing_claims_are_never_in_updated_existing():
     kept, _aliases, updated_existing = exact_merge(existing, incoming, round_no=1)
     assert updated_existing == []
     assert [c.id for c in kept] == ["c-0002@1"]
+
+
+def chained_alias_records():
+    a = claim("c-0001@1", "same defect", origin=["friend-a"])
+    b = claim("c-0002@1", "same defect reworded", origin=["friend-b"])
+    c = claim("c-0003@1", "same defect again", origin=["friend-c"])
+    return [
+        a,
+        b,
+        Alias("c-0001@1", "c-0002@1", 1, "exact", "same"),
+        c,
+        Alias("c-0003@1", "c-0001@1", 2, "orchestrator", "same defect"),
+    ]
+
+
+def test_canonical_reconstruction_preserves_transitive_origins():
+    rebuilt = canonical_claims(chained_alias_records())
+
+    assert [(item.id, item.origin) for item in rebuilt] == [
+        ("c-0003@1", ["friend-c", "friend-a", "friend-b"])
+    ]
