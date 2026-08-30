@@ -7,10 +7,13 @@ that does need a live server is marked and skipped explicitly, so its
 absence is visible rather than implied.
 """
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import contextlib
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 import json
+import multiprocessing
 from pathlib import Path
 import threading
+import time
 from typing import ClassVar
 
 import pytest
@@ -57,6 +60,23 @@ class _Stub(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass  # keep pytest output clean
+
+
+class _BlockingStub(BaseHTTPRequestHandler):
+    started = threading.Event()
+    release = threading.Event()
+
+    def do_POST(self):
+        type(self).started.set()
+        type(self).release.wait(2)
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(b"{}")
+
+    def log_message(self, *args):
+        pass
 
 
 @pytest.fixture
@@ -277,3 +297,32 @@ def test_a_normal_sized_response_is_unaffected_by_the_ceiling(stub, tmp_path):
     )
     assert result.failure_reason is None
     assert result.result.succeeded is True
+
+
+def test_abort_terminates_the_http_worker(tmp_path):
+    _BlockingStub.started.clear()
+    _BlockingStub.release.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BlockingStub)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    abort = threading.Event()
+    timer = threading.Timer(0.1, abort.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        result = http_transport.run_request(
+            _adapter(_endpoint(server)),
+            _spec(),
+            _prompt(tmp_path),
+            timeout_s=10,
+            abort_event=abort,
+        )
+    finally:
+        _BlockingStub.release.set()
+        server.shutdown()
+        server.server_close()
+        timer.cancel()
+
+    assert result.failure_reason == "aborted"
+    assert time.monotonic() - started < 1.0
+    assert all(child.name != "afriend-http" for child in multiprocessing.active_children())

@@ -25,11 +25,14 @@ Requests use urllib from the stdlib. The project ships no runtime
 dependencies, and adding one for a single POST would be a poor trade.
 """
 
-import concurrent.futures
 import json
+import multiprocessing
+from multiprocessing.connection import Connection
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 import threading
 import time
+from typing import cast
 import urllib.error
 from urllib.parse import urlparse
 import urllib.request
@@ -57,6 +60,8 @@ _OLLAMA_RESPONSE_KEY = "response"
 # `gopher://` endpoint slipping through urllib would be a capability the
 # roster was never supposed to grant.
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+_WireResult = tuple[str, int | None, bytes | str]
 
 
 def _failure(
@@ -124,6 +129,78 @@ def capability_for(adapter: Adapter) -> Capability:
     return Capability(schema=False, readonly=False, effort=adapter.effort_kind)
 
 
+def _request_worker(
+    endpoint: str,
+    payload: bytes,
+    timeout_s: int,
+    max_response_bytes: int,
+    send: Connection,
+) -> None:
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            send.send(("ok", response.status, response.read(max_response_bytes + 1)))
+    except TimeoutError:
+        send.send(("timeout", None, "timeout"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read(501).decode("utf-8", errors="replace")[:500]
+        send.send(("http-error", exc.code, body))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        send.send(("unreachable", None, str(exc)))
+    finally:
+        send.close()
+
+
+def _stop_worker(worker: BaseProcess) -> None:
+    worker.terminate()
+    worker.join(0.25)
+    if worker.is_alive():
+        worker.kill()
+        worker.join(0.25)
+    if worker.is_alive():
+        raise RuntimeError("HTTP helper survived terminate and kill")
+
+
+def _run_worker(
+    endpoint: str,
+    payload: bytes,
+    timeout_s: int,
+    max_response_bytes: int,
+    abort_event: threading.Event | None,
+) -> _WireResult:
+    ctx = multiprocessing.get_context("spawn")
+    receive, send = ctx.Pipe(duplex=False)
+    worker = ctx.Process(
+        target=_request_worker,
+        args=(endpoint, payload, timeout_s, max_response_bytes, send),
+        name="afriend-http",
+        daemon=True,
+    )
+    worker.start()
+    send.close()
+    try:
+        while True:
+            if abort_event is not None and abort_event.is_set():
+                _stop_worker(worker)
+                return ("aborted", None, "aborted")
+            if receive.poll(_ABORT_POLL_S):
+                try:
+                    return cast(_WireResult, receive.recv())
+                except EOFError:
+                    return ("unreachable", None, "HTTP helper closed without a result")
+            if not worker.is_alive():
+                return ("unreachable", None, "HTTP helper exited without a result")
+    finally:
+        receive.close()
+        if worker.is_alive():
+            _stop_worker(worker)
+
+
 def run_request(
     adapter: Adapter,
     spec: FriendSpec,
@@ -179,14 +256,6 @@ def run_request(
         }
     ).encode("utf-8")
 
-    # Scheme checked against _ALLOWED_SCHEMES above.
-    request = urllib.request.Request(
-        endpoint,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     # The request runs on a worker so `abort_event` can end the wait. The
     # exec transport has honoured it since signal handling was added -- a
     # cancelled run must not leave a friend running, and must not make the
@@ -194,52 +263,37 @@ def run_request(
     # ignored it entirely: `urlopen` blocks, so Ctrl-C on a run with an
     # ollama friend sat until the network deadline expired.
     #
-    # The socket is abandoned rather than closed on abort. urllib gives no
-    # cancellation handle, and the alternative -- waiting for a cooperative
-    # shutdown -- is the exact wait being escaped. The worker is a daemon, so
-    # it cannot hold the process open.
-    def _issue() -> tuple[int, bytes]:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:
-            # One byte past the ceiling is enough to know it was exceeded,
-            # and never reads the rest of an arbitrarily large body.
-            return response.status, response.read(max_response_bytes + 1)
-
-    try:
-        if abort_event is None:
-            status, raw = _issue()
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_issue)
-                while True:
-                    if abort_event.is_set():
-                        pool.shutdown(wait=False, cancel_futures=True)
-                        return _failure(argv, time.monotonic() - started, "aborted")
-                    try:
-                        status, raw = future.result(timeout=_ABORT_POLL_S)
-                        break
-                    except concurrent.futures.TimeoutError:
-                        continue
-        if len(raw) > max_response_bytes:
-            return _failure(
-                argv,
-                time.monotonic() - started,
-                f"response exceeded {max_response_bytes} bytes",
-                status,
-            )
-        body = raw.decode("utf-8", errors="replace")
-    except TimeoutError:
+    kind, status, payload_or_reason = _run_worker(
+        endpoint, payload, timeout_s, max_response_bytes, abort_event
+    )
+    if kind == "aborted":
+        return _failure(argv, time.monotonic() - started, "aborted")
+    if kind == "timeout":
         return _failure(argv, time.monotonic() - started, "timeout")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:500]
-        return _failure(
-            argv, time.monotonic() - started, f"http {exc.code}: {body.strip()}", status=exc.code
-        )
-    except (urllib.error.URLError, OSError) as exc:
+    if kind == "http-error":
+        reason = cast(str, payload_or_reason)
         return _failure(
             argv,
             time.monotonic() - started,
-            f"endpoint unreachable: {endpoint} ({exc})",
+            f"http {status}: {reason.strip()}",
+            status=status,
         )
+    if kind == "unreachable":
+        reason = cast(str, payload_or_reason)
+        return _failure(
+            argv,
+            time.monotonic() - started,
+            f"endpoint unreachable: {endpoint} ({reason})",
+        )
+    raw = cast(bytes, payload_or_reason)
+    if len(raw) > max_response_bytes:
+        return _failure(
+            argv,
+            time.monotonic() - started,
+            f"response exceeded {max_response_bytes} bytes",
+            status,
+        )
+    body = raw.decode("utf-8", errors="replace")
 
     duration = time.monotonic() - started
 
