@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.0
+
+A staged hardening release centered on replay-safe state, bounded
+cancellation, durable evidence, and reports that state their actual security
+guarantees. The durable ledger is now the single source used to reconstruct
+claims, provenance, verdicts, resolutions, gate decisions, and reports.
+
+### Correctness and replay
+
+- Fixed transitive origin loss after resumed alias chains, so every friend
+  that contributed to a canonical claim remains excluded from judging it.
+- Made resolution verification independent of the invocation directory by
+  anchoring evidence paths to recorded run context and resolving symlinked
+  repository roots safely. `fixed` now requires verifiably changed evidence;
+  unverifiable evidence can only support `rejected` or `accepted-risk`.
+- Added early validation for all positive run ceilings and global model
+  values, before artifacts or run directories are created or friends are
+  dispatched.
+- Added `ReviewState`, a deterministic ledger reducer with incremental/replay
+  equivalence checks, transition validation, compatibility warnings, and
+  generated sequence tests. Live runs, resumes, halts, gate decisions, and
+  reports now derive their observable state through this boundary.
+
+### Safety and durability
+
+- Made HTTP cancellation bounded by moving each blocking request into a
+  helper process that is terminated and, if needed, killed on abort.
+- Made ledger appends POSIX-durable with complete-write loops, file `fsync`,
+  parent-directory `fsync` on creation, and file-and-line corruption errors.
+- Separated write protection, declared scope, transport, and actual OS
+  confinement in `run.json` and report friend tables. Reports now warn when a
+  write-protected executable still has same-user filesystem read access.
+
+### Verdict semantics and release engineering
+
+- Kept conflicting amendments contested instead of choosing one rewrite
+  arbitrarily; every proposed amendment remains visible in the report.
+- Included evidence assessment, counter-evidence, and amendment content in
+  consecutive-round discard equivalence, while ignoring reasoning and
+  confidence changes that do not change the substantive verdict set.
+- Narrowed supported-platform metadata to macOS and Linux. `make quality` now
+  includes wheel asset inspection and isolated installed-entry-point smoke
+  tests; Linux CI remains responsible for the real bubblewrap assertion.
+
 ## 0.1.8
 
 Three fixes, all found by cross-examining the runner's own `--resume` and
