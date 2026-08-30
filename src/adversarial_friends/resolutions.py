@@ -134,9 +134,7 @@ def verify_location(
         before = _slice_lines(
             frozen_artifact.read_text(encoding="utf-8", errors="replace"), location
         )
-        after = _slice_lines(
-            current_path.read_text(encoding="utf-8", errors="replace"), location
-        )
+        after = _slice_lines(current_path.read_text(encoding="utf-8", errors="replace"), location)
         return LOCATION_CHANGED if before != after else LOCATION_UNCHANGED
 
     if repo_root is None or snapshot_sha is None:

@@ -73,10 +73,7 @@ class ReviewState:
     def _apply_alias(self, record: Alias) -> None:
         self.aliases.append(record)
         self.aliased_ids.add(record.duplicate)
-        if (
-            record.canonical not in self.claims_by_id
-            or record.duplicate not in self.claims_by_id
-        ):
+        if record.canonical not in self.claims_by_id or record.duplicate not in self.claims_by_id:
             self.transition_warnings.append(
                 f"alias {record.duplicate!r} -> {record.canonical!r} has a missing endpoint"
             )

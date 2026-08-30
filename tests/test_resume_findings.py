@@ -323,9 +323,7 @@ def test_resume_excludes_every_transitive_origin_from_judging(monkeypatch, tmp_p
     claims = seen["claims"]
     assert isinstance(claims, list)
     assert claims[0].origin == ["friend-c", "friend-a", "friend-b"]
-    assert judges_for(claims[0], ["friend-a", "friend-b", "friend-c", "friend-d"]) == [
-        "friend-d"
-    ]
+    assert judges_for(claims[0], ["friend-a", "friend-b", "friend-c", "friend-d"]) == ["friend-d"]
 
 
 def _budget():

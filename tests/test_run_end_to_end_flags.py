@@ -4,9 +4,8 @@ import json
 import subprocess
 import sys
 
-import pytest
-
 from e2e_helpers import AF, _env, run_af
+import pytest
 
 
 def _artifact(tmp_path):

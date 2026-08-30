@@ -21,8 +21,12 @@ def test_report_shows_every_conflicting_amendment():
         "fix",
     )
     cast = [
-        Verdict(item.id, "friend-a", 2, "amended", "high", "confirmed", "first", None, "first wording"),
-        Verdict(item.id, "friend-b", 2, "amended", "high", "confirmed", "second", None, "second wording"),
+        Verdict(
+            item.id, "friend-a", 2, "amended", "high", "confirmed", "first", None, "first wording"
+        ),
+        Verdict(
+            item.id, "friend-b", 2, "amended", "high", "confirmed", "second", None, "second wording"
+        ),
     ]
     review = ReviewState.replay([item, *cast])
     meta = {"artifact": "spec.md", "mode": "crossexam", "preset": "inherit", "friends": []}

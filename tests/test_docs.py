@@ -254,9 +254,9 @@ def test_evals_file_is_valid_and_has_cases():
 
 
 def test_the_advertised_test_count_is_the_real_one():
-    """The README states a test count twice -- a badge and a `make test`
-    comment -- and nothing kept either honest. Both said 365 while the suite
-    had grown past 900, which is the most quietly embarrassing kind of stale:
+    """The README states a test count in its badge, and nothing kept it
+    honest. It once said 365 while the suite had grown past 900, which is the
+    most quietly embarrassing kind of stale:
     a number a reader has no way to check and every reason to believe.
 
     Collection is the source of truth rather than a hand-maintained constant,

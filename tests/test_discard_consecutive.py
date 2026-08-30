@@ -13,6 +13,7 @@ from verdict_helpers import claim, verdict
 from adversarial_friends import verdicts as vd
 from adversarial_friends.adapters import FriendSpec
 from adversarial_friends.commands.crossexam import CrossexamOutcome, _settle_round
+from adversarial_friends.reviewstate import ReviewState
 
 
 def _spec(cli, lens):
@@ -37,7 +38,8 @@ def _settle(outcome, round_no, kinds, max_rounds=6):
     # comparing against the last round that actually happened.
     _cast(outcome, round_no, kinds)
     contested = [claim(origin=("codex/ops",))]
-    _settle_round(outcome, contested, SPECS, None, round_no, max_rounds, {}, True)
+    review = ReviewState.replay([*contested, *outcome.verdicts])
+    _settle_round(outcome, contested, SPECS, None, review, round_no, max_rounds, {}, True)
     return outcome.states["c-0001@1"]
 
 
@@ -70,5 +72,6 @@ def test_a_claim_nobody_can_judge_is_never_discarded():
     outcome = CrossexamOutcome()
     everyone = [claim(origin=("codex/ops", "claude/security", "agy/assumptions"))]
     for round_no in (2, 3, 4):
-        _settle_round(outcome, everyone, SPECS, None, round_no, 6, {}, True)
+        review = ReviewState.replay(everyone)
+        _settle_round(outcome, everyone, SPECS, None, review, round_no, 6, {}, True)
         assert outcome.states["c-0001@1"] == vd.UNPROVEN, round_no

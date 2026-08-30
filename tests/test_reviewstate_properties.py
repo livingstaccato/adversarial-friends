@@ -24,10 +24,7 @@ def make_generated_claim(number: int, origin: list[str]) -> Claim:
 
 def generated_valid_records(rng: random.Random) -> list[Record]:
     count = rng.randint(1, 8)
-    claims = [
-        make_generated_claim(index + 1, [f"friend-{index + 1}"])
-        for index in range(count)
-    ]
+    claims = [make_generated_claim(index + 1, [f"friend-{index + 1}"]) for index in range(count)]
     records: list[Record] = list(claims)
     active = [item.id for item in claims]
     while len(active) > 1 and rng.random() < 0.8:

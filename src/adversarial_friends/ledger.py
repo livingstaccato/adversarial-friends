@@ -140,9 +140,7 @@ class Ledger:
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise UsageError(
-                        f"{self.path}:{line_no}: malformed JSON: {exc.msg}"
-                    ) from exc
+                    raise UsageError(f"{self.path}:{line_no}: malformed JSON: {exc.msg}") from exc
                 try:
                     yield record_from_dict(payload)
                 except UsageError as exc:

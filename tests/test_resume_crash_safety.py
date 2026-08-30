@@ -129,9 +129,7 @@ def _assert_reducer_matches_existing_reconstruction(store):
     assert review.claims == canonical_claims(records)
     assert review.verdicts == [record for record in records if isinstance(record, Verdict)]
     assert review.aliases == [record for record in records if isinstance(record, Alias)]
-    assert review.resolutions == [
-        record for record in records if isinstance(record, Resolution)
-    ]
+    assert review.resolutions == [record for record in records if isinstance(record, Resolution)]
     return review
 
 

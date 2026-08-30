@@ -67,16 +67,13 @@ def test_dangling_alias_is_recorded_as_a_compatibility_warning():
     state.apply(alias)
     assert state.aliases == [alias]
     assert state.claims == []
-    assert state.transition_warnings == [
-        "alias 'c-0002@1' -> 'c-0001@1' has a missing endpoint"
-    ]
+    assert state.transition_warnings == ["alias 'c-0002@1' -> 'c-0001@1' has a missing endpoint"]
 
     downgrades: list[str] = []
     state.copy_transition_warnings(downgrades)
     state.copy_transition_warnings(downgrades)
     assert downgrades == [
-        "ledger compatibility warning: alias 'c-0002@1' -> 'c-0001@1' "
-        "has a missing endpoint"
+        "ledger compatibility warning: alias 'c-0002@1' -> 'c-0001@1' has a missing endpoint"
     ]
 
 
