@@ -4,6 +4,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 from e2e_helpers import AF, _env, run_af
 
 
@@ -73,6 +75,45 @@ def test_model_and_effort_override_everything(tmp_path):
     friend = _run_json(tmp_path)["friends"][0]
     assert friend["model"] == "from-flag"
     assert friend["effort"] == "high"
+
+
+def test_global_model_uses_the_friend_model_allowlist(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--model=--settings",
+    )
+    assert result.returncode == 2
+    assert "invalid model" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--timeout", "0"),
+        ("--max-friends", "0"),
+        ("--max-calls", "0"),
+        ("--max-wall-clock", "0"),
+        ("--max-loop-iterations", "0"),
+        ("--require-friends", "0"),
+        ("--max-rounds", "0"),
+    ],
+)
+def test_positive_run_limits_are_validated_before_dispatch(tmp_path, flag, value):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        flag,
+        value,
+    )
+    assert result.returncode == 2
+    assert "positive integer" in result.stderr or "at least 1" in result.stderr
+    assert not (tmp_path / "runs").exists()
 
 
 # --- --lens / --max-friends ------------------------------------------------

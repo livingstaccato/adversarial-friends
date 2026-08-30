@@ -25,6 +25,7 @@ from ..merge import ledger_aliases
 from ..report import render
 from ..resolutions import blocking_claims
 from ..runstore import RunStore, default_root
+from ..trust import MODEL_RE
 from ..verdicts import judges_for, loop_should_terminate
 from .exits import decide_exit
 
@@ -186,6 +187,12 @@ def stable_artifact_path(artifact: Path) -> Path:
     return artifact.parent.resolve() / artifact.name
 
 
+def _validate_positive(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        option = name.replace("_", "-")
+        raise UsageError(f"--{option}={value!r}: expected a positive integer")
+
+
 def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Path]:
     """Everything that can be refused before a single friend is dispatched.
 
@@ -200,6 +207,21 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
         # response produce the same run, and re-reading flags from a second
         # command line is exactly how that stops being true.
         args = _restore_args(args)
+    for name in (
+        "timeout",
+        "max_friends",
+        "max_calls",
+        "max_wall_clock",
+        "max_loop_iterations",
+        "require_friends",
+    ):
+        value = getattr(args, name, None)
+        if value is not None:
+            _validate_positive(name, value)
+    if args.max_rounds < 1:
+        raise UsageError("--max-rounds must be at least 1 (a positive integer)")
+    if args.model is not None and MODEL_RE.fullmatch(args.model) is None:
+        raise UsageError(f"invalid model {args.model!r}: must match {MODEL_RE.pattern!r}")
     if not args.artifact:
         raise UsageError("an artifact path is required (or --resume RUN_ID)")
     artifact = Path(args.artifact)
