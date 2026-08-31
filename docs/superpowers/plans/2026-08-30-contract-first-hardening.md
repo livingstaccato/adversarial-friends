@@ -160,6 +160,29 @@ def test_disabled_provider_and_model_round_trip_atomically(tmp_path, monkeypatch
     )
 
 
+def _disable_ollama(config_home: str) -> None:
+    os.environ["XDG_CONFIG_HOME"] = config_home
+    providerconfig.set_enabled("ollama", False, known={"codex", "ollama"})
+
+
+def test_locked_update_rereads_changes_made_before_it_acquires(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    with providerconfig._update_lock():
+        process = multiprocessing.Process(target=_disable_ollama, args=(str(tmp_path),))
+        process.start()
+        time.sleep(0.1)
+        assert process.is_alive(), "second updater must wait for the transaction lock"
+        initial = providerconfig.load(["codex", "ollama"])
+        settings = dict(initial.providers)
+        settings["codex"] = providerconfig.ProviderSetting(model="gpt-5.6-sol")
+        providerconfig._write_locked(providerconfig.ProviderPolicy(settings))
+    process.join(5)
+    assert process.exitcode == 0
+    policy = providerconfig.load(["codex", "ollama"])
+    assert policy.setting("ollama").enabled is False
+    assert policy.setting("codex").model == "gpt-5.6-sol"
+
+
 def test_invalid_config_names_the_file_and_field(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     path = providerconfig.config_path()
@@ -232,7 +255,7 @@ def load(known: Iterable[str], env: Mapping[str, str] | None = None) -> Provider
     return ProviderPolicy(settings)
 
 
-def _write(policy: ProviderPolicy, env: Mapping[str, str] | None = None) -> Path:
+def _write_locked(policy: ProviderPolicy, env: Mapping[str, str] | None = None) -> Path:
     path = config_path(env)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -242,19 +265,42 @@ def _write(policy: ProviderPolicy, env: Mapping[str, str] | None = None) -> Path
             for name, value in sorted(policy.providers.items())
         },
     }
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        with contextlib.suppress(OSError):
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
+
+
+@contextlib.contextmanager
+def _update_lock(env: Mapping[str, str] | None = None) -> Iterator[None]:
+    path = config_path(env)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def set_enabled(name: str, enabled: bool, *, known: set[str]) -> Path:
     if name not in known:
         raise UsageError(f"unknown provider {name!r}; known: {sorted(known)}")
-    policy = load(known)
-    settings = dict(policy.providers)
-    settings[name] = dataclasses.replace(settings[name], enabled=enabled)
-    return _write(ProviderPolicy(settings))
+    with _update_lock():
+        policy = load(known)
+        settings = dict(policy.providers)
+        settings[name] = dataclasses.replace(settings[name], enabled=enabled)
+        return _write_locked(ProviderPolicy(settings))
 
 
 def set_model(name: str, model: str | None, *, known: set[str]) -> Path:
@@ -262,10 +308,11 @@ def set_model(name: str, model: str | None, *, known: set[str]) -> Path:
         raise UsageError(f"unknown provider {name!r}; known: {sorted(known)}")
     if model is not None and MODEL_RE.fullmatch(model) is None:
         raise UsageError(f"invalid model {model!r}: must match {MODEL_RE.pattern!r}")
-    policy = load(known)
-    settings = dict(policy.providers)
-    settings[name] = dataclasses.replace(settings[name], model=model)
-    return _write(ProviderPolicy(settings))
+    with _update_lock():
+        policy = load(known)
+        settings = dict(policy.providers)
+        settings[name] = dataclasses.replace(settings[name], model=model)
+        return _write_locked(ProviderPolicy(settings))
 ```
 
 Validate the exact top-level keys `version` and `providers`, accept only version 1, accept only known provider names, accept only `enabled: bool` and `model: str | null`, validate models with `MODEL_RE`, and write a temporary sibling followed by `Path.replace`. Do not read configuration from the current repository.
@@ -464,10 +511,21 @@ Expected: Codex exposes `--ignore-user-config`, `--disable apps`, and `--disable
 - [ ] **Step 2: Write failing authority parsing, argv, and fail-closed tests**
 
 ```python
-def test_codex_denial_flags_precede_the_prompt(codex, prompt, schema):
-    argv, _, cap = build_argv(codex, spec("codex"), prompt, schema, ExternalToolPolicy.DENY)
-    assert "--ignore-user-config" in argv
-    assert argv.index("--ignore-user-config") < argv.index("-")
+@pytest.mark.parametrize("name", ["codex", "claude", "agy", "opencode"])
+def test_denial_flags_are_in_an_option_position(registry, name, prompt, schema):
+    adapter = registry[name]
+    if adapter.external_tools == "uncontrolled":
+        with pytest.raises(PolicyError):
+            build_argv(adapter, spec(name), prompt, schema, ExternalToolPolicy.DENY)
+        return
+    argv, _, cap = build_argv(adapter, spec(name), prompt, schema, ExternalToolPolicy.DENY)
+    first_deny = argv.index(adapter.deny_external_tools_argv[0])
+    if adapter.prompt_mode == "trailing-arg":
+        assert first_deny < len(argv) - 1
+    elif adapter.prompt_mode == "flag-value":
+        assert first_deny < argv.index(adapter.prompt_flag)
+    else:
+        assert adapter.deny_external_tools_argv[0] in argv
     assert cap.external_tools == "denied"
 
 
@@ -482,7 +540,12 @@ def test_allow_is_explicit_and_recorded(adapter):
     assert decision.status == "explicitly-allowed"
 ```
 
-Add an end-to-end fake-adapter test proving default denial reaches every critique and judging dispatch and `--allow-external-tools` is persisted in invocation metadata for resume.
+Add an end-to-end fake-adapter test proving default denial reaches every
+critique and judging dispatch. Add a malicious-resume fixture proving a saved
+`allow_external_tools`, `allow_unsandboxed_friend`, `unsafe_extra_args`,
+`i_accept_unsandboxed`, or `pass_env` value never grants authority. A prior
+grant must be repeated exactly on the resume command line or resume fails
+before dispatch.
 
 - [ ] **Step 3: Run focused tests and verify RED**
 
@@ -516,7 +579,7 @@ class PolicyError(UsageError):
 def enforce(adapter: Adapter, policy: ExternalToolPolicy) -> AuthorityDecision:
     if policy is ExternalToolPolicy.ALLOW:
         return AuthorityDecision(policy, "explicitly-allowed", (), adapter.external_tool_sources)
-    if adapter.transport == "http" or adapter.external_tools == "none":
+    if adapter.external_tools == "none":
         return AuthorityDecision(policy, "denied", (), adapter.external_tool_sources)
     if adapter.external_tools == "deny-argv" and adapter.deny_external_tools_argv:
         return AuthorityDecision(
@@ -528,7 +591,15 @@ def enforce(adapter: Adapter, policy: ExternalToolPolicy) -> AuthorityDecision:
     )
 ```
 
-Extend `Adapter` with `external_tools`, `deny_external_tools_argv`, and `external_tool_sources`. Extend `Capability` with an `external_tools` field defaulting to `denied` so existing three-argument constructions remain compatible. Treat HTTP adapters that expose no tool protocol as `none`; treat unverified executable adapters as `uncontrolled`; fail closed under `deny`.
+Extend `Adapter` with `external_tools`, `deny_external_tools_argv`, and
+`external_tool_sources`, defaulting missing declarations to `unknown`. Extend
+`Capability` with an `external_tools` field defaulting to `unknown`.
+Explicitly construct `_FAKE_CAPABILITY` with `not-applicable`,
+`_UNKNOWN_CAPABILITY` with `unknown`, and HTTP capabilities from the actual
+authority decision. Require every transport to declare its status; declare
+the shipped Ollama `/api/generate` adapter as `none` only because its request
+shape has no tool field. Treat unverified adapters as `uncontrolled` and fail
+closed under `deny`.
 
 Feed `enforce` into `readiness.assess_all`: under deny policy, catch
 `PolicyError` and return `FriendReadiness(state=POLICY_BLOCKED, reason=str(exc))`.
@@ -538,7 +609,18 @@ not bypass the authority contract.
 
 - [ ] **Step 5: Thread one policy through every dispatch path**
 
-Add `--allow-external-tools` to `run`, include it in `_RESUMABLE_ARGS`, derive one enum in `prepare_run`, and pass it through critique, crossexam, resume, `dispatch_round`, `_dispatch`, and `build_argv`. Do not read this grant from provider configuration or repository files. Record `external_tool_policy`, decision status, and known sources in each friend row and top-level metadata.
+Add `--allow-external-tools` to `run`, derive one enum in `prepare_run`, and
+pass it through critique, crossexam, resume, `dispatch_round`, `_dispatch`,
+and `build_argv`. Emit denial argv before any trailing or flag-value prompt.
+
+Split resume fields into deterministic settings and security grants. Restore
+and type-check only deterministic settings. Never `setattr` a grant from
+`run.json`; compare the saved grant with the current resume invocation and
+require an exact explicit re-assertion for `allow_external_tools`,
+`allow_unsandboxed_friend`, `unsafe_extra_args`, `i_accept_unsandboxed`, and
+`pass_env`. Run normal argument, roster-entry, model, and denied-value
+validation after restoration. Record policy, decision status, and known
+sources in each friend row and top-level metadata.
 
 - [ ] **Step 6: Run focused tests and verify GREEN**
 
@@ -574,13 +656,15 @@ git commit -m "feat: deny provider tools by default"
 def test_resume_uses_recorded_snapshot_without_creating_another(monkeypatch, halted_run):
     monkeypatch.setattr(isolation, "snapshot_commit", Mock(side_effect=AssertionError("new snapshot")))
     identity = SnapshotIdentity.from_meta(halted_run.meta)
-    assert identity.verify().commit == halted_run.meta["snapshot_sha"]
+    assert identity.verify(halted_run.frozen).commit == halted_run.meta["snapshot_sha"]
 
 
 def test_missing_saved_commit_refuses_resume_without_rewriting_run_json(halted_run):
     before = halted_run.run_json.read_bytes()
     with pytest.raises(UsageError, match="saved snapshot.*missing"):
-        SnapshotIdentity.from_meta({**halted_run.meta, "snapshot_sha": "0" * 40}).verify()
+        SnapshotIdentity.from_meta(
+            {**halted_run.meta, "snapshot_sha": "0" * 40}
+        ).verify(halted_run.frozen)
     assert halted_run.run_json.read_bytes() == before
 
 
@@ -604,6 +688,9 @@ Expected: missing snapshot API and existing resume path calls `snapshot_commit`.
 Create:
 
 ```python
+COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
+
+
 @dataclass(frozen=True)
 class SnapshotIdentity:
     repo_root: Path | None
@@ -645,6 +732,8 @@ class SnapshotIdentity:
             raise UsageError("cannot resume: frozen artifact hash does not match saved snapshot")
         if self.repo_root is not None and self.commit is not None:
             verify_commit(self.repo_root, self.commit)
+            if COMMIT_RE.fullmatch(self.commit) is None:
+                raise UsageError("cannot resume: saved snapshot commit must be 40 hexadecimal characters")
             actual_tree = git_tree(self.repo_root, self.commit)
             if self.tree is not None and actual_tree != self.tree:
                 raise UsageError("cannot resume: saved snapshot tree does not match commit")
@@ -684,7 +773,13 @@ def git_tree(repo: Path, commit: str) -> str:
     return _git(repo, "rev-parse", f"{commit}^{{tree}}")
 ```
 
-Use `git cat-file -e <commit>^{commit}` and `git rev-parse <commit>^{tree}` for verification, and hash the frozen artifact bytes. A legacy 0.2.0 record migrates from `repo_root`, `snapshot_sha`, `artifact_path`, and `artifact_hash`. Never derive a replacement when any recorded identity field is inconsistent.
+Use `git cat-file -e <commit>^{commit}` and `git rev-parse
+<commit>^{tree}` for verification, and hash the frozen artifact bytes.
+Validate the saved commit against `^[0-9a-fA-F]{40}$` before passing it to
+Git. A legacy 0.2.0 record migrates from `repo_root`, `snapshot_sha`,
+`artifact_path`, and `artifact_hash`; if its tree is absent, derive and persist
+the tree from the validated commit instead of silently leaving the identity
+partial. Never create a new commit to repair inconsistent recorded identity.
 
 - [ ] **Step 4: Integrate one snapshot lifecycle**
 
@@ -1063,14 +1158,18 @@ git commit -m "feat: track loop novelty by conservative themes"
 ```python
 def test_successful_stderr_is_visible_but_not_a_failure(store, successful_outcome):
     successful_outcome = dataclasses.replace(
-        successful_outcome, stderr="cache warning: stale index"
+        successful_outcome,
+        stderr="`danger` [click](javascript:bad) https://example.test/" + "x" * 400,
     )
     row = persist_result(
         store, 1, friend_spec(), Capability(False, True, "none"),
         successful_outcome, "exec",
     )
     assert row["status"].startswith("ok (diagnostics:")
-    assert row["diagnostics"] == "cache warning: stale index"
+    assert row["diagnostics"] == _stderr_tail(successful_outcome.stderr)
+    assert len(row["diagnostics"]) <= STDERR_TAIL_CHARS
+    assert "javascript:" not in row["diagnostics"]
+    assert "https://" not in row["diagnostics"]
 
 
 def test_repeat_disabled_friend_has_skip_record_and_no_prompt(run_dir):
@@ -1140,7 +1239,10 @@ Call it before critique and judging prompt builders. Persist `status=skipped` me
 
 - [ ] **Step 4: Surface bounded successful diagnostics**
 
-When stderr is nonempty on success, add a sanitized `_stderr_tail` summary to the status, store it separately as `diagnostics`, and point to the full `.err`. Preserve failure wording and orphan markers. Never include unbounded stderr in `run.json` or report cells.
+When stderr is nonempty on success, compute one sanitized `_stderr_tail`
+summary, use that same value in status and `diagnostics`, and point to the
+full `.err`. Preserve failure wording and orphan markers. Never include raw
+or unbounded stderr in `run.json` or report cells.
 
 - [ ] **Step 5: Complete report projections**
 
@@ -1255,7 +1357,10 @@ def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
 ```
 
 Call `migrate_meta` immediately after reading `run.json` in `_restore_args`,
-before any field is interpreted.
+before any field is interpreted. Schema migration does not restore authority:
+grant fields remain audit data only, and current CLI arguments must
+re-acknowledge them. Validate the migrated invocation and roster shapes before
+constructing `argparse.Namespace` or `FriendSpec` objects.
 
 - [ ] **Step 4: Document provider and authority behavior**
 

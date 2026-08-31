@@ -110,8 +110,10 @@ afriend providers clear-model <name>
 ```
 
 Writes are atomic and preserve a last-known-valid file if replacement fails.
-The package remains runtime-dependency-free by using `json` from the standard
-library.
+A sibling lock serializes each complete read-modify-write transaction, so
+concurrent provider commands cannot discard one another's changes. Temporary
+files are unique, file and directory metadata are flushed best-effort, and
+the package remains runtime-dependency-free.
 
 Roster precedence is deterministic:
 
@@ -145,11 +147,12 @@ confinement. New runs use `deny` by default. The only opt-in is the per-run
 `--allow-external-tools` flag; persistent or repository configuration cannot
 grant this authority.
 
-Every executable adapter declares whether and how it can neutralize inherited
-plugins, apps, MCP servers, or equivalent provider-managed integrations. The
-preflight assessment requires a supported denial strategy. If an installed
-CLI cannot enforce the declared strategy, it is `policy-blocked` and is not
-launched.
+Every adapter, regardless of transport, declares whether and how it can
+neutralize inherited plugins, apps, MCP servers, tools, or equivalent
+provider-managed integrations. Missing declarations mean `unknown`, never
+`denied`. The preflight assessment requires a supported denial strategy. If
+an installed provider cannot enforce the declared strategy, it is
+`policy-blocked` and is not launched.
 
 For Codex, the denial strategy starts without user configuration and disables
 app/plugin capability using the supported Codex CLI flags. That removes
@@ -164,6 +167,14 @@ provider configuration. The run records the explicit opt-in, the adapter's
 known authority sources, and the fact that provider-managed integrations may
 exist. It does not claim a complete inventory when the provider cannot supply
 one.
+
+Security grants are invocation-local. Resume never restores external-tool
+access, unsandboxed execution, arbitrary extra arguments, or passed
+environment variables from `run.json`. If continuity requires a prior grant,
+the operator must repeat the exact grant on the resume command line; saved
+metadata can require re-acknowledgment but cannot grant authority. All
+non-grant values restored from metadata are schema- and type-validated before
+use.
 
 ### SnapshotIdentity
 
@@ -181,6 +192,11 @@ snapshot history.
 Version 0.2.0 runs with a recorded snapshot use that snapshot. Runs too old or
 damaged to identify one fail with actionable recovery guidance rather than
 silently reviewing a different input.
+
+Legacy snapshots that recorded a commit but not its tree derive the tree from
+the validated full-length hexadecimal commit ID, persist the derived value,
+and then use the complete identity. Commit-like strings from metadata are
+validated before reaching Git argument parsing.
 
 ### RunOutcome
 
@@ -245,9 +261,10 @@ different failure mechanisms at the same location remain novel.
 ## Diagnostics and Audit Artifacts
 
 A successful subprocess result may contain meaningful stderr. The round
-record therefore stores a bounded diagnostic summary and a path to the full
-captured stderr even when the friend succeeded. Reports surface the summary
-without treating it as a failure.
+record therefore stores one bounded, sanitized diagnostic summary and a path
+to the full captured stderr even when the friend succeeded. Raw stderr stays
+only in the `.err` artifact. Reports surface the safe summary without treating
+it as a failure.
 
 Repeat-failure filtering occurs before prompt construction. A reviewer
 disabled for the next round receives an explicit `skipped` audit record with
