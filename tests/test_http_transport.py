@@ -162,8 +162,8 @@ def test_http_error_is_a_failed_result_not_an_exception(stub, tmp_path):
     result = http_transport.run_request(
         _adapter(_endpoint(stub)), _spec(), _prompt(tmp_path), timeout_s=10
     )
-    assert result.failure_reason.startswith("http 500")
-    assert "model not found" in result.failure_reason
+    assert result.failure_reason == "http 500"
+    assert "model not found" in result.stderr
     assert result.exit_code == 500
     assert result.result.succeeded is False
 

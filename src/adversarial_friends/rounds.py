@@ -27,7 +27,13 @@ from .authority import ExternalToolPolicy
 from .ceilings import DEFAULT_MAX_CONCURRENCY
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
-from .dispatch import _UNKNOWN_CAPABILITY, _dispatch, _exception_outcome, _stderr_tail
+from .dispatch import (
+    _UNKNOWN_CAPABILITY,
+    _dispatch,
+    _exception_outcome,
+    _stderr_tail,
+    failure_summary,
+)
 from .errors import AfError
 from .failures import AUTH, RepeatTracker, auth_abort_message, classify
 from .progress import Progress, disabled
@@ -83,6 +89,16 @@ def persist_skip(store: RunStore, round_no: int, skipped: SkippedFriend) -> dict
         "round": round_no,
         "status": f"skipped: {skipped.reason}",
     }
+
+
+def prune_undispatched_prompts(
+    specs: Sequence[FriendSpec], prompt_for: dict[str, Path], results: Sequence[RoundResult]
+) -> None:
+    """Keep prompt artifacts only for dispatch attempts that returned an auditable row."""
+    dispatched = {spec.name for spec, _capability, _outcome in results}
+    for spec in specs:
+        if spec.name not in dispatched:
+            prompt_for[spec.name].unlink(missing_ok=True)
 
 
 def _outcome_word(outcome: SpawnResult, contract: PayloadContract) -> str:
@@ -389,7 +405,8 @@ def persist_result(
 
     diagnostics = _stderr_tail(outcome.stderr) if outcome.stderr.strip() else ""
     diagnostics_path = f"round-{round_no}/{spec.name}.err"
-    status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
+    failure_reason = failure_summary(outcome.failure_reason) if outcome.failure_reason else None
+    status = "ok" if failure_reason is None else f"failed: {failure_reason or 'unusable output'}"
     if outcome.failure_reason is None and diagnostics:
         status += f" (diagnostics: {diagnostics}; full text in {diagnostics_path})"
     elif outcome.failure_reason is not None and diagnostics:

@@ -232,6 +232,32 @@ def test_a_deterministically_broken_friend_stops_being_dispatched(tmp_path):
         assert not (round_dir / "fake-crash-1.prompt").exists()
 
 
+def test_policy_skips_do_not_reset_dry_streak_or_repeat_the_downgrade(tmp_path):
+    result = _loop(
+        tmp_path,
+        "fake:judge_uphold_a",
+        "fake:crash",
+        extra=("--max-loop-iterations", "6", "--max-rounds", "3"),
+    )
+
+    meta = _run_json(tmp_path)
+    skip_rows = [
+        row
+        for row in meta["friends"]
+        if row["name"] == "fake-crash-1" and row["status"].startswith("skipped: ")
+    ]
+    repeated_failure_notes = [
+        note for note in meta["downgrades"] if "will not be dispatched again" in note
+    ]
+    assert len(skip_rows) >= 2
+    assert len(repeated_failure_notes) == 1
+    assert meta["dry_streak"] >= 2
+    assert meta["converged"] is True
+    assert meta["iterations_run"] < 6
+    assert meta["incomplete"] is True
+    assert result.returncode == 1, result.stderr
+
+
 def test_repeat_disabled_critique_friend_does_not_consume_call_budget(tmp_path):
     result = _loop(
         tmp_path,

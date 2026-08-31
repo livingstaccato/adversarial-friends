@@ -28,7 +28,14 @@ from ..orchestrator import NeedsOrchestrator, write_extract_request
 from ..progress import Progress
 from ..prompt import _build_friend_prompt
 from ..reviewstate import ReviewState
-from ..rounds import dispatch_round, partition_dispatchable, persist_result, persist_skip
+from ..rounds import (
+    RoundResult,
+    dispatch_round,
+    partition_dispatchable,
+    persist_result,
+    persist_skip,
+    prune_undispatched_prompts,
+)
 from ..runstore import RunStore
 from ..spawn import SpawnResult
 from ..themes import ThemeProposal, classify_novel
@@ -149,6 +156,7 @@ def run_critique(
     run_id: str = "",
     reporter: Progress | None = None,
     external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    announced_skips: set[str] | None = None,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -158,38 +166,46 @@ def run_critique(
     everything seen so far rather than only against its own round.
     """
     outcome = CritiqueOutcome()
+    announced = announced_skips if announced_skips is not None else set()
     dispatchable, skipped = partition_dispatchable(specs, tracker)
     for item in skipped:
         outcome.friends_meta.append(persist_skip(store, round_no, item))
-        if item.reason not in outcome.downgrades:
+        if item.spec.name not in announced:
             outcome.downgrades.append(item.reason)
-    outcome.any_failed = bool(skipped)
+            announced.add(item.spec.name)
     prompt_for, advisory_for, prompt_downgrades = build_prompts(
         dispatchable, artifact_text, store, registry, round_no
     )
-    outcome.downgrades.extend(prompt_downgrades)
 
-    results, outcome.auth_abort = dispatch_round(
-        dispatchable,
-        round_no,
-        prompt_for,
-        store,
-        registry,
-        fake_cmd,
-        schema_file,
-        artifact,
-        repo_root,
-        snapshot_sha,
-        abort_event,
-        on_pool=on_pool,
-        allow_unsandboxed=allow_unsandboxed,
-        tracker=tracker,
-        extra_args=extra_args,
-        pass_env=pass_env,
-        keep=keep,
-        reporter=reporter,
-        kind="critique",
-        external_tool_policy=external_tool_policy,
+    results: list[RoundResult] = []
+    try:
+        results, outcome.auth_abort = dispatch_round(
+            dispatchable,
+            round_no,
+            prompt_for,
+            store,
+            registry,
+            fake_cmd,
+            schema_file,
+            artifact,
+            repo_root,
+            snapshot_sha,
+            abort_event,
+            on_pool=on_pool,
+            allow_unsandboxed=allow_unsandboxed,
+            tracker=tracker,
+            extra_args=extra_args,
+            pass_env=pass_env,
+            keep=keep,
+            reporter=reporter,
+            kind="critique",
+            external_tool_policy=external_tool_policy,
+        )
+    finally:
+        prune_undispatched_prompts(dispatchable, prompt_for, results)
+    result_names = {spec.name for spec, _capability, _result in results}
+    outcome.downgrades.extend(
+        note for note in prompt_downgrades if note.split(":", 1)[0] in result_names
     )
     outcome.calls = len(results)
 

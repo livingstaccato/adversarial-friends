@@ -171,6 +171,7 @@ def resume_round_one(
     reporter: Progress | None = None,
     final_block: bool = True,
     external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    announced_skips: set[str] | None = None,
 ) -> ResumedRun:
     """Apply the orchestrator's merges, then carry on into judging.
 
@@ -320,6 +321,7 @@ def resume_round_one(
         reporter=reporter,
         final_block=final_block,
         external_tool_policy=external_tool_policy,
+        announced_skips=announced_skips,
     )
     resumed.claims = resumed.cross.claims
     resumed.friends_meta.extend(resumed.cross.friends_meta)
@@ -370,6 +372,7 @@ def resume_iteration(
     reporter: Progress | None = None,
     final_block: bool = True,
     external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    announced_skips: set[str] | None = None,
 ) -> ResumedStep:
     """Apply the adjudication, judge, and decide whether the loop continues."""
     resumed = resume_round_one(
@@ -395,6 +398,7 @@ def resume_iteration(
         reporter=reporter,
         final_block=final_block,
         external_tool_policy=external_tool_policy,
+        announced_skips=announced_skips,
     )
     if args.mode != "loop":
         return ResumedStep(resumed=resumed, streak=streak, done=True)

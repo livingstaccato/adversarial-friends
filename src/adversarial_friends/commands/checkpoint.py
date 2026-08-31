@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail
+from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail, failure_summary
 from ..errors import UsageError
 from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..verdicts import CONTESTED, INCOMPLETE, TERMINAL_STATES, UNPROVEN
@@ -50,6 +50,11 @@ def _validate_diagnostics(index: int, row: dict[str, Any], status: str) -> None:
         raise _friend_error(index, "diagnostics_path does not match the friend capture")
     if diagnostics and (diagnostics not in status or path not in status):
         raise _friend_error(index, "status disagrees with its diagnostic summary")
+    if status.startswith("failed: "):
+        body = status.removesuffix(" [orphans suspected]")
+        reason = body[len("failed: ") :].split(" (stderr: ", 1)[0]
+        if not reason or failure_summary(reason) != reason:
+            raise _friend_error(index, "failure reason is not a bounded sanitized summary")
 
 
 def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[str, Any]]:

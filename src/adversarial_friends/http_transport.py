@@ -69,7 +69,11 @@ _WireResult = tuple[str, int | None, bytes | str]
 
 
 def _failure(
-    argv: list[str], duration: float, reason: str, status: int | None = None
+    argv: list[str],
+    duration: float,
+    reason: str,
+    status: int | None = None,
+    diagnostic: str | None = None,
 ) -> SpawnResult:
     """A SpawnResult for a request that produced no usable answer.
 
@@ -81,7 +85,7 @@ def _failure(
         argv=argv,
         exit_code=status,
         stdout="",
-        stderr=reason,
+        stderr=diagnostic if diagnostic is not None else reason,
         duration_s=duration,
         timed_out=reason == "timeout",
         result=NormalizeResult(None, [reason], False),
@@ -287,15 +291,17 @@ def run_request(
         return _failure(
             argv,
             time.monotonic() - started,
-            f"http {status}: {reason.strip()}",
+            f"http {status}",
             status=status,
+            diagnostic=f"http {status}: {reason.strip()}",
         )
     if kind == "unreachable":
         reason = cast(str, payload_or_reason)
         return _failure(
             argv,
             time.monotonic() - started,
-            f"endpoint unreachable: {endpoint} ({reason})",
+            "endpoint unreachable",
+            diagnostic=f"endpoint unreachable: {endpoint} ({reason})",
         )
     raw = cast(bytes, payload_or_reason)
     if len(raw) > max_response_bytes:

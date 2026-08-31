@@ -274,6 +274,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         halted_dry, halted_failed = False, True
         # Where a resumed loop re-enters, and what it inherits.
         first_iteration, streak, carry_over = loop_position(args, review, resume_dir is not None)
+        announced_skips = {
+            str(row["name"])
+            for row in (resume_meta or {}).get("friends", [])
+            if isinstance(row, dict)
+            and isinstance(row.get("name"), str)
+            and str(row.get("status", "")).startswith("skipped: ")
+        }
+        if carry_over is not None:
+            announced_skips.update(carry_over.dropped)
         # The highest round number the run reached, across every loop
         # iteration. Not the last iteration's own count: once a loop stops
         # re-judging what an earlier iteration already settled, its final
@@ -388,6 +397,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         # the next iteration.
                         final_block=(args.mode != "loop" or iteration == max_iterations),
                         external_tool_policy=external_tool_policy,
+                        announced_skips=announced_skips,
                     )
                     resumed = step.resumed
                     all_claims = resumed.claims
@@ -408,7 +418,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                         auth_abort = resumed.cross.auth_abort
                         break
                     if step.done or loop_is_done(
-                        streak, all_claims, cross, [friend_key(s) for s in specs]
+                        streak,
+                        all_claims,
+                        cross,
+                        [friend_key(spec) for spec in partition_dispatchable(specs, tracker)[0]],
                     ):
                         loop_converged = True
                         break
@@ -440,6 +453,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     run_id=run_id,
                     reporter=reporter,
                     external_tool_policy=external_tool_policy,
+                    announced_skips=announced_skips,
                 )
                 budget.spend(critique.calls)
                 iterations_run = iteration
@@ -513,6 +527,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         final_block=(args.mode != "loop" or iteration == max_iterations),
                         reporter=reporter,
                         external_tool_policy=external_tool_policy,
+                        announced_skips=announced_skips,
                     )
                     all_claims = cross.claims
                     carry_over = cross
@@ -531,7 +546,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # convergence.
                 dry = halted_dry
                 streak = next_streak(streak, failed=halted_failed, dry=dry)
-                if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
+                active_specs, _policy_skips = partition_dispatchable(specs, tracker)
+                if loop_is_done(
+                    streak, all_claims, cross, [friend_key(spec) for spec in active_specs]
+                ):
                     loop_converged = True
                     break
                 if budget.exhausted_by:

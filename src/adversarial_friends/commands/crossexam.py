@@ -29,7 +29,14 @@ from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
 from ..progress import Progress
 from ..reviewstate import ReviewState
-from ..rounds import dispatch_round, partition_dispatchable, persist_result, persist_skip
+from ..rounds import (
+    RoundResult,
+    dispatch_round,
+    partition_dispatchable,
+    persist_result,
+    persist_skip,
+    prune_undispatched_prompts,
+)
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
 from .judging import (
@@ -107,6 +114,7 @@ def run_rounds(
     final_block: bool = True,
     reporter: Progress | None = None,
     external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    announced_skips: set[str] | None = None,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -129,6 +137,7 @@ def run_rounds(
     another iteration will judge what this one leaves contested.
     """
     outcome = CrossexamOutcome(claims=list(claims))
+    announced = announced_skips if announced_skips is not None else set()
     if prior is not None:
         # Everything the next block needs to keep telling the truth about
         # what already happened: the arguments themselves, the notes, the
@@ -175,14 +184,17 @@ def run_rounds(
         active, skipped = partition_dispatchable(specs, tracker)
         for item in skipped:
             outcome.friends_meta.append(persist_skip(store, round_no, item))
-            if item.spec.name not in outcome.dropped:
-                outcome.dropped.add(item.spec.name)
+            outcome.dropped.add(item.spec.name)
+            if item.spec.name not in announced:
                 outcome.downgrades.append(
                     f"round {round_no}: {item.reason} It is no longer counted as "
                     "one of the judges a claim needs."
                 )
+                announced.add(item.spec.name)
         judge_specs: list[FriendSpec] = []
         prompt_for: dict[str, Path] = {}
+        prompt_text_for: dict[str, str] = {}
+        prompt_downgrades_for: dict[str, list[str]] = {}
         contested_ids = {c.id: c for c in contested}
         for spec in active:
             slice_ = _slice_for(spec, contested)
@@ -197,18 +209,18 @@ def run_rounds(
                 spec, artifact_text, slice_, prior_cast, attributed
             )
             if note:
-                outcome.downgrades.append(note)
+                prompt_downgrades_for.setdefault(spec.name, []).append(note)
             if spec.cli != "fake":
                 # The round the original check never covered, and the one
                 # more likely to trip it: a judging prompt carries the claims
                 # and the prior verdicts on top of the same artifact.
                 size_note = argv_size_warning(spec.name, registry[spec.cli], prompt_text)
                 if size_note is not None:
-                    outcome.downgrades.append(size_note)
+                    prompt_downgrades_for.setdefault(spec.name, []).append(size_note)
             path = store.friend_prompt_path(round_no, spec.name)
-            path.write_text(prompt_text, encoding="utf-8")
             judge_specs.append(spec)
             prompt_for[spec.name] = path
+            prompt_text_for[spec.name] = prompt_text
 
         if not judge_specs:
             # Every remaining claim was written by every friend. Nothing is
@@ -240,30 +252,41 @@ def run_rounds(
             break
         # A friend may not outlive the ceiling it was dispatched under.
         judge_specs = within_deadline(judge_specs, budget.seconds_left(now()))
+        if not judge_specs:
+            budget.exhaust(f"--max-wall-clock leaves no usable time for round {round_no}")
+            break
+        for spec in judge_specs:
+            prompt_for[spec.name].write_text(prompt_text_for[spec.name], encoding="utf-8")
 
-        results, round_auth_abort = dispatch_round(
-            judge_specs,
-            round_no,
-            prompt_for,
-            store,
-            registry,
-            fake_cmd,
-            schema_file,
-            artifact,
-            repo_root,
-            snapshot_sha,
-            abort_event,
-            on_pool=on_pool,
-            contract=VERDICT_CONTRACT,
-            allow_unsandboxed=allow_unsandboxed,
-            tracker=tracker,
-            extra_args=extra_args,
-            pass_env=pass_env,
-            keep=keep,
-            reporter=reporter,
-            kind="judging",
-            external_tool_policy=external_tool_policy,
-        )
+        results: list[RoundResult] = []
+        try:
+            results, round_auth_abort = dispatch_round(
+                judge_specs,
+                round_no,
+                prompt_for,
+                store,
+                registry,
+                fake_cmd,
+                schema_file,
+                artifact,
+                repo_root,
+                snapshot_sha,
+                abort_event,
+                on_pool=on_pool,
+                contract=VERDICT_CONTRACT,
+                allow_unsandboxed=allow_unsandboxed,
+                tracker=tracker,
+                extra_args=extra_args,
+                pass_env=pass_env,
+                keep=keep,
+                reporter=reporter,
+                kind="judging",
+                external_tool_policy=external_tool_policy,
+            )
+        finally:
+            prune_undispatched_prompts(judge_specs, prompt_for, results)
+        for spec, _capability, _result in results:
+            outcome.downgrades.extend(prompt_downgrades_for.get(spec.name, []))
         budget.spend(len(results))
         outcome.rounds_run = round_no
 

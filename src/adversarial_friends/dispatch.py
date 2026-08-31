@@ -192,6 +192,14 @@ def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = STDERR_TAIL_C
     return tail
 
 
+def failure_summary(reason: str) -> str:
+    """Sanitize a failure label while preserving its leading transport classification."""
+    sanitized = _stderr_tail(reason, max_chars=max(STDERR_TAIL_CHARS, len(reason)))
+    if len(sanitized) <= STDERR_TAIL_CHARS:
+        return sanitized
+    return sanitized[: STDERR_TAIL_CHARS - 1].rstrip() + "…"
+
+
 def _dispatch(
     spec: FriendSpec,
     cwd: Path,
