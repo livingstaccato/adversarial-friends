@@ -2,11 +2,45 @@
 
 ## The report is empty or very short
 
-Run `afriend doctor`. A friend that is missing, unauthenticated, or lacking a
-read-only mode will not appear in the results. An empty report with no failed
-friends listed is a real "nothing found"; an empty report where the friend
-table shows failures is not — read the friend table before trusting an empty
-findings section.
+Run `afriend doctor`. It lists every known provider and its effective
+readiness state: `ready`, `reachable-unconfigured`, `unavailable`, `disabled`,
+`host-excluded`, or `policy-blocked`. A provider can be installed yet not
+dispatchable; the reason and policy source say what to fix. An empty report
+with no failed friends listed is a real "nothing found"; an empty report where
+the friend table shows failures is not — read the friend table before trusting
+an empty findings section.
+
+The host is the orchestrator and is `host-excluded` from automatic discovery
+unless `--include-self` was passed. Disabled providers are not probed at all;
+use `afriend providers list`, `afriend providers enable NAME`, or a one-run
+`--enable-provider NAME` override when that exclusion was intentional but is
+no longer wanted. A reachable Ollama server without a configured model is
+`reachable-unconfigured`, not ready; set one with `afriend providers
+set-model ollama MODEL` or name it in an explicit `--friend` value.
+
+## A provider is policy-blocked for external tools
+
+External tools are denied by default, independently of the local sandbox. An
+adapter must neutralize inherited provider tools, plugins, apps, and MCP
+servers; when its installed CLI cannot enforce that strategy, readiness is
+`policy-blocked` and the process is not launched. `afriend doctor` names the
+denial limitation.
+
+`--allow-external-tools` is an explicit per-run opt-in, not a persistent
+setting. It may expose provider-managed integrations that the runner cannot
+inventory completely. A resume never restores that grant: repeat it exactly
+on the resume command line. Metadata from 0.2.0 is reported as
+`legacy-unknown`, because those runs did not capture enough authority evidence
+to make a denial claim.
+
+## Resume refuses the saved snapshot
+
+Resume verifies the frozen artifact hash plus the recorded Git commit and
+tree before dispatch. If the artifact changed, the commit disappeared, or
+the repository no longer matches, the run is left unchanged and resume exits
+with a usage error. Restore the recorded repository/commit and frozen
+artifact; do not replace the snapshot with current files, because that would
+silently change what the existing claims reviewed.
 
 ## Verified invocation traps
 

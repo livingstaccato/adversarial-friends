@@ -324,3 +324,37 @@ def test_no_shipped_doc_calls_a_shipped_mode_unimplemented():
                         f"{path.relative_to(REPO)}: {name!r} ships, doc says otherwise"
                     )
     assert not offenders, "docs call a shipped feature absent:\n" + "\n".join(offenders)
+
+
+def test_contract_first_provider_and_authority_guidance_is_shipped():
+    docs = {
+        "README.md": REPO.joinpath("README.md").read_text(),
+        "SKILL.md": REPO.joinpath("src/adversarial_friends/assets/SKILL.md").read_text(),
+        "modes.md": REPO.joinpath("src/adversarial_friends/assets/references/modes.md").read_text(),
+        "troubleshooting.md": REPO.joinpath(
+            "src/adversarial_friends/assets/references/troubleshooting.md"
+        ).read_text(),
+    }
+    joined = " ".join("\n".join(docs.values()).lower().replace("`", "").split())
+
+    for phrase in (
+        "host is the orchestrator",
+        "--include-self",
+        "afriend providers list",
+        "afriend providers enable",
+        "afriend providers disable",
+        "afriend providers set-model",
+        "--enable-provider",
+        "--disable-provider",
+        "disabled providers are not probed",
+        "--allow-external-tools",
+        "external tools are denied by default",
+        "reachable-unconfigured",
+        "policy-blocked",
+        "legacy-unknown",
+        "snapshot",
+    ):
+        assert phrase in joined, phrase
+
+    assert "max-loop-iterations" in joined
+    assert re.search(r"\bexits? 11\b", joined)

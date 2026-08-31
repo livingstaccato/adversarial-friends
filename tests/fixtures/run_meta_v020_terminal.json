@@ -1,0 +1,67 @@
+{
+  "amendment_notes": [],
+  "artifact": "spec.md",
+  "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "artifact_path": "/tmp/adversarial-friends/spec.md",
+  "ceiling_hit": null,
+  "claim_states": {
+    "c-0001@1": "settled-upheld"
+  },
+  "downgrades": [],
+  "env_withheld": [],
+  "friends": [
+    {
+      "effort": null,
+      "model": null,
+      "name": "fake-ops-0",
+      "round": 1,
+      "status": "ok"
+    }
+  ],
+  "incomplete": false,
+  "invocation": {
+    "allow_unsandboxed_friend": false,
+    "artifact": "/tmp/adversarial-friends/spec.md",
+    "attributed": false,
+    "effort": null,
+    "friend": [
+      "fake:ops"
+    ],
+    "i_accept_unsandboxed": false,
+    "include_self": false,
+    "keep": false,
+    "lens": [],
+    "max_calls": null,
+    "max_friends": null,
+    "max_loop_iterations": 5,
+    "max_rounds": 3,
+    "max_wall_clock": 7200,
+    "merge": "exact",
+    "mode": "crossexam",
+    "model": null,
+    "pass_env": [],
+    "preset": null,
+    "require_friends": null,
+    "roster": null,
+    "timeout": 900,
+    "unsafe_extra_args": null
+  },
+  "merge": "exact",
+  "mode": "crossexam",
+  "preset": "balanced",
+  "repo_root": null,
+  "roster": [
+    {
+      "cli": "fake",
+      "effort": null,
+      "lens": "ops",
+      "model": null,
+      "name": "fake-ops-0",
+      "scope": "doc",
+      "timeout": 900
+    }
+  ],
+  "roster_source": null,
+  "rounds_run": 2,
+  "snapshot_sha": null
+}

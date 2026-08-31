@@ -5,12 +5,13 @@ then-current line cap, and the metadata contract is a separate concern from
 the run loop that produces it.
 
 **A resumed run restores deterministic configuration from the run directory.**
-§4.2 requires that the same response produce the same run. Security grants
-are the deliberate exception: metadata records them but can never confer
+Security grants are the deliberate exception: metadata records them but can never confer
 them, so the resuming command line must repeat each prior grant exactly.
 """
 
 import argparse
+from collections.abc import Mapping
+import copy
 import dataclasses
 from datetime import UTC, datetime
 import json
@@ -36,17 +37,46 @@ from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
 from .checkpoint import (
     legacy_successful_friend_ids,
     normalize_friend_rows,
+    normalize_repeat_tracker,
     normalize_resume_report_state,
+    validate_lifecycle_and_snapshot,
 )
 from .exits import decide_exit
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
 
-# Deterministic settings a resumed run restores rather than re-reading from a second
-# command line. §4.2 requires that the same response produce the same run;
-# taking any of these from the resuming invocation would let a flag change
-# between halt and resume and silently alter the outcome.
+CURRENT_SCHEMA_VERSION = 2
+
+
+def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a detached current-schema view without inventing history."""
+    meta = copy.deepcopy(dict(raw))
+    version = meta.get("schema_version", 1)
+    if type(version) is not int or not 1 <= version <= CURRENT_SCHEMA_VERSION:
+        raise UsageError(f"unsupported run metadata schema {version!r}")
+    if version == CURRENT_SCHEMA_VERSION:
+        return meta
+    meta["schema_version"] = CURRENT_SCHEMA_VERSION
+    for field in ("started_at", "finished_at", "duration_s", "exit_code", "stop_reason"):
+        meta.setdefault(field, None)
+    meta.setdefault("external_tool_policy", "legacy-unknown")
+    meta.setdefault("attempted_calls", meta.get("spent_calls", 0))
+    meta.setdefault("spent_calls", 0)
+    meta.setdefault("repeat_tracker", {"last": {}, "count": {}, "disabled": {}})
+    if "snapshot" not in meta:
+        meta["snapshot"] = {
+            "repo_root": meta.get("repo_root"),
+            "commit": meta.get("snapshot_sha"),
+            "tree": None,
+            "artifact_path": meta.get("artifact_path", meta.get("artifact", "")),
+            "artifact_hash": meta.get("artifact_hash", ""),
+            "predecessor": None,
+        }
+    meta.setdefault("snapshot_history", [copy.deepcopy(meta["snapshot"])])
+    return meta
+
+
 _RESUMABLE_ARGS = (
     "mode",
     "preset",
@@ -143,7 +173,7 @@ def _base_meta(
     validates them against an exact, explicit command-line re-assertion.
     """
     meta: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "lifecycle_state": "running",
         "started_at": started_at or _finished_at(),
         "mode": args.mode,
@@ -234,10 +264,10 @@ def _validate_saved_grant(name: str, value: object, expected_type: type) -> None
         raise _resume_type_error(name, value)
 
 
-def _restore_roster(value: object) -> list[FriendSpec]:
+def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise UsageError("cannot resume: saved roster must be a list")
-    restored: list[FriendSpec] = []
+    validated: list[dict[str, Any]] = []
     for entry in value:
         if not isinstance(entry, dict):
             raise UsageError("cannot resume: each saved roster entry must be an object")
@@ -255,8 +285,8 @@ def _restore_roster(value: object) -> list[FriendSpec]:
                     f"cannot resume: saved roster field {field_name!r} must be a string or null"
                 )
         validate_roster_entry(candidate)
-        restored.append(FriendSpec(**candidate))
-    return restored
+        validated.append(candidate)
+    return validated
 
 
 def _checkpoint_count(meta: dict[str, Any], name: str, default: int) -> int:
@@ -303,33 +333,6 @@ def _checkpoint_successes(
     if type(recorded_count) is not int or recorded_count != len(successes):
         raise UsageError("cannot resume: saved succeeded_friends must match successful_friend_ids")
     return successes
-
-
-def _checkpoint_tracker(meta: dict[str, Any]) -> dict[str, object]:
-    value = meta.get("repeat_tracker", {})
-    if type(value) is not dict or set(value) - {"last", "count", "disabled"}:
-        raise UsageError("cannot resume: saved repeat_tracker has an invalid shape")
-    tracker = value
-    normalized: dict[str, object] = {}
-    for section in ("last", "disabled"):
-        entries = tracker.get(section, {})
-        if type(entries) is not dict or any(
-            type(key) is not str or type(item) is not str for key, item in entries.items()
-        ):
-            raise UsageError(
-                f"cannot resume: saved repeat_tracker.{section} must map strings to strings"
-            )
-        normalized[section] = dict(entries)
-    counts = tracker.get("count", {})
-    if type(counts) is not dict or any(
-        type(key) is not str or type(item) is not int or not 0 <= item <= MAX_JSON_SAFE_INTEGER
-        for key, item in counts.items()
-    ):
-        raise UsageError(
-            "cannot resume: saved repeat_tracker.count must map strings to nonnegative integers"
-        )
-    normalized["count"] = dict(counts)
-    return normalized
 
 
 def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
@@ -414,7 +417,7 @@ def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -
             "successful_friend_ids": successes,
             "succeeded_friends": len(successes),
             "required_friends": required,
-            "repeat_tracker": _checkpoint_tracker(meta),
+            "repeat_tracker": normalize_repeat_tracker(meta.get("repeat_tracker", {})),
             "friends": friends,
             "theme_proposals": [proposal.to_dict() for proposal in theme_proposals],
             "produced_new_themes": produced_new_themes,
@@ -436,6 +439,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         raise UsageError(f"cannot resume: {meta_path} is not valid run metadata") from exc
     if not isinstance(meta, dict):
         raise UsageError(f"cannot resume: {meta_path} must contain a JSON object")
+    meta = migrate_meta(meta)
     try:
         json_node_count(meta, "saved run metadata")
     except ValueError as exc:
@@ -445,22 +449,20 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     saved = meta.get("invocation")
     if not isinstance(saved, dict):
         raise UsageError(
-            f"cannot resume: {meta_path} predates resume support and does not "
-            "record how the run was invoked."
+            f"cannot resume: {meta_path} has no valid invocation; it may predate "
+            "resume support and does not record how the run was invoked."
         )
-    restored = argparse.Namespace(**vars(args))
+    validate_lifecycle_and_snapshot(meta)
+    normalize_repeat_tracker(meta.get("repeat_tracker", {}))
     for name in _RESUMABLE_ARGS:
         if name in saved:
             _validate_saved_setting(name, saved[name])
-            setattr(restored, name, saved[name])
     artifact = saved.get("artifact")
     if not isinstance(artifact, str):
         raise UsageError("cannot resume: saved artifact must be a path string")
     friends = saved.get("friend", [])
     if not isinstance(friends, list) or not all(isinstance(item, str) for item in friends):
         raise UsageError("cannot resume: saved friend flags must be a list of strings")
-    restored.artifact = artifact
-    restored.friend = friends
     for name, (expected_type, default) in _SECURITY_GRANTS.items():
         saved_value = saved.get(name, default)
         _validate_saved_grant(name, saved_value, expected_type)
@@ -471,13 +473,20 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
                 f"cannot resume: prior --{name.replace('_', '-')} authority must be "
                 "repeated exactly on the resume command line"
             )
+    roster_entries = _validated_roster_entries(meta.get("roster", []))
+    restored = argparse.Namespace(**vars(args))
+    for name in _RESUMABLE_ARGS:
+        if name in saved:
+            setattr(restored, name, saved[name])
+    restored.artifact = artifact
+    restored.friend = friends
     # The concrete roster the halted run resolved, not the inputs that
     # produced it. §4.2 requires the same response to produce the same run,
     # and re-resolving cannot promise that: a roster file can be edited and
     # discovery re-reads whatever CLIs are installed now, so a resume could
     # change quorum, or hand a claim's author a new identity under which it
     # judges its own claim.
-    restored._resume_roster = _restore_roster(meta.get("roster", []))
+    restored._resume_roster = [FriendSpec(**entry) for entry in roster_entries]
     validate_roster_uniqueness(
         restored._resume_roster,
         judging=getattr(restored, "mode", "report") != "report",

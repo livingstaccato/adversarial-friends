@@ -1,0 +1,78 @@
+{
+  "artifact": "spec.md",
+  "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "artifact_path": "/tmp/adversarial-friends/spec.md",
+  "downgrades": [],
+  "dry_streak": 1,
+  "env_withheld": [],
+  "friends": [
+    {
+      "effort": null,
+      "model": null,
+      "name": "fake-ops-0",
+      "round": 1,
+      "status": "ok"
+    }
+  ],
+  "halted_round_dry": true,
+  "halted_round_failed": false,
+  "invocation": {
+    "allow_unsandboxed_friend": true,
+    "artifact": "/tmp/adversarial-friends/spec.md",
+    "attributed": false,
+    "effort": null,
+    "friend": [
+      "fake:ops"
+    ],
+    "i_accept_unsandboxed": true,
+    "include_self": false,
+    "keep": false,
+    "lens": [],
+    "max_calls": 12,
+    "max_friends": null,
+    "max_loop_iterations": 5,
+    "max_rounds": 3,
+    "max_wall_clock": 7200,
+    "merge": "orchestrator",
+    "mode": "loop",
+    "model": null,
+    "pass_env": [
+      "LEGACY_TOKEN"
+    ],
+    "preset": null,
+    "require_friends": null,
+    "roster": null,
+    "timeout": 900,
+    "unsafe_extra_args": "--legacy-option"
+  },
+  "iterations_run": 1,
+  "merge": "orchestrator",
+  "mode": "loop",
+  "preset": "balanced",
+  "repeat_tracker": {
+    "count": {
+      "fake-ops-0": 2
+    },
+    "disabled": {
+      "fake-ops-0": "failed: repeated invalid output"
+    },
+    "last": {
+      "fake-ops-0": "failed: invalid output"
+    }
+  },
+  "repo_root": "/tmp/adversarial-friends/repo",
+  "roster": [
+    {
+      "cli": "fake",
+      "effort": null,
+      "lens": "ops",
+      "model": null,
+      "name": "fake-ops-0",
+      "scope": "doc",
+      "timeout": 900
+    }
+  ],
+  "roster_source": null,
+  "snapshot_sha": "2222222222222222222222222222222222222222",
+  "spent_calls": 4
+}

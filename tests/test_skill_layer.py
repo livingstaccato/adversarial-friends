@@ -42,6 +42,20 @@ def test_referenced_files_exist():
         assert (SKILL / name).exists()
 
 
+def test_skill_explains_safe_provider_selection_and_authority():
+    body = " ".join((SKILL / "SKILL.md").read_text().lower().replace("`", "").split())
+
+    for phrase in (
+        "host is the orchestrator",
+        "--include-self",
+        "disabled providers are not probed",
+        "--allow-external-tools",
+        "external tools are denied by default",
+        "legacy-unknown",
+    ):
+        assert phrase in body, phrase
+
+
 def test_afriend_console_script_is_installed_and_runs():
     """Package-data misconfiguration (a missing adapter/lens in the wheel) is
     silent at import time -- it only surfaces when the installed entry point

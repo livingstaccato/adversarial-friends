@@ -52,6 +52,39 @@ timeout and orphan status), and `.sandbox` (the OS confinement policy it ran
 under, when one was applied). `afriend run` prints only the run directory
 path to stdout; read `report.md` from there and present the findings.
 
+### Choose ready friends, not merely installed CLIs
+
+The host is the orchestrator, not an independent reviewer. A Codex-hosted
+run therefore excludes `codex` from automatic discovery by default; the same
+rule applies to every detected host. Use `--include-self` only when a
+deliberate self-review is useful. An explicit `--friend` roster is already a
+deliberate choice and may name the host or a disabled provider.
+
+Persistent provider defaults are user-owned, outside the reviewed repository:
+
+```bash
+afriend providers list
+afriend providers enable claude
+afriend providers disable opencode
+afriend providers set-model ollama qwen3:8b
+afriend providers clear-model ollama
+```
+
+For one run, `--enable-provider NAME` and `--disable-provider NAME` override
+those defaults during automatic discovery. Disabled providers are not
+probed. A friend must be `ready` before it consumes `--max-friends` capacity:
+other states include `reachable-unconfigured` (for example, Ollama without a
+model), `unavailable`, `disabled`, `host-excluded`, and `policy-blocked`.
+`afriend doctor` reports the effective state, policy layer, and remediation.
+
+External tools are denied by default, separately from filesystem/process
+confinement. Adapters must neutralize provider-managed tools, plugins, apps,
+and MCP servers or become `policy-blocked`; use `--allow-external-tools` only
+as an explicit per-run opt-in. Security grants are never restored by
+`--resume`: repeat them exactly on the current command line. A run written by
+0.2.0 cannot prove its inherited connector authority, so reports mark it
+`legacy-unknown` rather than claiming tools were denied.
+
 ### This takes minutes, not seconds
 
 Budget for it, and tell whoever asked. A friend is a whole agent CLI reading
@@ -100,6 +133,9 @@ usable friend could be found at all (install a second agent CLI, or pass
 neither converged nor cleared anything; `12` `--require-friends N` was set
 and fewer than `N` friends produced a usable answer -- opt-in, unset by
 default. A run cancelled by a signal exits `128 + signal number`.
+
+For `loop`, naturally reaching `--max-loop-iterations` without convergence is
+also a ceiling: it records that stop reason and exits `11`.
 
 A `gate` run exits `1` while any claim still needs an answer. Resolve them
 one at a time; each call re-reports what is left:

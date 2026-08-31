@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1615-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1639-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -88,20 +88,16 @@ afriend doctor
 ```
 
 ```
-agy        found        schema=True readonly=True effort=native /Users/you/.local/bin/agy
-claude     found        schema=True readonly=True effort=native /Users/you/.local/bin/claude
-codex      found        schema=True readonly=True effort=native /opt/homebrew/bin/codex
-ollama     found        schema=False readonly=False effort=none http://127.0.0.1:11434/api/generate
-opencode   found        schema=False readonly=False effort=unverified /Users/you/.opencode/bin/opencode
+claude     ready                    enabled (built-in default)
+codex      host-excluded            current host orchestrates by default
+ollama     reachable-unconfigured   set a model before automatic selection
+opencode   disabled                 disabled in user provider configuration
 ```
 
-For `ollama`, `found` means a reachable endpoint rather than a binary on
-`PATH`; it shows `unreachable` when no server is listening.
-
-`doctor` reports what each friend can genuinely **enforce** — schema
-validation, a real read-only mode, a verifiable effort level — rather than
-what it claims to support. `opencode` showing `readonly=False` is not a bug;
-it has no read-only mode, so the tool says so instead of pretending.
+`doctor` reports shared readiness — including `ready`,
+`reachable-unconfigured`, `unavailable`, `disabled`, `host-excluded`, and
+`policy-blocked` — plus what each friend can genuinely enforce. For Ollama,
+reachability alone is insufficient because dispatch also requires a model.
 
 ---
 
@@ -110,6 +106,24 @@ it has no read-only mode, so the tool says so instead of pretending.
 ```bash
 afriend run docs/my-design.md --mode report
 ```
+
+The host is the orchestrator, not an independent reviewer: a run hosted by
+Codex excludes `codex` from automatic discovery. Pass `--include-self` only
+for deliberate self-review. Manage persistent user defaults, including a
+default Ollama model, with:
+
+```bash
+afriend providers list
+afriend providers enable claude
+afriend providers disable opencode
+afriend providers set-model ollama qwen3:8b
+afriend providers clear-model ollama
+```
+
+For one automatic roster, `--enable-provider NAME` and
+`--disable-provider NAME` override those defaults. Disabled providers are not
+probed. An explicit `--friend` roster remains authoritative and may name the
+host or a disabled provider.
 
 **Stdout** carries one thing — the run directory. Read `report.md` inside it:
 
@@ -154,6 +168,7 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 | 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
 | 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot. A CLI with no read-only mode is confined by the OS instead (`sandbox-exec` / `bwrap`) — or refused |
+| 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools` explicitly opts in for this run |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
 | 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
 | 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |
@@ -283,6 +298,13 @@ afriend run docs/design.md --merge orchestrator   # exit 10, writes REQUEST.json
 afriend run --resume <run-id>                     # round 1 is not re-run
 ```
 
+Resume verifies the original frozen artifact hash and saved Git snapshot
+before dispatch; it never substitutes current files. Security grants are
+also never restored from `run.json`: options such as
+`--allow-external-tools` must be repeated exactly. For 0.2.0 metadata, the
+report says external authority is `legacy-unknown` instead of inventing a
+historical guarantee.
+
 Tired of `--friend` flags? `afriend init` writes a roster from what is
 actually installed, and `~/.config/adversarial-friends/roster.toml` is picked
 up automatically. A repo-local roster never is — a cloned repo does not get
@@ -318,7 +340,7 @@ is Antigravity — which is `agy`.
 | `2` | usage error — bad flag, unknown CLI, missing artifact |
 | `3` | no usable friends found at all |
 | `10` | `--merge orchestrator` is waiting for you to adjudicate merges |
-| `11` | a ceiling was hit — the run was truncated, not decided |
+| `11` | a ceiling was hit — including natural `--max-loop-iterations` exhaustion without convergence; the run was truncated, not decided |
 | `12` | `--require-friends N` was set and fewer than `N` friends answered |
 | `128+N` | aborted by signal N — isolation torn down, friends killed |
 

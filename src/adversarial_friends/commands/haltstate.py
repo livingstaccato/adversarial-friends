@@ -31,6 +31,7 @@ from ..runstore import RunStore
 from ..snapshots import SnapshotIdentity, history_from_meta, record_snapshot
 from ..themes import bounded_theme_metadata
 from .crossexam import CrossexamOutcome
+from .runmeta import CURRENT_SCHEMA_VERSION
 
 
 def carried_outcome(review: ReviewState, meta: dict[str, Any]) -> "CrossexamOutcome | None":
@@ -123,7 +124,7 @@ def write_halt(
     firing -- each resuming process believed only its own round 1 had ever
     run.
     """
-    meta["schema_version"] = 2
+    meta["schema_version"] = CURRENT_SCHEMA_VERSION
     meta["lifecycle_state"] = "waiting-for-orchestrator"
     meta.setdefault("started_at", datetime.now(UTC).isoformat().replace("+00:00", "Z"))
     for terminal_key in (

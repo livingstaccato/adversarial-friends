@@ -192,6 +192,15 @@ same response has to produce the same run:
 afriend run --resume <run-id>
 ```
 
+The saved snapshot is immutable input identity, not a hint. Resume verifies
+the frozen artifact hash and, for repository runs, the saved commit and tree;
+it refuses a missing or mismatched snapshot rather than reviewing current
+files. Invocation-local authority is the exception to restored configuration:
+`--allow-external-tools`, unsandboxed execution, extra arguments, and passed
+environment variables must be repeated exactly on the current command line.
+Historical 0.2.0 runs report external authority as `legacy-unknown` because
+their metadata did not record enough evidence to claim denial.
+
 Round 1 is not re-run. Its claims are read back from the ledger, so the
 adjudication applies to the ids you were actually shown.
 
@@ -299,6 +308,33 @@ the default usable with no harness attached.
 
 ## Everything else
 
+### Provider selection and readiness
+
+The host is the orchestrator, so automatic discovery excludes its provider.
+Use `--include-self` to override that default. Provider preferences live in
+the user's XDG configuration, never in the reviewed repository:
+
+```bash
+afriend providers list
+afriend providers enable claude
+afriend providers disable opencode
+afriend providers set-model ollama qwen3:8b
+afriend providers clear-model ollama
+```
+
+`--enable-provider NAME` and `--disable-provider NAME` override persistent
+settings for one automatically discovered run. Disabled providers are not
+probed. Readiness is assessed before `--max-friends`: only `ready` providers
+consume capacity; `reachable-unconfigured`, `unavailable`, `disabled`,
+`host-excluded`, and `policy-blocked` candidates do not. Run `afriend doctor`
+to see each effective state, its policy source, and remediation.
+
+External tools are denied by default. The denial is distinct from local
+read-only/OS confinement and covers provider-managed tools, plugins, apps,
+and MCP servers. A provider that cannot enforce denial is `policy-blocked`
+unless the operator explicitly passes `--allow-external-tools` for that run.
+No persistent or repository configuration can grant this authority.
+
 | Flag | Effect |
 |---|---|
 | `--model NAME`, `--effort LEVEL` | Override every friend; §10.1's strongest layer |
@@ -309,6 +345,8 @@ the default usable with no harness attached.
 | `--json` | Print run.json instead of the run directory path |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
 | `--include-self` | Let the host CLI review its own artifact, when it is the only one installed |
+| `--enable-provider NAME`, `--disable-provider NAME` | Override persistent provider policy for this automatic roster only |
+| `--allow-external-tools` | Explicitly inherit provider-managed tools and connectors for this run |
 | `--pass-env VAR` (repeatable) | Also pass `VAR` through to confined friends |
 | `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
 | `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
@@ -359,6 +397,10 @@ as "block" without ambiguity. Quorum in turn outranks gate and crossexam
 completeness -- a run below the declared floor has not produced the review
 its exit code would otherwise claim, whatever state the few claims it did
 get are in.
+
+In `loop`, natural exhaustion of the `--max-loop-iterations` range is not a
+successful completion. If convergence was not reached first, the run records
+the iteration ceiling and exits `11`.
 
 `--require-friends` is unenforced when unset, and it is unenforced -- not
 guessed at -- on a `--resume` of `--merge orchestrator`: that path applies
