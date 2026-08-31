@@ -316,13 +316,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # iteration 2 critiques in round max_rounds+1, and so on.
                 base_round = (iteration - 1) * args.max_rounds + 1
                 dispatchable, _skipped = partition_dispatchable(specs, tracker)
-                if budget.would_exceed_calls(len(dispatchable)):
+                resuming_iteration = resume_dir is not None and iteration == first_iteration
+                if not resuming_iteration and budget.would_exceed_calls(len(dispatchable)):
                     budget.exhaust(
                         f"--max-calls={budget.max_calls} reached before iteration "
                         f"{iteration}'s critique round"
                     )
                     break
-                if budget.out_of_time(now()):
+                if not resuming_iteration and budget.out_of_time(now()):
                     budget.exhaust(f"--max-wall-clock reached before iteration {iteration}")
                     break
                 # §7.4: a friend may not outlive the ceiling it was
@@ -341,7 +342,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # incomplete. Raised from two lenses independently, which is
                 # what a fix applied to one of two paths looks like from
                 # outside.
-                round_specs = within_deadline(specs, budget.seconds_left(now()))
+                round_specs = (
+                    specs
+                    if resuming_iteration
+                    else within_deadline(specs, budget.seconds_left(now()))
+                )
                 if not round_specs:
                     # Same shape crossexam uses when the helper returns
                     # nothing: say so and stop, rather than dispatching
@@ -427,6 +432,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                         break
                     if resumed.cross is not None and resumed.cross.auth_abort is not None:
                         auth_abort = resumed.cross.auth_abort
+                        break
+                    if budget.out_of_time(now()):
+                        budget.exhaust(
+                            f"--max-wall-clock reached after resuming iteration {iteration}"
+                        )
                         break
                     if step.done or loop_is_done(
                         streak,
