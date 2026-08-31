@@ -86,6 +86,55 @@ def test_repeated_claims_alias_rather_than_multiplying(tmp_path):
     assert aliases, "a second identical iteration should have produced aliases"
 
 
+def test_same_anchor_wording_variant_is_advisory_and_does_not_reset_dry_streak(tmp_path):
+    result = _loop(
+        tmp_path,
+        "fake:judge_theme_variant_a",
+        "fake:judge_theme_variant_b",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "3"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["converged"] is True
+    assert meta["dry_streak"] == 2
+    assert meta["produced_new_themes"] is False
+    assert meta["theme_proposals"]
+    assert all(
+        set(item) == {"canonical", "duplicate", "score", "anchor"}
+        for item in meta["theme_proposals"]
+    )
+
+    claims = [record for record in _ledger(tmp_path) if record["type"] == "claim"]
+    texts = {record["claim"] for record in claims}
+    assert {"expiry guard is missing", "missing expiration guard"} <= texts
+    assert len({record["id"] for record in claims}) == len(claims)
+    assert not [
+        record
+        for record in _ledger(tmp_path)
+        if record["type"] == "alias" and record["source"] == "theme"
+    ]
+
+    report = (_run_dir(tmp_path) / "report.md").read_text()
+    assert "## Possible semantic duplicates" in report
+    assert "advisory only" in report.lower()
+
+
+def test_genuinely_new_theme_resets_a_prior_dry_streak(tmp_path):
+    result = _loop(
+        tmp_path,
+        "fake:judge_theme_new_late_a",
+        "fake:judge_theme_new_late_b",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "3"),
+    )
+
+    assert result.returncode == 11, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["produced_new_themes"] is True
+    assert meta["dry_streak"] == 0
+    assert meta["converged"] is False
+
+
 def test_a_single_unconverged_iteration_is_the_loop_ceiling(tmp_path):
     """One iteration keeps crossexam conclusions but exhausts the loop range."""
     result = _loop(

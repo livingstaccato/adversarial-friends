@@ -1,8 +1,9 @@
 from adversarial_friends.ledger import Alias, Claim
 from adversarial_friends.merge import canonical_claims, exact_merge
+from adversarial_friends.themes import classify_novel
 
 
-def claim(cid, text, location="src/a.py:1", origin=None):
+def claim(cid, text, location="src/a.py:1", origin=None, failure="f"):
     return Claim(
         id=cid,
         supersedes=None,
@@ -14,7 +15,7 @@ def claim(cid, text, location="src/a.py:1", origin=None):
         claim=text,
         location=location,
         evidence="e",
-        failure_scenario="f",
+        failure_scenario=failure,
         suggested_fix="s",
     )
 
@@ -49,6 +50,32 @@ def test_paraphrase_is_not_merged():
     incoming = [claim("c-0002@1", "child processes survive timeout")]
     kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
     assert len(kept) == 1 and aliases == []
+
+
+def test_theme_proposal_never_changes_exact_merge_identity():
+    existing = [
+        claim(
+            "c-0001@1",
+            "expiry guard is missing",
+            location="src/auth.py:42",
+            failure="expired token passes",
+        )
+    ]
+    incoming = [
+        claim(
+            "c-0002@1",
+            "missing expiration guard",
+            location="src/auth.py:42",
+            failure="expired token passes",
+        )
+    ]
+
+    novel, proposals = classify_novel(existing, incoming)
+    kept, aliases, _updated = exact_merge(existing, incoming, round_no=1)
+
+    assert novel == set() and len(proposals) == 1
+    assert kept == incoming
+    assert aliases == []
 
 
 # --- adversarial / break-it cases -----------------------------------------

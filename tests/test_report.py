@@ -171,6 +171,28 @@ def test_halt_report_names_the_nonterminal_waiting_state():
     assert "Exit code:" not in out
 
 
+def test_theme_proposals_render_as_advisory_without_claiming_a_merge():
+    out = render(
+        [claim("c-0001@1"), claim("c-0002@1")],
+        [],
+        meta(
+            theme_proposals=[
+                {
+                    "canonical": "c-0001@1",
+                    "duplicate": "c-0002@1",
+                    "score": 0.9375,
+                    "anchor": "src/a.py:42",
+                }
+            ]
+        ),
+    )
+
+    section = out.split("## Possible semantic duplicates", 1)[1].split("## Findings", 1)[0]
+    assert "advisory only" in section.lower()
+    assert "c-0001@1" in section and "c-0002@1" in section
+    assert "merged" not in section.lower()
+
+
 # --- adversarial / break-it cases -----------------------------------------
 
 

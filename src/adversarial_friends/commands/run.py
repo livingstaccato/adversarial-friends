@@ -38,6 +38,7 @@ from ..snapshots import (
     resume_frozen_artifact,
     select_snapshot,
 )
+from ..themes import ThemeProposal
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
@@ -196,6 +197,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 roster_source=resolved.source,
                 env_withheld=env_withheld,
                 started_at=invocation_started_at,
+                theme_proposals=theme_proposals,
+                produced_new_themes=produced_new_themes,
             )
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
@@ -242,6 +245,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         friends_meta: list[dict[str, Any]] = []
         counter = 0
         successful_friend_ids = list(getattr(args, "_resume_successful_friend_ids", []))
+        theme_proposals: list[ThemeProposal] = list(getattr(args, "_resume_theme_proposals", []))
+        produced_new_themes = bool(getattr(args, "_resume_produced_new_themes", False))
         any_success = bool(successful_friend_ids)
         # None: no fresh critique round yet -- decide_exit's
         # --require-friends check fails open on None rather than guess.
@@ -446,6 +451,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # iteration of a loop, how many ever succeeded".
                 succeeded_friends = critique.succeeded_friends
                 successful_friend_ids = list(critique.successful_friend_ids)
+                theme_proposals.extend(critique.theme_proposals)
+                produced_new_themes = critique.produced_new_themes
+                halted_dry = round_is_dry(
+                    not critique.produced_new_themes,
+                    critique.any_success and not critique.any_failed,
+                )
+                halted_failed = critique.any_failed or not critique.any_success
 
                 if critique.auth_abort is not None:
                     # Deterministic (§7.2): stop rather than ask for
@@ -515,9 +527,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # §7.3's streak arithmetic. A failed round resets rather than
                 # counting: a round that did not complete is not evidence of
                 # convergence.
-                dry = round_is_dry(critique.produced_only_aliases, not critique.any_failed)
-                streak = next_streak(streak, failed=critique.any_failed, dry=dry)
-                halted_dry, halted_failed = dry, critique.any_failed
+                dry = halted_dry
+                streak = next_streak(streak, failed=halted_failed, dry=dry)
                 if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
                     loop_converged = True
                     break
@@ -543,6 +554,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 friends_meta.extend(halt.friends_meta)
                 downgrades.extend(halt.downgrades)
                 successful_friend_ids = list(halt.successful_friend_ids)
+                theme_proposals.extend(halt.theme_proposals)
+                produced_new_themes = halt.produced_new_themes
                 any_success = bool(successful_friend_ids)
                 succeeded_friends = len(successful_friend_ids)
             write_halt(

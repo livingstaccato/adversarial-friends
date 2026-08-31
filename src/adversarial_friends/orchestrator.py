@@ -30,6 +30,7 @@ from typing import Any
 from .claimschema import validate_payload
 from .errors import AfError, UsageError
 from .ledger import Alias, Claim
+from .themes import ThemeProposal
 
 REQUEST_NAME = "REQUEST.json"
 RESPONSE_NAME = "RESPONSE.json"
@@ -75,6 +76,8 @@ class NeedsOrchestrator(AfError):
         friends_meta: list[dict[str, Any]] | None = None,
         downgrades: list[str] | None = None,
         successful_friend_ids: list[str] | None = None,
+        theme_proposals: list[ThemeProposal] | None = None,
+        produced_new_themes: bool = False,
     ) -> None:
         super().__init__(message)
         # Extraction halts are raised from inside run_critique after the
@@ -84,6 +87,8 @@ class NeedsOrchestrator(AfError):
         self.friends_meta = list(friends_meta or [])
         self.downgrades = list(downgrades or [])
         self.successful_friend_ids = list(successful_friend_ids or [])
+        self.theme_proposals = list(theme_proposals or [])
+        self.produced_new_themes = produced_new_themes
 
 
 @dataclass(frozen=True)

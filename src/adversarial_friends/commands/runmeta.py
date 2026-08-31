@@ -24,12 +24,13 @@ from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
-from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
+from ..outcomes import MAX_JSON_NODES, MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
 from ..snapshots import SnapshotIdentity, record_snapshot
+from ..themes import ThemeProposal
 from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
 from .checkpoint import (
@@ -131,6 +132,8 @@ def _base_meta(
     roster_source: str | None = None,
     env_withheld: list[str] | None = None,
     started_at: str | None = None,
+    theme_proposals: list[ThemeProposal] | None = None,
+    produced_new_themes: bool = False,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -172,6 +175,8 @@ def _base_meta(
         # NAMES ONLY -- a run directory that recorded the values to prove
         # they were protected would be the leak it exists to prevent.
         "env_withheld": env_withheld or [],
+        "theme_proposals": [proposal.to_dict() for proposal in (theme_proposals or [])],
+        "produced_new_themes": produced_new_themes,
     }
     # The nested form is authoritative. The final two fields written by
     # record_snapshot remain for v0.2 readers such as `afriend resolve`.
@@ -325,6 +330,35 @@ def _checkpoint_tracker(meta: dict[str, Any]) -> dict[str, object]:
     return normalized
 
 
+def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
+    raw_proposals = meta.get("theme_proposals", [])
+    if type(raw_proposals) is not list:
+        raise UsageError("cannot resume: saved theme_proposals must be a list")
+    # One list node plus, per exact-shape proposal, one mapping and its four
+    # scalar values. Bound expanded validation work by Task 6's JSON limit,
+    # not merely by the number of top-level entries.
+    max_proposals = (MAX_JSON_NODES - 1) // 5
+    if len(raw_proposals) > max_proposals:
+        raise UsageError("cannot resume: saved theme_proposals exceeds the metadata bound")
+    proposals: list[ThemeProposal] = []
+    seen: set[ThemeProposal] = set()
+    for index, raw in enumerate(raw_proposals):
+        try:
+            proposal = ThemeProposal.from_dict(raw)
+        except UsageError as exc:
+            raise UsageError(
+                f"cannot resume: saved theme_proposals[{index}] is invalid: {exc}"
+            ) from exc
+        if proposal in seen:
+            raise UsageError("cannot resume: saved theme_proposals contains a duplicate")
+        seen.add(proposal)
+        proposals.append(proposal)
+    produced = meta.get("produced_new_themes", False)
+    if type(produced) is not bool:
+        raise UsageError("cannot resume: saved produced_new_themes must be a boolean")
+    return proposals, produced
+
+
 def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -> dict[str, Any]:
     normalized = dict(meta)
     spent_calls = _checkpoint_count(meta, "spent_calls", 0)
@@ -352,6 +386,7 @@ def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -
     if any(row["round"] > critique_round for row in friends):
         raise UsageError("cannot resume: saved friends contain a row after the pending round")
     successes = _checkpoint_successes(meta, friends, critique_round)
+    theme_proposals, produced_new_themes = _checkpoint_themes(meta)
     if any(friend not in roster_names for friend in successes):
         raise UsageError(
             "cannot resume: saved successful_friend_ids contains a friend outside the roster"
@@ -379,6 +414,8 @@ def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -
             "required_friends": required,
             "repeat_tracker": _checkpoint_tracker(meta),
             "friends": friends,
+            "theme_proposals": [proposal.to_dict() for proposal in theme_proposals],
+            "produced_new_themes": produced_new_themes,
         }
     )
     normalized.update(normalize_resume_report_state(meta))
@@ -453,6 +490,10 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored._resume_rounds_run = meta["rounds_run"]
     restored._resume_active_elapsed_s = meta["active_elapsed_s"]
     restored._resume_successful_friend_ids = meta["successful_friend_ids"]
+    restored._resume_theme_proposals = [
+        ThemeProposal.from_dict(value) for value in meta["theme_proposals"]
+    ]
+    restored._resume_produced_new_themes = meta["produced_new_themes"]
     return restored
 
 

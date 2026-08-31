@@ -31,6 +31,7 @@ from ..reviewstate import ReviewState
 from ..rounds import dispatch_round, persist_result
 from ..runstore import RunStore
 from ..spawn import SpawnResult
+from ..themes import ThemeProposal, classify_novel
 
 
 @dataclass
@@ -55,10 +56,13 @@ class CritiqueOutcome:
     # exit code implies. See `--require-friends` in cliargs.py.
     succeeded_friends: int = 0
     successful_friend_ids: list[str] = field(default_factory=list)
-    # §7.3: a round is dry when every required friend completed successfully
-    # AND every claim it produced was an alias of one already known -- i.e.
-    # the round cost a full fan-out and learned nothing new.
+    # Retained as an exact-merge diagnostic. Loop dryness is intentionally
+    # based on produced_new_themes instead, so wording variants do not reset
+    # convergence while exact ledger identities remain unchanged.
     produced_only_aliases: bool = True
+    # Theme novelty is advisory and independent of exact ledger identity.
+    produced_new_themes: bool = False
+    theme_proposals: list[ThemeProposal] = field(default_factory=list)
 
 
 def build_prompts(
@@ -247,10 +251,14 @@ def run_critique(
                     suggested_fix=finding["suggested_fix"],
                 )
             )
+        novel_theme_ids, proposals = classify_novel(all_claims, incoming)
+        if novel_theme_ids:
+            outcome.produced_new_themes = True
+        outcome.theme_proposals.extend(proposals)
         kept, aliases, _updated_existing = exact_merge(all_claims, incoming, round_no=round_no)
         if kept:
-            # Something survived dedup, so this round taught the run
-            # something. §7.3's dry-round test is exactly this, inverted.
+            # Preserve the exact-merge diagnostic for callers that inspect
+            # it; loop novelty is the separate theme classification above.
             outcome.produced_only_aliases = False
         # Every incoming claim is written to the ledger, not just the ones
         # exact_merge kept: an Alias record's `duplicate` id must resolve to
@@ -286,5 +294,7 @@ def run_critique(
             friends_meta=outcome.friends_meta,
             downgrades=outcome.downgrades,
             successful_friend_ids=outcome.successful_friend_ids,
+            theme_proposals=outcome.theme_proposals,
+            produced_new_themes=outcome.produced_new_themes,
         )
     return outcome, all_claims, counter

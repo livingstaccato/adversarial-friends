@@ -356,6 +356,26 @@ def render(
     if states is not None:
         lines.extend(_render_verdict_sections(claims, verdicts or [], states, run_meta))
 
+    proposals = run_meta.get("theme_proposals") or []
+    if proposals:
+        lines.extend(
+            [
+                "## Possible semantic duplicates",
+                "",
+                "These are advisory only. Every claim remains separate and independently "
+                "addressable in the ledger.",
+                "",
+            ]
+        )
+        for proposal in proposals:
+            lines.append(
+                f"- {_code_span(str(proposal['duplicate']))} may share a theme with "
+                f"{_code_span(str(proposal['canonical']))} at "
+                f"{_code_span(str(proposal['anchor']))} "
+                f"(score {_code_span(str(proposal['score']))})."
+            )
+        lines.append("")
+
     lines.append("## Findings")
     lines.append("")
     if not claims:

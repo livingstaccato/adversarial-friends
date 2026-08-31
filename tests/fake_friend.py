@@ -26,6 +26,30 @@ MODES = {
             }
         )
     ),
+    "theme_batch": lambda: print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "high",
+                        "claim": "expiry guard is missing",
+                        "location": "src/auth.py:42",
+                        "evidence": "src/auth.py:38",
+                        "failure_scenario": "expired token passes",
+                        "suggested_fix": "check expiration",
+                    },
+                    {
+                        "severity": "high",
+                        "claim": "missing expiration guard",
+                        "location": "src/auth.py:42",
+                        "evidence": "src/auth.py:38",
+                        "failure_scenario": "expired token passes",
+                        "suggested_fix": "check expiration",
+                    },
+                ]
+            }
+        )
+    ),
     "empty": lambda: print(json.dumps({"findings": []})),
     "no_findings": lambda: print(json.dumps({"no_findings": True})),
     "offtopic": lambda: print("It looks like you just typed `--mode`."),
@@ -167,6 +191,33 @@ def _own_finding() -> None:
     )
 
 
+def _theme_finding(mode: str) -> None:
+    """A stable anchor whose wording varies across loop critique rounds."""
+    who = _identity()
+    round_no = _round()
+    claim_text = "expiry guard is missing" if round_no == 1 else "missing expiration guard"
+    failure = "expired token passes"
+    if mode.startswith("judge_theme_new_late") and round_no >= 5:
+        claim_text = "refresh update unsafe"
+        failure = "concurrent refresh loses update"
+    print(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "severity": "high",
+                        "claim": claim_text,
+                        "location": f"src/{who}.py:42",
+                        "evidence": f"src/{who}.py:38",
+                        "failure_scenario": failure,
+                        "suggested_fix": "scripted",
+                    }
+                ]
+            }
+        )
+    )
+
+
 def _judge(verdict: str, assessment: str = "confirmed", **extra) -> None:
     out = []
     for claim in _claims_in_prompt():
@@ -188,6 +239,8 @@ def _judge(verdict: str, assessment: str = "confirmed", **extra) -> None:
 # Every one of these also has to survive round 1, where it is asked for a
 # critique instead -- see main().
 _JUDGEMENTS = {
+    "judge_theme_variant": lambda: _judge("upheld"),
+    "judge_theme_new_late": lambda: _judge("upheld"),
     "judge_uphold": lambda: _judge("upheld"),
     "judge_refute": lambda: _judge(
         "refuted", "disputed", counter_evidence="src/auth.py:38 already guards this"
@@ -296,6 +349,8 @@ def main() -> int:
         # critique round does not.
         if _claims_in_prompt():
             judgement()
+        elif mode.startswith(("judge_theme_variant", "judge_theme_new_late")):
+            _theme_finding(mode)
         else:
             _own_finding()
         return 0
