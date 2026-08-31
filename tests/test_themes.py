@@ -1,13 +1,16 @@
+import argparse
 import dataclasses
 import json
 import math
 
 import pytest
 
-from adversarial_friends.commands.runmeta import _checkpoint_themes
+from adversarial_friends.commands.runmeta import _base_meta, _checkpoint_themes
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Claim
 from adversarial_friends.outcomes import MAX_JSON_NODES
+from adversarial_friends.snapshots import SnapshotIdentity
+import adversarial_friends.themes as themes_module
 from adversarial_friends.themes import (
     THEME_THRESHOLD,
     ThemeProposal,
@@ -39,6 +42,14 @@ def claim(
         failure_scenario=failure_scenario,
         suggested_fix="check expiration before dispatch",
     )
+
+
+def _expanded_json_nodes(value):
+    if type(value) is dict:
+        return 1 + sum(_expanded_json_nodes(item) for item in value.values())
+    if type(value) in {list, tuple}:
+        return 1 + sum(_expanded_json_nodes(item) for item in value)
+    return 1
 
 
 def test_obvious_wording_variant_at_same_anchor_is_same_theme():
@@ -129,6 +140,56 @@ def test_classify_novel_prefers_existing_then_first_incoming_canonical():
     ]
 
 
+def test_classification_bounds_same_anchor_comparisons_and_overflow_is_novel(monkeypatch):
+    comparison_limit = 512
+    existing = [claim(f"c-{index + 1:04d}@1") for index in range(comparison_limit + 8)]
+    candidate = claim("c-9999@1", claim_text="a distinct candidate")
+    comparisons = 0
+
+    def no_match(_canonical, _candidate):
+        nonlocal comparisons
+        comparisons += 1
+        return None
+
+    monkeypatch.setattr(themes_module, "compare_theme", no_match)
+
+    novel, proposals = classify_novel(existing, [candidate])
+
+    assert comparisons == comparison_limit
+    assert novel == {candidate.id}
+    assert proposals == []
+
+
+def test_classification_indexes_distinct_anchors_without_fuzzy_comparison(monkeypatch):
+    existing = [
+        claim(f"c-{index + 1:04d}@1", location=f"src/file_{index}.py:1") for index in range(600)
+    ]
+    candidate = claim("c-9999@1", location="src/new.py:1")
+    comparisons = 0
+    real_compare = themes_module.compare_theme
+
+    def counted_compare(canonical, incoming):
+        nonlocal comparisons
+        comparisons += 1
+        return real_compare(canonical, incoming)
+
+    monkeypatch.setattr(themes_module, "compare_theme", counted_compare)
+
+    novel, proposals = classify_novel(existing, [candidate])
+
+    assert comparisons == 0
+    assert novel == {candidate.id}
+    assert proposals == []
+
+
+def test_oversized_theme_text_is_conservatively_not_fuzzy_matched():
+    long_failure = "expired token passes repeatedly " * 100
+    first = claim("c-0001@1", failure_scenario=long_failure)
+    second = claim("c-0002@1", failure_scenario=long_failure)
+
+    assert compare_theme(first, second) is None
+
+
 def test_theme_proposal_is_frozen_finite_and_json_safe():
     proposal = ThemeProposal("c-0001@1", "c-0002@1", 0.9876, "src/auth.py:42")
     assert json.loads(json.dumps(dataclasses.asdict(proposal))) == {
@@ -152,7 +213,10 @@ def test_hostile_restored_claim_types_raise_contextual_usage_error():
 
 
 def test_restored_theme_proposals_obey_expanded_json_node_bound():
-    count = MAX_JSON_NODES // 5 + 1
+    # 1,638 proposals consume exactly 8,192 nodes only when incorrectly
+    # counted apart from their enclosing metadata. The root object and
+    # produced_new_themes value push the actual checkpoint over the bound.
+    count = (MAX_JSON_NODES - 1) // 5
     proposals = [
         {
             "canonical": f"c-{index * 2 + 1:04d}@1",
@@ -164,4 +228,48 @@ def test_restored_theme_proposals_obey_expanded_json_node_bound():
     ]
 
     with pytest.raises(UsageError, match="metadata bound"):
-        _checkpoint_themes({"theme_proposals": proposals})
+        _checkpoint_themes({"theme_proposals": proposals, "produced_new_themes": False})
+
+
+def test_fresh_metadata_truncates_oversized_self_produced_theme_proposals(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("spec", encoding="utf-8")
+    digest = "sha256:" + "1" * 64
+    snapshot = SnapshotIdentity(None, None, None, artifact.name, digest)
+    proposals = [
+        ThemeProposal(
+            f"c-{index * 2 + 1:04d}@1",
+            f"c-{index * 2 + 2:04d}@1",
+            1.0,
+            f"src/a{index}.py:1",
+        )
+        for index in range(1_700)
+    ]
+    source_ids = {id(proposal) for proposal in proposals}
+    source_conversions = 0
+    real_to_dict = ThemeProposal.to_dict
+
+    def counted_to_dict(proposal):
+        nonlocal source_conversions
+        if id(proposal) in source_ids:
+            source_conversions += 1
+        return real_to_dict(proposal)
+
+    monkeypatch.setattr(ThemeProposal, "to_dict", counted_to_dict)
+
+    meta = _base_meta(
+        argparse.Namespace(mode="loop", merge="exact", friend=[]),
+        artifact,
+        digest,
+        [],
+        [],
+        [],
+        snapshot,
+        [snapshot],
+        theme_proposals=proposals,
+    )
+
+    assert _expanded_json_nodes(meta) <= MAX_JSON_NODES
+    assert 0 < len(meta["theme_proposals"]) < len(proposals)
+    assert meta["theme_proposals"][0]["canonical"] == proposals[0].canonical
+    assert source_conversions < len(proposals)

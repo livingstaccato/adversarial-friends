@@ -116,3 +116,28 @@ def test_malformed_saved_theme_novelty_fact_refuses_resume_without_mutation(tmp_
     assert resumed.returncode == 2, resumed.stderr
     assert "produced_new_themes" in resumed.stderr
     assert run_json.read_bytes() == before
+
+
+def test_whole_metadata_bound_refuses_1638_proposals_without_mutation(tmp_path):
+    halted = _halt(tmp_path, "good")
+    assert halted.returncode == 10, halted.stderr
+    meta = _run_json(tmp_path)
+    meta["theme_proposals"] = [
+        {
+            "canonical": f"c-{index * 2 + 1:04d}@1",
+            "duplicate": f"c-{index * 2 + 2:04d}@1",
+            "score": 1.0,
+            "anchor": f"src/a{index}.py:1",
+        }
+        for index in range(1_638)
+    ]
+    _write_run_json(tmp_path, meta)
+    _respond(tmp_path, [])
+    run_json = _run_dir(tmp_path) / "run.json"
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "metadata bound" in resumed.stderr
+    assert run_json.read_bytes() == before

@@ -29,6 +29,7 @@ from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
 from ..snapshots import SnapshotIdentity, history_from_meta, record_snapshot
+from ..themes import bounded_theme_metadata
 from .crossexam import CrossexamOutcome
 
 
@@ -178,6 +179,7 @@ def write_halt(
         record_snapshot(meta, snapshot, history_from_meta(meta, snapshot))
     downgrades = meta.setdefault("downgrades", [])
     review.copy_transition_warnings(downgrades)
+    meta = bounded_theme_metadata(meta)
     store.write_run_json(meta)
     store.write_report(
         render(

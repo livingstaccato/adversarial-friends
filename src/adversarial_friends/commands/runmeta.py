@@ -24,13 +24,13 @@ from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
-from ..outcomes import MAX_JSON_NODES, MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
+from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, json_node_count, terminal_outcome
 from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
 from ..snapshots import SnapshotIdentity, record_snapshot
-from ..themes import ThemeProposal
+from ..themes import MAX_THEME_PROPOSALS, ThemeProposal, bounded_theme_metadata
 from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
 from .checkpoint import (
@@ -175,13 +175,15 @@ def _base_meta(
         # NAMES ONLY -- a run directory that recorded the values to prove
         # they were protected would be the leak it exists to prevent.
         "env_withheld": env_withheld or [],
-        "theme_proposals": [proposal.to_dict() for proposal in (theme_proposals or [])],
+        "theme_proposals": [
+            proposal.to_dict() for proposal in (theme_proposals or [])[:MAX_THEME_PROPOSALS]
+        ],
         "produced_new_themes": produced_new_themes,
     }
     # The nested form is authoritative. The final two fields written by
     # record_snapshot remain for v0.2 readers such as `afriend resolve`.
     record_snapshot(meta, snapshot, snapshot_history)
-    return meta
+    return bounded_theme_metadata(meta)
 
 
 def _resume_type_error(name: str, value: object) -> UsageError:
@@ -331,15 +333,15 @@ def _checkpoint_tracker(meta: dict[str, Any]) -> dict[str, object]:
 
 
 def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
+    try:
+        json_node_count(meta, "saved run metadata")
+    except ValueError as exc:
+        raise UsageError(
+            f"cannot resume: saved run metadata exceeds the metadata bound: {exc}"
+        ) from exc
     raw_proposals = meta.get("theme_proposals", [])
     if type(raw_proposals) is not list:
         raise UsageError("cannot resume: saved theme_proposals must be a list")
-    # One list node plus, per exact-shape proposal, one mapping and its four
-    # scalar values. Bound expanded validation work by Task 6's JSON limit,
-    # not merely by the number of top-level entries.
-    max_proposals = (MAX_JSON_NODES - 1) // 5
-    if len(raw_proposals) > max_proposals:
-        raise UsageError("cannot resume: saved theme_proposals exceeds the metadata bound")
     proposals: list[ThemeProposal] = []
     seen: set[ThemeProposal] = set()
     for index, raw in enumerate(raw_proposals):
@@ -434,6 +436,12 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         raise UsageError(f"cannot resume: {meta_path} is not valid run metadata") from exc
     if not isinstance(meta, dict):
         raise UsageError(f"cannot resume: {meta_path} must contain a JSON object")
+    try:
+        json_node_count(meta, "saved run metadata")
+    except ValueError as exc:
+        raise UsageError(
+            f"cannot resume: saved run metadata exceeds the metadata bound: {exc}"
+        ) from exc
     saved = meta.get("invocation")
     if not isinstance(saved, dict):
         raise UsageError(
@@ -734,7 +742,10 @@ def finish_run(
         dry_streak=streak,
         repeat_tracker=tracker.snapshot(),
     )
-    meta = outcome.apply(meta)
+    # Finalization adds fields after the fresh base was bounded. Refit both
+    # before RunOutcome validates its input and after it adds terminal fields.
+    meta = bounded_theme_metadata(meta)
+    meta = bounded_theme_metadata(outcome.apply(meta))
     report = render(
         review,
         meta,

@@ -33,6 +33,13 @@ MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 8_192
 
 
+def json_node_count(value: object, path: str = "metadata") -> int:
+    """Validate JSON-safe structure and return its expanded node count."""
+    nodes = [0]
+    _freeze_json(value, path, set(), 0, nodes)
+    return nodes[0]
+
+
 class StopReason(StrEnum):
     COMPLETED = "completed"
     GATE_BLOCKED = "gate-blocked"

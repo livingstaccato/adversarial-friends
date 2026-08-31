@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from adversarial_friends.errors import UsageError
+from adversarial_friends.outcomes import MAX_JSON_NODES
 from adversarial_friends.runstore import RunStore
 
 
@@ -51,6 +52,18 @@ def test_run_json_is_written(tmp_path):
     store = RunStore(tmp_path, "run-001")
     store.write_run_json({"mode": "report"})
     assert '"mode": "report"' in (store.run_dir / "run.json").read_text()
+
+
+def test_oversized_checkpoint_metadata_is_refused_without_replacing_prior_state(tmp_path):
+    store = RunStore(tmp_path, "run-bounded-checkpoint")
+    store.write_run_json({"state": "before"})
+    run_json = store.run_dir / "run.json"
+    before = run_json.read_bytes()
+
+    with pytest.raises(ValueError, match="expanded JSON node count"):
+        store.write_run_json({"payload": [None] * MAX_JSON_NODES})
+
+    assert run_json.read_bytes() == before
 
 
 # --- Adversarial additions beyond the brief's four required tests --------
@@ -117,6 +130,19 @@ def test_terminal_artifacts_are_replaced_as_one_consistent_pair(tmp_path):
     assert '"lifecycle_state": "terminal"' in (store.run_dir / "run.json").read_text()
     assert (store.run_dir / "report.md").read_text() == "# terminal\n"
     assert not list(store.run_dir.glob(".*.terminal-*"))
+
+
+def test_oversized_terminal_metadata_is_refused_before_staging(tmp_path):
+    store = RunStore(tmp_path, "run-bounded-terminal")
+    expected = _waiting_artifacts(store)
+
+    with pytest.raises(ValueError, match="expanded JSON node count"):
+        store.write_terminal_artifacts(
+            {"payload": [None] * MAX_JSON_NODES},
+            "# must not replace waiting report\n",
+        )
+
+    _assert_waiting_artifacts(store, expected)
 
 
 def test_terminal_staging_failure_preserves_both_prior_artifacts(monkeypatch, tmp_path):

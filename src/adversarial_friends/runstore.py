@@ -17,6 +17,7 @@ from typing import IO, Any
 from .errors import UsageError
 from .ids import validate_friend_name
 from .ledger import Ledger
+from .outcomes import json_node_count
 from .trust import contain_path
 
 
@@ -195,6 +196,7 @@ class RunStore:
         fails, the staged old report is restored before the original exception
         is re-raised.
         """
+        json_node_count(meta)
         metadata = json.dumps(meta, indent=2, sort_keys=True)
         run_path = self.run_dir / "run.json"
         report_path = self.run_dir / "report.md"
@@ -233,6 +235,7 @@ class RunStore:
                     path.unlink()
 
     def write_run_json(self, meta: dict[str, Any]) -> Path:
+        json_node_count(meta)
         return self._write_atomic(
             self.run_dir / "run.json", json.dumps(meta, indent=2, sort_keys=True)
         )
