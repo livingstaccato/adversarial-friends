@@ -30,6 +30,7 @@ from ..orchestrator import (
     write_request,
 )
 from ..reviewstate import ReviewState
+from ..rounds import partition_dispatchable
 from ..runstore import RunStore, default_root
 from ..snapshots import (
     SnapshotIdentity,
@@ -297,7 +298,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # iteration 1 critiques in round 1 and judges in 2..max_rounds,
                 # iteration 2 critiques in round max_rounds+1, and so on.
                 base_round = (iteration - 1) * args.max_rounds + 1
-                if budget.would_exceed_calls(len(specs)):
+                dispatchable, _skipped = partition_dispatchable(specs, tracker)
+                if budget.would_exceed_calls(len(dispatchable)):
                     budget.exhaust(
                         f"--max-calls={budget.max_calls} reached before iteration "
                         f"{iteration}'s critique round"

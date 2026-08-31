@@ -213,12 +213,38 @@ def test_a_deterministically_broken_friend_stops_being_dispatched(tmp_path):
     downgrades = " ".join(meta["downgrades"])
     assert "not be dispatched again" in downgrades, result.stderr
 
-    # And it genuinely stopped: the broken friend appears in fewer rounds
-    # than the working one.
+    # And it genuinely stopped: skipped rows remain as audit evidence, but
+    # only non-skipped rows represent real dispatches.
     rounds_per_friend: dict[str, int] = {}
     for friend in meta["friends"]:
-        rounds_per_friend[friend["name"]] = rounds_per_friend.get(friend["name"], 0) + 1
+        if not friend["status"].startswith("skipped: "):
+            rounds_per_friend[friend["name"]] = rounds_per_friend.get(friend["name"], 0) + 1
     assert rounds_per_friend["fake-crash-1"] < rounds_per_friend["fake-judge_uphold_a-0"]
+    skipped = [
+        row
+        for row in meta["friends"]
+        if row["name"] == "fake-crash-1" and row["status"].startswith("skipped: ")
+    ]
+    assert skipped
+    for row in skipped:
+        round_dir = _run_dir(tmp_path) / f"round-{row['round']}"
+        assert (round_dir / "fake-crash-1.meta").read_text().startswith("status=skipped\n")
+        assert not (round_dir / "fake-crash-1.prompt").exists()
+
+
+def test_repeat_disabled_critique_friend_does_not_consume_call_budget(tmp_path):
+    result = _loop(
+        tmp_path,
+        "fake:judge_uphold_a",
+        "fake:crash",
+        extra=("--max-loop-iterations", "4", "--max-calls", "4"),
+    )
+
+    meta = _run_json(tmp_path)
+    assert meta["spent_calls"] == 4, result.stderr
+    second_critique = _run_dir(tmp_path) / "round-4"
+    assert (second_critique / "fake-judge_uphold_a-0.prompt").exists()
+    assert not (second_critique / "fake-crash-1.prompt").exists()
 
 
 def test_a_friend_that_recovers_is_not_disabled(tmp_path):

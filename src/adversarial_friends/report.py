@@ -164,6 +164,65 @@ def _escape_block(text: str) -> str:
     return "\n".join(escaped_lines)
 
 
+def _external_authority_lines(run_meta: dict[str, Any]) -> list[str]:
+    policy = run_meta.get("external_tool_policy")
+    if policy == "deny":
+        status = "denied"
+        detail = "Provider-managed tools and connectors were denied for this run."
+    elif policy == "allow":
+        status = "explicitly-allowed"
+        detail = (
+            "Provider-managed tools and connectors were explicitly allowed for this run; "
+            "the provider may have inherited integrations not inventoried here."
+        )
+    else:
+        status = "legacy-unknown"
+        detail = "This legacy capture does not record provider-managed tool authority."
+    return ["## External tool authority", "", f"Status: `{status}`", "", detail, ""]
+
+
+def _gate_lines(run_meta: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Gate decision",
+        "",
+        f"Decision: `{_escape_cell(run_meta.get('gate_decision'))}`",
+        "",
+    ]
+    blockers = run_meta.get("gate_blocking_claims") or []
+    if blockers:
+        lines.extend(["Blocking claims:", ""])
+        lines.extend(f"- {_code_span(str(claim_id))}" for claim_id in blockers)
+        lines.append("")
+    else:
+        lines.extend(["Blocking claims: _(none)_", ""])
+    lines.extend([f"Stop reason: `{_escape_cell(run_meta.get('stop_reason', 'unknown'))}`", ""])
+
+    ceiling = run_meta.get("ceiling_hit")
+    failed_or_skipped = any(
+        str(friend.get("status", "")).startswith(("failed: ", "skipped: "))
+        for friend in run_meta.get("friends", [])
+    )
+    partial = bool(
+        ceiling
+        or run_meta.get("incomplete")
+        or failed_or_skipped
+        or run_meta.get("stop_reason")
+        in {"auth-abort", "incomplete", "interrupted", "runtime-error"}
+    )
+    if partial:
+        qualifier = f" after reaching `{_escape_cell(ceiling)}`" if ceiling else ""
+        lines.extend(
+            [
+                "**Partial evidence caveat:** The run stopped or lost evidence"
+                f"{qualifier}; do not treat this gate result as a complete review.",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["Evidence caveat: _(none)_", ""])
+    return lines
+
+
 def _render_verdict_sections(
     claims: list[Claim],
     verdicts: list[Verdict],
@@ -278,22 +337,7 @@ def render(
             ]
         )
         if run_meta.get("mode") == "gate":
-            lines.extend(
-                [
-                    "### Gate",
-                    "",
-                    f"Decision: `{_escape_cell(run_meta.get('gate_decision'))}`",
-                    "",
-                ]
-            )
-            blockers = run_meta.get("gate_blocking_claims") or []
-            if blockers:
-                lines.append("Blocking claims:")
-                lines.append("")
-                lines.extend(f"- {_code_span(str(claim_id))}" for claim_id in blockers)
-                lines.append("")
-            else:
-                lines.extend(["Blocking claims: _(none)_", ""])
+            lines.extend(_gate_lines(run_meta))
     elif lifecycle_state is not None:
         lines.extend(
             [
@@ -303,6 +347,7 @@ def render(
                 "",
             ]
         )
+    lines.extend(_external_authority_lines(run_meta))
     lines.append("## Friends")
     lines.append("")
     lines.append(
@@ -327,13 +372,18 @@ def render(
         )
     if not run_meta["friends"]:
         lines.append("| _(no friends were spawned)_ |  |  |  |  |  |  |  |")
-    read_exposed = [
-        friend["name"]
-        for friend in run_meta["friends"]
-        if friend.get("transport", "exec") != "http"
-        and friend.get("write_protected", friend.get("readonly", False))
-        and not friend.get("os_confined", False)
-    ]
+    read_exposed: list[str] = []
+    exposed_seen: set[str] = set()
+    for friend in run_meta["friends"]:
+        name = str(friend["name"])
+        exposed = (
+            friend.get("transport", "exec") != "http"
+            and friend.get("write_protected", friend.get("readonly", False))
+            and not friend.get("os_confined", False)
+        )
+        if exposed and name not in exposed_seen:
+            exposed_seen.add(name)
+            read_exposed.append(name)
     if read_exposed:
         lines.extend(
             [

@@ -28,7 +28,7 @@ from ..orchestrator import NeedsOrchestrator, write_extract_request
 from ..progress import Progress
 from ..prompt import _build_friend_prompt
 from ..reviewstate import ReviewState
-from ..rounds import dispatch_round, persist_result
+from ..rounds import dispatch_round, partition_dispatchable, persist_result, persist_skip
 from ..runstore import RunStore
 from ..spawn import SpawnResult
 from ..themes import ThemeProposal, classify_novel
@@ -158,13 +158,19 @@ def run_critique(
     everything seen so far rather than only against its own round.
     """
     outcome = CritiqueOutcome()
+    dispatchable, skipped = partition_dispatchable(specs, tracker)
+    for item in skipped:
+        outcome.friends_meta.append(persist_skip(store, round_no, item))
+        if item.reason not in outcome.downgrades:
+            outcome.downgrades.append(item.reason)
+    outcome.any_failed = bool(skipped)
     prompt_for, advisory_for, prompt_downgrades = build_prompts(
-        specs, artifact_text, store, registry, round_no
+        dispatchable, artifact_text, store, registry, round_no
     )
     outcome.downgrades.extend(prompt_downgrades)
 
     results, outcome.auth_abort = dispatch_round(
-        specs,
+        dispatchable,
         round_no,
         prompt_for,
         store,
@@ -178,7 +184,6 @@ def run_critique(
         on_pool=on_pool,
         allow_unsandboxed=allow_unsandboxed,
         tracker=tracker,
-        downgrades=outcome.downgrades,
         extra_args=extra_args,
         pass_env=pass_env,
         keep=keep,

@@ -29,7 +29,7 @@ from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
 from ..progress import Progress
 from ..reviewstate import ReviewState
-from ..rounds import dispatch_round, persist_result
+from ..rounds import dispatch_round, partition_dispatchable, persist_result, persist_skip
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
 from .judging import (
@@ -172,13 +172,13 @@ def run_rounds(
         # discardable, so a loop could not converge on them. Dropping it
         # from the roster makes quorum reflect who can still vote, and the
         # shrunken roster is reported rather than implied.
-        active = [s for s in specs if tracker is None or not tracker.is_disabled(s.name)]
-        for spec in specs:
-            if spec not in active and spec.name not in outcome.dropped:
-                outcome.dropped.add(spec.name)
+        active, skipped = partition_dispatchable(specs, tracker)
+        for item in skipped:
+            outcome.friends_meta.append(persist_skip(store, round_no, item))
+            if item.spec.name not in outcome.dropped:
+                outcome.dropped.add(item.spec.name)
                 outcome.downgrades.append(
-                    f"round {round_no}: {spec.name} failed identically twice and is "
-                    "disabled for the rest of this run; it is no longer counted as "
+                    f"round {round_no}: {item.reason} It is no longer counted as "
                     "one of the judges a claim needs."
                 )
         judge_specs: list[FriendSpec] = []
@@ -214,10 +214,11 @@ def run_rounds(
             # Every remaining claim was written by every friend. Nothing is
             # left that anyone is independent enough to judge, so further
             # rounds would cost a fan-out and decide nothing.
-            outcome.downgrades.append(
-                f"round {round_no}: no friend is independent of any remaining "
-                "claim, so no judging round could be run."
-            )
+            if active:
+                outcome.downgrades.append(
+                    f"round {round_no}: no friend is independent of any remaining "
+                    "claim, so no judging round could be run."
+                )
             # Settle them before leaving. Breaking out directly would leave
             # every remaining claim at its `contested` seed, which reads as
             # "judges disagreed" -- the opposite of what happened, which is
@@ -256,7 +257,6 @@ def run_rounds(
             contract=VERDICT_CONTRACT,
             allow_unsandboxed=allow_unsandboxed,
             tracker=tracker,
-            downgrades=outcome.downgrades,
             extra_args=extra_args,
             pass_env=pass_env,
             keep=keep,
@@ -267,16 +267,10 @@ def run_rounds(
         budget.spend(len(results))
         outcome.rounds_run = round_no
 
-        # A judge the repeat tracker refused to dispatch is a judge that
-        # never reported -- §7.2's M12, the same as one that failed. The
-        # tracker filters inside dispatch_round, so from here a withheld
-        # judge is simply absent from `results`; before this was counted, a
-        # round in which EVERY judge was withheld looked like a round in
-        # which nothing failed. Below-quorum claims then went `unproven`,
-        # and two such rounds -- identical, since nobody spoke -- tripped
-        # the discard rule. Seen in a real run: five claims `discarded`,
-        # "judges looked twice and could not verify", when no judge had
-        # been dispatched at all.
+        # A judge selected for this round but absent from results never
+        # reported -- §7.2's M12, the same as one that failed. Repeat-disabled
+        # judges were partitioned and audited before prompts above; this
+        # catches a dispatch that was interrupted during setup instead.
         dispatched = {spec.name for spec, _capability, _result in results}
         withheld = [s for s in judge_specs if s.name not in dispatched]
         # §7.2's M12, per claim: the judges that never reported on it this

@@ -41,6 +41,7 @@ KILL_GRACE_S = 60
 # figure is verified against. Comfortably under that limit so the downgrade
 # is visible before a real dispatch would fail, not only after.
 PROMPT_ARGV_WARN_BYTES = 100_000
+STDERR_TAIL_CHARS = 200
 
 
 def argv_size_warning(spec_name: str, adapter: "Adapter", prompt_text: str) -> str | None:
@@ -115,11 +116,13 @@ _INLINE_MARKDOWN_STRIP = str.maketrans("", "", "`*_[]<>~")
 # proxy error.
 _AUTOLINK_SCHEME_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
 _AUTOLINK_WWW_RE = re.compile(r"(?i)\bwww\.")
+_ACTIVE_URI_SCHEME_RE = re.compile(r"(?i)\b(javascript|vbscript|data):")
 
 
 def _defang_autolinks(text: str) -> str:
     text = _AUTOLINK_SCHEME_RE.sub(r"\1: //", text)
-    return _AUTOLINK_WWW_RE.sub("www .", text)
+    text = _AUTOLINK_WWW_RE.sub("www .", text)
+    return _ACTIVE_URI_SCHEME_RE.sub(r"\1 :", text)
 
 
 def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
@@ -171,7 +174,7 @@ def _refused_unsandboxed(argv: list[str], spec: FriendSpec, adapter: Adapter) ->
     )
 
 
-def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = 200) -> str:
+def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = STDERR_TAIL_CHARS) -> str:
     """A short, status-column-sized excerpt of a friend's stderr -- not the
     whole capture, which lives in `round-1/<friend>.err` (see
     commands.run.cmd_run). Takes the LAST non-empty lines: the actionable

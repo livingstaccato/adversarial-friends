@@ -2,13 +2,22 @@
 
 from typing import Any
 
+from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail
 from ..errors import UsageError
 from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..verdicts import CONTESTED, INCOMPLETE, TERMINAL_STATES, UNPROVEN
 
 _SUCCESS_STATUSES = frozenset({"ok", "ok [orphans suspected]"})
 _OPTIONAL_STRINGS = frozenset(
-    {"transport", "declared_scope", "scope", "external_tool_policy", "external_tools"}
+    {
+        "transport",
+        "declared_scope",
+        "scope",
+        "external_tool_policy",
+        "external_tools",
+        "diagnostics",
+        "diagnostics_path",
+    }
 )
 _OPTIONAL_BOOLS = frozenset({"write_protected", "readonly", "os_confined"})
 _OPTIONAL_STRING_LISTS = frozenset({"external_tool_sources", "deny_external_tools_argv"})
@@ -17,6 +26,30 @@ _CLAIM_STATES = TERMINAL_STATES | {CONTESTED, UNPROVEN, INCOMPLETE}
 
 def _friend_error(index: int, detail: str) -> UsageError:
     return UsageError(f"cannot resume: saved friends[{index}] {detail}")
+
+
+def _success_status(status: str) -> bool:
+    return status in _SUCCESS_STATUSES or status.startswith("ok (diagnostics: ")
+
+
+def _validate_diagnostics(index: int, row: dict[str, Any], status: str) -> None:
+    if "diagnostics" not in row and "diagnostics_path" not in row:
+        if status.startswith("ok (diagnostics: "):
+            raise _friend_error(index, "status has no bounded diagnostic summary fields")
+        return
+    diagnostics = row.get("diagnostics")
+    path = row.get("diagnostics_path")
+    if type(diagnostics) is not str or len(diagnostics) > STDERR_TAIL_CHARS:
+        raise _friend_error(index, "diagnostics must be a bounded string")
+    if diagnostics and _stderr_tail(diagnostics) != diagnostics:
+        raise _friend_error(index, "diagnostics is not a sanitized summary")
+    if status.startswith("ok (diagnostics: ") and not diagnostics:
+        raise _friend_error(index, "status has no bounded diagnostic summary")
+    expected_path = f"round-{row['round']}/{row['name']}.err"
+    if type(path) is not str or path != expected_path:
+        raise _friend_error(index, "diagnostics_path does not match the friend capture")
+    if diagnostics and (diagnostics not in status or path not in status):
+        raise _friend_error(index, "status disagrees with its diagnostic summary")
 
 
 def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[str, Any]]:
@@ -38,8 +71,9 @@ def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[st
             raise _friend_error(index, "round must be a positive integer")
         status = row.get("status")
         if type(status) is not str or not (
-            status in _SUCCESS_STATUSES
+            _success_status(status)
             or (status.startswith("failed: ") and len(status) > len("failed: "))
+            or (status.startswith("skipped: ") and len(status) > len("skipped: "))
         ):
             raise _friend_error(index, "status is not a recognized friend result")
         for field in ("model", "effort"):
@@ -63,6 +97,7 @@ def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[st
             raise _friend_error(index, "has ambiguous write-protection fields")
         if "declared_scope" in row and "scope" in row and row["declared_scope"] != row["scope"]:
             raise _friend_error(index, "has ambiguous scope fields")
+        _validate_diagnostics(index, row, status)
         normalized.append(row)
     return normalized
 
@@ -87,7 +122,7 @@ def legacy_successful_friend_ids(rows: list[dict[str, Any]], critique_round: int
         if name not in status_by_name:
             ordered_names.append(name)
         status_by_name[name] = status
-    return [name for name in ordered_names if status_by_name[name] in _SUCCESS_STATUSES]
+    return [name for name in ordered_names if _success_status(status_by_name[name])]
 
 
 def normalize_resume_report_state(meta: dict[str, Any]) -> dict[str, object]:

@@ -12,9 +12,10 @@ and returns a SpawnResult per friend; whether that prompt held a critique
 contract or a verdict contract is the caller's business.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
 import contextlib
+from dataclasses import dataclass
 from pathlib import Path
 import tempfile
 import threading
@@ -34,6 +35,54 @@ from .runstore import RunStore
 from .spawn import SpawnResult
 
 RoundResult = tuple[FriendSpec, Capability, SpawnResult]
+
+
+@dataclass(frozen=True)
+class SkippedFriend:
+    spec: FriendSpec
+    reason: str
+
+
+def partition_dispatchable(
+    specs: Sequence[FriendSpec], tracker: RepeatTracker | None
+) -> tuple[list[FriendSpec], list[SkippedFriend]]:
+    """Separate friends that may run from repeat-disabled audit events."""
+    if tracker is None:
+        return list(specs), []
+    ready: list[FriendSpec] = []
+    skipped: list[SkippedFriend] = []
+    for spec in specs:
+        if tracker.is_disabled(spec.name):
+            skipped.append(SkippedFriend(spec, _stderr_tail(tracker.note(spec.name))))
+        else:
+            ready.append(spec)
+    return ready, skipped
+
+
+def persist_skip(store: RunStore, round_no: int, skipped: SkippedFriend) -> dict[str, Any]:
+    """Persist one deliberate non-dispatch as a first-class audit row."""
+    _, _, meta_path = store.friend_paths(round_no, skipped.spec.name)
+    meta_path.write_text(
+        f"status=skipped\nreason={skipped.reason}\n",
+        encoding="utf-8",
+    )
+    return {
+        "name": skipped.spec.name,
+        "model": skipped.spec.model,
+        "effort": skipped.spec.effort,
+        "transport": "not-dispatched",
+        "write_protected": False,
+        "declared_scope": skipped.spec.scope,
+        "os_confined": False,
+        "external_tools": "not-dispatched",
+        "external_tool_policy": "not-dispatched",
+        "external_tool_sources": [],
+        "deny_external_tools_argv": [],
+        "readonly": False,
+        "scope": skipped.spec.scope,
+        "round": round_no,
+        "status": f"skipped: {skipped.reason}",
+    }
 
 
 def _outcome_word(outcome: SpawnResult, contract: PayloadContract) -> str:
@@ -106,7 +155,6 @@ def dispatch_round(
     contract: PayloadContract = CLAIM_CONTRACT,
     allow_unsandboxed: bool = False,
     tracker: RepeatTracker | None = None,
-    downgrades: list[str] | None = None,
     keep: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
@@ -147,19 +195,6 @@ def dispatch_round(
     `round_no` selects which round directory this round's isolation belongs
     to conceptually, but no file is written here -- see persist_result.
     """
-    # §14/§7.2. Both rules live here because this is the one place every
-    # round type dispatches through -- a critique round and a judging round
-    # would otherwise need separate, drifting copies.
-    if tracker is not None:
-        skipped = [s for s in specs if tracker.is_disabled(s.name)]
-        for spec in skipped:
-            note = tracker.note(spec.name)
-            if downgrades is not None and note not in downgrades:
-                downgrades.append(note)
-        specs = [s for s in specs if not tracker.is_disabled(s.name)]
-        if not specs:
-            return [], None
-
     report = reporter if reporter is not None else disabled()
     results: list[RoundResult] = []
     # §12.4: isolation is torn down at run end unless --keep. A
@@ -241,7 +276,7 @@ def dispatch_round(
             workers = max(1, min(max_concurrency, len(dispatch_specs)))
             # Announced here rather than on entry: the friends named are the
             # ones that actually got an isolation directory, and a repeat-
-            # disabled friend has already been filtered out above. A header
+            # disabled friend has already been partitioned by the caller. A header
             # listing friends that are not going to run would be the first
             # thing a reader had to learn to discount.
             report.round_started(round_no, kind, [s.name for s in dispatch_specs])
@@ -352,12 +387,13 @@ def persist_result(
     err_path = store.friend_err_path(round_no, spec.name)
     err_path.write_text(outcome.stderr, encoding="utf-8")
 
+    diagnostics = _stderr_tail(outcome.stderr) if outcome.stderr.strip() else ""
+    diagnostics_path = f"round-{round_no}/{spec.name}.err"
     status = "ok" if outcome.failure_reason is None else f"failed: {outcome.failure_reason}"
-    if outcome.failure_reason is not None and outcome.stderr.strip():
-        status += (
-            f" (stderr: {_stderr_tail(outcome.stderr)}; "
-            f"full text in round-{round_no}/{spec.name}.err)"
-        )
+    if outcome.failure_reason is None and diagnostics:
+        status += f" (diagnostics: {diagnostics}; full text in {diagnostics_path})"
+    elif outcome.failure_reason is not None and diagnostics:
+        status += f" (stderr: {diagnostics}; full text in {diagnostics_path})"
     if outcome.orphans_suspected:
         # A leaked descendant must not look identical to a clean run --
         # surfaced in the same status column readers already check for
@@ -380,4 +416,6 @@ def persist_result(
         "scope": spec.scope,
         "round": round_no,
         "status": status,
+        "diagnostics": diagnostics,
+        "diagnostics_path": diagnostics_path,
     }

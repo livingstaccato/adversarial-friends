@@ -142,9 +142,11 @@ def test_terminal_gate_report_names_persisted_decision_and_ordered_blockers():
             gate_blocking_claims=["c-0002@1", "c-0001@1"],
         ),
     )
-    assert "### Gate" in out
+    assert "## Gate decision" in out
     assert "Decision: `blocked`" in out
     assert out.index("c-0002@1") < out.index("c-0001@1")
+    gate = out.split("## Gate decision", 1)[1].split("## Friends", 1)[0]
+    assert "Stop reason: `gate-blocked`" in gate
 
 
 def test_terminal_clear_gate_report_explicitly_names_empty_blockers():
@@ -163,6 +165,60 @@ def test_terminal_clear_gate_report_explicitly_names_empty_blockers():
     )
     assert "Decision: `clear`" in out
     assert "Blocking claims: _(none)_" in out
+
+
+def test_gate_report_names_ceiling_and_partial_evidence_caveat():
+    out = render(
+        [],
+        [],
+        meta(
+            mode="gate",
+            lifecycle_state="terminal",
+            stop_reason="max-calls",
+            exit_code=11,
+            converged=False,
+            gate_decision="blocked",
+            gate_blocking_claims=["c-0002@1"],
+            ceiling_hit="max-calls",
+            incomplete=True,
+        ),
+    )
+
+    gate = out.split("## Gate decision", 1)[1].split("## Friends", 1)[0]
+    assert "max-calls" in gate
+    assert "partial evidence" in gate.lower()
+
+
+def test_read_exposed_names_are_stably_deduplicated():
+    repeated = {
+        "name": "claude-security",
+        "model": None,
+        "effort": None,
+        "transport": "exec",
+        "write_protected": True,
+        "declared_scope": "repo",
+        "os_confined": False,
+        "status": "ok",
+    }
+    out = render([], [], meta(friends=[dict(repeated, round=1), dict(repeated, round=2)]))
+    sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
+    assert sentence.count("claude-security") == 1
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        ("deny", "denied"),
+        ("allow", "explicitly-allowed"),
+        (None, "legacy-unknown"),
+    ],
+)
+def test_external_tool_authority_is_distinct_from_filesystem_confinement(policy, expected):
+    values = {} if policy is None else {"external_tool_policy": policy}
+    out = render([], [], meta(**values))
+    section = out.split("## External tool authority", 1)[1].split("## Friends", 1)[0]
+    assert f"Status: `{expected}`" in section
+    assert "filesystem" not in section.lower()
 
 
 def test_halt_report_names_the_nonterminal_waiting_state():
