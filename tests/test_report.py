@@ -307,7 +307,7 @@ def test_hostile_friend_status_cannot_create_active_links_or_inline_code():
                 "effort": None,
                 "round": 1,
                 "status": (
-                    "failed: `code` [click](javascript:alert(1)) "
+                    "failed: \x1b[31m`code`\x1b[0m bad\bstatus [click](javascript:alert(1)) "
                     "https://bad.test/ www.bad.test/path"
                 ),
             }
@@ -321,6 +321,7 @@ def test_hostile_friend_status_cannot_create_active_links_or_inline_code():
     assert "https://" not in friend_line
     assert "www.bad.test" not in friend_line
     assert "`code`" not in friend_line
+    assert "\x1b" not in friend_line and "\b" not in friend_line
 
 
 def test_unknown_severity_does_not_crash_and_is_shown():

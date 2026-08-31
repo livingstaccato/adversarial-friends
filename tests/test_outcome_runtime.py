@@ -12,8 +12,11 @@ from adversarial_friends.ceilings import Budget
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands import run as run_command, runmeta
 from adversarial_friends.commands.critique import CritiqueOutcome
+from adversarial_friends.commands.crossexam import CrossexamOutcome
+from adversarial_friends.commands.resume import ResumedRun, ResumedStep
 from adversarial_friends.errors import UsageError
 from adversarial_friends.failures import RepeatTracker
+from adversarial_friends.orchestrator import NeedsOrchestrator
 from adversarial_friends.outcomes import RunOutcome, terminal_outcome
 from adversarial_friends.runstore import RunStore
 
@@ -134,6 +137,82 @@ def test_mid_dispatch_stop_terminalizes_after_preserving_partial_friend_rows(mon
     assert meta["stop_reason"] == "runtime-error"
     assert meta["lifecycle_state"] == "terminal"
     assert [row["name"] for row in meta["friends"]] == ["fake-good-0"]
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [UsageError("resumed dispatch refused"), KeyboardInterrupt("resumed dispatch interrupted")],
+    ids=("af-error", "interruption"),
+)
+def test_resumed_judging_dispatch_stop_terminalizes_with_partial_evidence(
+    monkeypatch, tmp_path, raised
+):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+    out = tmp_path / "runs"
+    halted_args = build_parser().parse_args(
+        [
+            "run",
+            str(artifact),
+            "--mode",
+            "crossexam",
+            "--friend",
+            "fake:judge_uphold_a",
+            "--friend",
+            "fake:judge_uphold_b",
+            "--merge",
+            "orchestrator",
+            "--out",
+            str(out),
+        ]
+    )
+    with pytest.raises(NeedsOrchestrator):
+        run_command.cmd_run(halted_args)
+    run_dir = next(out.iterdir())
+    request_path = run_dir / "round-1" / "REQUEST.json"
+    response = json.loads(request_path.read_text(encoding="utf-8"))
+    response["merges"] = []
+    (request_path.parent / "RESPONSE.json").write_text(json.dumps(response), encoding="utf-8")
+
+    def partial_resume(args, _store, review, specs, *_args, **_kwargs):
+        row = {
+            "name": specs[0].name,
+            "model": specs[0].model,
+            "effort": specs[0].effort,
+            "round": 2,
+            "status": "failed: resumed dispatch stopped",
+        }
+        cross = CrossexamOutcome(
+            claims=list(review.claims),
+            friends_meta=[row],
+            rounds_run=2,
+            incomplete=True,
+            dispatch_error=raised,
+        )
+        resumed = ResumedRun(
+            claims=list(review.claims),
+            friends_meta=[*args._resume_meta["friends"], row],
+            cross=cross,
+        )
+        return ResumedStep(resumed=resumed, streak=0, done=True)
+
+    monkeypatch.setattr(run_command, "resume_iteration", partial_resume)
+    resume_args = build_parser().parse_args(["run", "--resume", run_dir.name, "--out", str(out)])
+
+    assert run_command.cmd_run(resume_args) == 1
+
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["stop_reason"] == "runtime-error"
+    assert meta["exit_code"] == 1
+    assert meta["friends"][-1]["status"] == "failed: resumed dispatch stopped"
+
+
+def test_signal_interruption_precedes_a_runtime_dispatch_error():
+    got = _outcome(runtime_error=True, abort_signum=2)
+
+    assert got.stop_reason == "interrupted"
+    assert got.exit_code == 130
 
 
 def test_terminal_persistence_failure_does_not_hide_the_original_runtime_error(

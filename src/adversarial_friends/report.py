@@ -31,6 +31,7 @@ from collections import Counter
 import re
 from typing import Any
 
+from .dispatch import _strip_terminal_controls
 from .ledger import Claim, Verdict
 from .reviewstate import ReviewState
 from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
@@ -105,7 +106,7 @@ def _escape_cell(value: object) -> str:
 
 def _escape_status_cell(value: object) -> str:
     """Defense in depth for a status rendered without resume validation."""
-    text = _escape_cell(value).replace("`", "&#96;")
+    text = _escape_cell(_strip_terminal_controls(str(value))).replace("`", "&#96;")
     text = text.replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*)://", r"\1: //", text)
     text = re.sub(r"(?i)\bwww\.", "www .", text)

@@ -117,12 +117,26 @@ _INLINE_MARKDOWN_STRIP = str.maketrans("", "", "`*_[]<>~")
 _AUTOLINK_SCHEME_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
 _AUTOLINK_WWW_RE = re.compile(r"(?i)\bwww\.")
 _ACTIVE_URI_SCHEME_RE = re.compile(r"(?i)\b(javascript|vbscript|data):")
+_ANSI_ESCAPE_RE = re.compile(
+    r"(?:\x1b\]|\x9d).*?(?:\x07|\x1b\\|\x9c)"
+    r"|(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"
+    r"|\x1b[@-_]",
+    re.DOTALL,
+)
+# CR/LF remain until splitlines chooses the last useful diagnostics; every
+# other C0/C1 control becomes inert spacing rather than a terminal action.
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 
 def _defang_autolinks(text: str) -> str:
     text = _AUTOLINK_SCHEME_RE.sub(r"\1: //", text)
     text = _AUTOLINK_WWW_RE.sub("www .", text)
     return _ACTIVE_URI_SCHEME_RE.sub(r"\1 :", text)
+
+
+def _strip_terminal_controls(text: str) -> str:
+    """Remove ANSI escapes and neutralize remaining C0/C1 terminal controls."""
+    return _TERMINAL_CONTROL_RE.sub(" ", _ANSI_ESCAPE_RE.sub("", text))
 
 
 def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
@@ -184,7 +198,8 @@ def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = STDERR_TAIL_C
     autolinks are defanged (see _INLINE_MARKDOWN_STRIP and
     _defang_autolinks above) before the length cap is applied, so
     `max_chars` bounds what a reader actually sees."""
-    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    cleaned = _strip_terminal_controls(stderr)
+    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
     tail = " | ".join(lines[-max_lines:])
     tail = _defang_autolinks(tail.translate(_INLINE_MARKDOWN_STRIP))
     if len(tail) > max_chars:

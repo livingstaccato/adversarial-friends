@@ -606,6 +606,36 @@ def test_checkpoint_accepts_audited_success_and_skip_rows(tmp_path):
     assert legacy_successful_friend_ids(normalized, 1) == ["friend-ops-0"]
 
 
+def test_checkpoint_accepts_exact_safe_legacy_failure_with_inline_stderr_reference():
+    diagnostics = "x" * 200
+    row = {
+        "name": "friend-ops-0",
+        "model": None,
+        "effort": None,
+        "round": 1,
+        "status": (
+            f"failed: exit 17 (stderr: {diagnostics}; full text in round-1/friend-ops-0.err)"
+        ),
+    }
+
+    assert normalize_friend_rows([row], {"friend-ops-0"}) == [row]
+
+
+def test_legacy_failure_shape_does_not_legalize_hostile_stripped_current_status():
+    row = {
+        "name": "friend-ops-0",
+        "model": None,
+        "effort": None,
+        "round": 1,
+        "status": (
+            "failed: [click](javascript:bad) (stderr: safe; full text in round-1/friend-ops-0.err)"
+        ),
+    }
+
+    with pytest.raises(UsageError, match="failure reason"):
+        normalize_friend_rows([row], {"friend-ops-0"})
+
+
 def test_checkpoint_refuses_a_diagnostic_status_without_bounded_summary_fields():
     row = {
         "name": "friend-ops-0",
@@ -681,3 +711,24 @@ def test_checkpoint_rejects_hostile_failure_status_when_diagnostic_fields_are_st
 
     with pytest.raises(UsageError, match="failure reason"):
         normalize_friend_rows([row], {"friend-ops-0"})
+
+
+def test_stderr_summary_strips_ansi_and_terminal_controls_before_persistence(tmp_path):
+    store = RunStore(tmp_path, "run-terminal-controls")
+    raw = "\x1b[31mERROR\x1b[0m before\bafter \x00nul \x9b32mgreen\x9b0m"
+
+    row = persist_result(
+        store,
+        1,
+        _spec(),
+        Capability(False, True, "none"),
+        _success(raw),
+        "exec",
+        ExternalToolPolicy.DENY,
+    )
+
+    summary = row["diagnostics"]
+    assert "ERROR" in summary and "green" in summary
+    assert "\x1b" not in summary and "\x9b" not in summary
+    assert "\b" not in summary and "\x00" not in summary
+    assert store.friend_err_path(1, "friend-ops-0").read_text() == raw

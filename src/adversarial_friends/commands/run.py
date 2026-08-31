@@ -66,6 +66,11 @@ def _read_artifact_text(path: Path) -> str:
         raise UsageError(f"cannot read artifact {path}: {exc}") from exc
 
 
+def _dispatch_error_detail(error: BaseException) -> str:
+    """One bounded representation for fresh and resumed dispatch stops."""
+    return f"{type(error).__name__}: {failure_summary(str(error))}"
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     args, artifact = validate_run_args(args)
     resume_dir = getattr(args, "_resume_dir", None)
@@ -416,6 +421,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                     iterations_run = iteration
                     rounds_reached = max(rounds_reached, base_round)
                     streak = step.streak
+                    if resumed.cross is not None and resumed.cross.dispatch_error is not None:
+                        dispatch_error = _dispatch_error_detail(resumed.cross.dispatch_error)
+                        break
                     if resumed.cross is not None and resumed.cross.auth_abort is not None:
                         auth_abort = resumed.cross.auth_abort
                         break
@@ -478,10 +486,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 halted_failed = critique.any_failed or not critique.any_success
 
                 if critique.dispatch_error is not None:
-                    dispatch_error = (
-                        f"{type(critique.dispatch_error).__name__}: "
-                        f"{failure_summary(str(critique.dispatch_error))}"
-                    )
+                    dispatch_error = _dispatch_error_detail(critique.dispatch_error)
                     break
 
                 if critique.auth_abort is not None:
@@ -544,10 +549,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     friends_meta.extend(cross.friends_meta)
                     downgrades.extend(cross.downgrades)
                     if cross.dispatch_error is not None:
-                        dispatch_error = (
-                            f"{type(cross.dispatch_error).__name__}: "
-                            f"{failure_summary(str(cross.dispatch_error))}"
-                        )
+                        dispatch_error = _dispatch_error_detail(cross.dispatch_error)
                         break
                     if cross.auth_abort is not None:
                         auth_abort = cross.auth_abort

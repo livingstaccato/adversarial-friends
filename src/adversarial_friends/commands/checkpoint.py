@@ -50,7 +50,26 @@ def _validate_status(index: int, row: dict[str, Any], status: str) -> None:
         if body == "ok":
             return
         if body.startswith("failed: "):
-            reason = body[len("failed: ") :]
+            payload = body[len("failed: ") :]
+            legacy_marker = " (stderr: "
+            legacy_suffix = f"; full text in round-{row['round']}/{row['name']}.err)"
+            if legacy_marker in payload:
+                before_suffix, separator, trailing = payload.rpartition(legacy_suffix)
+                if not separator or trailing:
+                    raise _friend_error(index, "legacy diagnostic reference is malformed")
+                reason, marker, legacy_diagnostics = before_suffix.partition(legacy_marker)
+                if not marker or not reason or failure_summary(reason) != reason:
+                    raise _friend_error(index, "failure reason is not a bounded sanitized summary")
+                if (
+                    not legacy_diagnostics
+                    or len(legacy_diagnostics) > STDERR_TAIL_CHARS
+                    or _stderr_tail(legacy_diagnostics) != legacy_diagnostics
+                ):
+                    raise _friend_error(
+                        index, "legacy diagnostics is not a bounded sanitized summary"
+                    )
+                return
+            reason = payload
             if not reason or failure_summary(reason) != reason:
                 raise _friend_error(index, "failure reason is not a bounded sanitized summary")
             return
