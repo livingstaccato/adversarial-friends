@@ -367,6 +367,7 @@ def _normalized_checkpoint(
     meta: dict[str, Any],
     *,
     roster_names: set[str],
+    max_calls: int | None,
     max_rounds: object,
     require_friends: object,
 ) -> dict[str, Any]:
@@ -375,6 +376,8 @@ def _normalized_checkpoint(
     attempted_calls = _checkpoint_count(meta, "attempted_calls", spent_calls)
     if attempted_calls != spent_calls:
         raise UsageError("cannot resume: saved attempted_calls must equal saved spent_calls")
+    if max_calls is not None and spent_calls > max_calls:
+        raise UsageError("cannot resume: saved spent_calls exceeds saved max_calls")
     iterations_run = _checkpoint_count(meta, "iterations_run", 0)
     rounds_run = _checkpoint_count(meta, "rounds_run", 0)
     dry_streak = _checkpoint_count(meta, "dry_streak", 0)
@@ -477,6 +480,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     meta = _normalized_checkpoint(
         meta,
         roster_names={entry["name"] for entry in roster_entries},
+        max_calls=saved.get("max_calls"),
         max_rounds=saved.get("max_rounds", 1),
         require_friends=saved.get("require_friends"),
     )
