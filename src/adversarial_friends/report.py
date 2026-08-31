@@ -108,6 +108,7 @@ def _escape_status_cell(value: object) -> str:
     text = _escape_cell(value).replace("`", "&#96;")
     text = text.replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*)://", r"\1: //", text)
+    text = re.sub(r"(?i)\bwww\.", "www .", text)
     return re.sub(r"(?i)\b(javascript|vbscript|data):", r"\1 :", text)
 
 

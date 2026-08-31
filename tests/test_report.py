@@ -306,7 +306,10 @@ def test_hostile_friend_status_cannot_create_active_links_or_inline_code():
                 "model": None,
                 "effort": None,
                 "round": 1,
-                "status": "failed: `code` [click](javascript:alert(1)) https://bad.test/",
+                "status": (
+                    "failed: `code` [click](javascript:alert(1)) "
+                    "https://bad.test/ www.bad.test/path"
+                ),
             }
         ]
     )
@@ -316,6 +319,7 @@ def test_hostile_friend_status_cannot_create_active_links_or_inline_code():
     friend_line = next(ln for ln in out.splitlines() if ln.startswith("| friend-a"))
     assert "javascript:" not in friend_line
     assert "https://" not in friend_line
+    assert "www.bad.test" not in friend_line
     assert "`code`" not in friend_line
 
 

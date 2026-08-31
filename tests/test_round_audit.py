@@ -367,6 +367,68 @@ def test_critique_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monk
     assert not store.friend_prompt_path(1, undispatched.name).exists()
 
 
+@pytest.mark.parametrize(
+    "raised",
+    [RuntimeError("submit failed"), KeyboardInterrupt("submit interrupted")],
+    ids=("failure", "interruption"),
+)
+def test_critique_recovers_actual_attempt_when_later_future_submission_stops(
+    monkeypatch, tmp_path, raised
+):
+    begun = threading.Event()
+    first = _spec("first-ops-0")
+    never_submitted = _spec("never-submitted-ops-0")
+    also_never_submitted = _spec("also-never-submitted-ops-0")
+    specs = [first, never_submitted, also_never_submitted]
+    store = RunStore(tmp_path, "run-submit-interruption")
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("# artifact\n")
+    real_submit = rounds_mod.concurrent.futures.ThreadPoolExecutor.submit
+    submit_count = 0
+
+    def interrupted_submit(pool, function, spec):
+        nonlocal submit_count
+        submit_count += 1
+        if submit_count == 2:
+            assert begun.wait(timeout=1)
+            raise raised
+        return real_submit(pool, function, spec)
+
+    def fake_dispatch(spec, *_args, **_kwargs):
+        begun.set()
+        return spec, Capability(False, True, "none"), _success()
+
+    monkeypatch.setattr(
+        rounds_mod.concurrent.futures.ThreadPoolExecutor,
+        "submit",
+        interrupted_submit,
+    )
+    monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
+
+    outcome, _claims, _counter = run_critique(
+        specs,
+        1,
+        [],
+        0,
+        artifact.read_text(),
+        store,
+        ReviewState(),
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        None,
+        None,
+        threading.Event(),
+    )
+
+    assert isinstance(outcome.dispatch_error, type(raised))
+    assert [row["name"] for row in outcome.friends_meta] == [first.name]
+    assert store.friend_prompt_path(1, first.name).exists()
+    assert not store.friend_prompt_path(1, never_submitted.name).exists()
+    assert not store.friend_prompt_path(1, also_never_submitted.name).exists()
+
+
 def test_judging_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monkeypatch, tmp_path):
     good = _spec("good-ops-0")
     refused = _spec("refused-ops-0")

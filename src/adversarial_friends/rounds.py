@@ -333,7 +333,11 @@ def dispatch_round(
             futures: list[concurrent.futures.Future[_DispatchAttempt | None]] = []
             round_error: BaseException | None = None
             try:
-                futures = [pool.submit(_run_one, spec) for spec in dispatch_specs]
+                # Append immediately after each successful submit. If the
+                # next submit itself is interrupted, already-started futures
+                # remain reachable for the recovery path below.
+                for spec in dispatch_specs:
+                    futures.append(pool.submit(_run_one, spec))
                 for future in futures:
                     attempt = future.result()
                     if attempt is None:
