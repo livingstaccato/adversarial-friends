@@ -1,8 +1,7 @@
 """run.json's shape, and rebuilding a halted run's configuration from it.
 
-Split out of commands/run.py when --resume arrived: cmd_run crossed the
-then-current line cap, and the metadata contract is a separate concern from
-the run loop that produces it.
+Split from commands/run.py because the metadata contract is separate from the
+run loop that produces it.
 
 **A resumed run restores deterministic configuration from the run directory.**
 Security grants are the deliberate exception: metadata records them but can never confer
@@ -19,7 +18,7 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..adapters import FriendSpec, validate_roster_uniqueness
+from ..adapters import FriendSpec, validate_roster_entry_uniqueness
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
@@ -42,6 +41,7 @@ from .checkpoint import (
     validate_lifecycle_and_snapshot,
 )
 from .exits import decide_exit
+from .resumevalidation import validate_saved_invocation
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
@@ -364,7 +364,13 @@ def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]
     return proposals, produced
 
 
-def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -> dict[str, Any]:
+def _normalized_checkpoint(
+    meta: dict[str, Any],
+    *,
+    roster_names: set[str],
+    max_rounds: object,
+    require_friends: object,
+) -> dict[str, Any]:
     normalized = dict(meta)
     spent_calls = _checkpoint_count(meta, "spent_calls", 0)
     attempted_calls = _checkpoint_count(meta, "attempted_calls", spent_calls)
@@ -382,9 +388,7 @@ def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -
         raise UsageError(
             "cannot resume: saved resume_iteration is inconsistent with iterations_run"
         )
-    roster_names = {spec.name for spec in restored._resume_roster}
     friends = normalize_friend_rows(meta.get("friends", []), roster_names)
-    max_rounds = getattr(restored, "max_rounds", 1)
     if type(max_rounds) is not int or max_rounds < 1:
         raise UsageError("cannot resume: saved max_rounds must be a positive integer")
     critique_round = (resume_iteration - 1) * max_rounds + 1
@@ -396,12 +400,12 @@ def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -
         raise UsageError(
             "cannot resume: saved successful_friend_ids contains a friend outside the roster"
         )
-    required = meta.get("required_friends", getattr(restored, "require_friends", None))
+    required = meta.get("required_friends", require_friends)
     if required is not None and (
         type(required) is not int or not 1 <= required <= MAX_JSON_SAFE_INTEGER
     ):
         raise UsageError("cannot resume: saved required_friends must be a positive integer or null")
-    if required != getattr(restored, "require_friends", None):
+    if required != require_friends:
         raise UsageError(
             "cannot resume: saved required_friends disagrees with the original invocation"
         )
@@ -457,9 +461,8 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     for name in _RESUMABLE_ARGS:
         if name in saved:
             _validate_saved_setting(name, saved[name])
-    artifact = saved.get("artifact")
-    if not isinstance(artifact, str):
-        raise UsageError("cannot resume: saved artifact must be a path string")
+    validate_saved_invocation(saved)
+    artifact = saved["artifact"]
     friends = saved.get("friend", [])
     if not isinstance(friends, list) or not all(isinstance(item, str) for item in friends):
         raise UsageError("cannot resume: saved friend flags must be a list of strings")
@@ -474,31 +477,28 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
                 "repeated exactly on the resume command line"
             )
     roster_entries = _validated_roster_entries(meta.get("roster", []))
+    validate_roster_entry_uniqueness(
+        roster_entries, judging=saved.get("mode", "report") != "report"
+    )
+    meta = _normalized_checkpoint(
+        meta,
+        roster_names={entry["name"] for entry in roster_entries},
+        max_rounds=saved.get("max_rounds", 1),
+        require_friends=saved.get("require_friends"),
+    )
     restored = argparse.Namespace(**vars(args))
     for name in _RESUMABLE_ARGS:
         if name in saved:
             setattr(restored, name, saved[name])
     restored.artifact = artifact
     restored.friend = friends
-    # The concrete roster the halted run resolved, not the inputs that
-    # produced it. §4.2 requires the same response to produce the same run,
-    # and re-resolving cannot promise that: a roster file can be edited and
-    # discovery re-reads whatever CLIs are installed now, so a resume could
-    # change quorum, or hand a claim's author a new identity under which it
-    # judges its own claim.
+    # Restore the frozen concrete roster; re-resolving its mutable inputs
+    # could change quorum or ledger identities.
     restored._resume_roster = [FriendSpec(**entry) for entry in roster_entries]
-    validate_roster_uniqueness(
-        restored._resume_roster,
-        judging=getattr(restored, "mode", "report") != "report",
-    )
-    meta = _normalized_checkpoint(meta, restored)
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta
-    # Where in a `loop` this run stopped. An orchestrator halt happens once
-    # per iteration, so a resumed loop has to re-enter the iteration it
-    # halted in and then carry on -- iteration 1 of 5 resuming as though it
-    # were the whole run would silently drop four.
+    # Resume the loop iteration that halted instead of restarting at one.
     restored._resume_iteration = meta["resume_iteration"]
     restored._resume_streak = meta["dry_streak"]
     restored._resume_attempted_calls = meta["attempted_calls"]

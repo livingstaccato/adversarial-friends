@@ -358,3 +358,22 @@ def test_contract_first_provider_and_authority_guidance_is_shipped():
 
     assert "max-loop-iterations" in joined
     assert re.search(r"\bexits? 11\b", joined)
+
+
+def test_modes_explains_resume_authority_exception_and_doctor_readiness():
+    modes = " ".join(
+        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
+        .read_text()
+        .lower()
+        .replace("`", "")
+        .split()
+    )
+
+    assert "no other non-authority configuration flags" in modes
+    assert "authority grants must be repeated exactly" in modes
+    assert "afriend run --resume <run-id> --allow-external-tools" in modes
+    assert "lists every known provider" in modes
+    assert "disabled providers are not probed" in modes
+    assert "exits 0 if at least one provider is ready" in modes
+    assert "exits 3 if no provider is ready" in modes
+    assert "no other flags" not in modes

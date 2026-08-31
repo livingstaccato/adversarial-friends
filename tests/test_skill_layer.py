@@ -56,6 +56,23 @@ def test_skill_explains_safe_provider_selection_and_authority():
         assert phrase in body, phrase
 
 
+def test_skill_doctor_contract_uses_provider_readiness_not_binary_presence():
+    body = " ".join((SKILL / "SKILL.md").read_text().lower().replace("`", "").split())
+
+    for phrase in (
+        "lists every known provider",
+        "disabled providers are not probed",
+        "ready",
+        "reachable-unconfigured",
+        "unavailable",
+        "policy-blocked",
+        "disabled",
+        "exits 0 if at least one provider is ready",
+        "exits 3 if no provider is ready",
+    ):
+        assert phrase in body, phrase
+
+
 def test_afriend_console_script_is_installed_and_runs():
     """Package-data misconfiguration (a missing adapter/lens in the wheel) is
     silent at import time -- it only surfaces when the installed entry point

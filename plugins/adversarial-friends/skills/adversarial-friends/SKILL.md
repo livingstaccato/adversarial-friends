@@ -159,10 +159,12 @@ Check what is available first when a run comes back thin:
 afriend doctor
 ```
 
-It prints, per friend: whether the binary was found, whether it can enforce a
-schema, whether it has a real read-only mode, and whether its effort level
-can be verified. A friend missing from that list is why your report is short.
-`doctor` exits `0` if at least one friend was found, `3` if none were.
+It lists every known provider and its effective readiness state: `ready`,
+`reachable-unconfigured`, `unavailable`, `disabled`, `host-excluded`, or
+`policy-blocked`. Disabled providers are not probed. For each provider it also
+reports whether schema and read-only enforcement are available and whether
+effort can be verified. `doctor` exits `0` if at least one provider is ready;
+it exits `3` if no provider is ready.
 
 ## Reading the results like a reviewer, not a stenographer
 

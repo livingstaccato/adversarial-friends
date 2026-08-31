@@ -156,6 +156,19 @@ def _run_dir(tmp_path: Path, meta: dict[str, object]) -> Path:
     return run_dir
 
 
+def _resume_meta() -> dict[str, object]:
+    meta = load_fixture("run_meta_v020_halted.json")
+    meta["invocation"].update(
+        {
+            "allow_unsandboxed_friend": False,
+            "i_accept_unsandboxed": False,
+            "unsafe_extra_args": None,
+            "pass_env": [],
+        }
+    )
+    return meta
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -182,20 +195,132 @@ def test_hostile_resume_shapes_are_rejected_before_namespace_construction(
 ):
     from adversarial_friends.commands import runmeta
 
-    meta = load_fixture("run_meta_v020_halted.json")
-    meta["invocation"].update(
-        {
-            "allow_unsandboxed_friend": False,
-            "i_accept_unsandboxed": False,
-            "unsafe_extra_args": None,
-            "pass_env": [],
-        }
-    )
+    meta = _resume_meta()
     meta[field] = value
     run_dir = _run_dir(tmp_path, meta)
 
     def namespace_must_not_be_constructed(**_kwargs):
         raise AssertionError("Namespace constructed before all saved shapes were validated")
+
+    monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
+    with pytest.raises(UsageError, match=field):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("changes", "error"),
+    [
+        ({"timeout": 0}, "timeout"),
+        ({"max_friends": 0}, "max-friends"),
+        ({"max_calls": -1}, "max-calls"),
+        ({"require_friends": 0}, "require-friends"),
+        ({"max_rounds": 0}, "max-rounds"),
+        ({"max_wall_clock": 0}, "max-wall-clock"),
+        ({"max_loop_iterations": 0}, "max-loop-iterations"),
+        ({"model": "--provider-flag"}, "model"),
+        ({"roster": ""}, "roster"),
+        ({"roster": "bad\x00path"}, "roster"),
+        ({"artifact": ""}, "artifact"),
+        ({"artifact": "bad\x00path"}, "artifact"),
+        ({"mode": "crossexam", "max_rounds": 1}, "judging round"),
+        (
+            {"enable_provider": ["codex"], "disable_provider": ["codex"]},
+            "both --enable-provider and --disable-provider",
+        ),
+    ],
+)
+def test_saved_invocation_semantics_are_rejected_before_namespace(
+    monkeypatch, tmp_path, changes, error
+):
+    from adversarial_friends.commands import runmeta
+
+    meta = _resume_meta()
+    meta["invocation"].update(changes)
+    run_dir = _run_dir(tmp_path, meta)
+
+    def namespace_must_not_be_constructed(**_kwargs):
+        raise AssertionError("Namespace constructed before invocation semantics were validated")
+
+    monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
+    with pytest.raises(UsageError, match=error):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("timeout", 0, "timeout"),
+        ("model", "--provider-flag", "model"),
+        ("name", "../escape", "friend name"),
+        ("cli", "", "required key: cli"),
+        ("lens", "", "required key: lens"),
+        ("scope", "outside", "scope"),
+    ],
+)
+def test_saved_roster_semantics_are_rejected_before_friendspec(
+    monkeypatch, tmp_path, field, value, error
+):
+    from adversarial_friends.commands import runmeta
+
+    meta = _resume_meta()
+    meta["roster"][0][field] = value
+    run_dir = _run_dir(tmp_path, meta)
+
+    def friendspec_must_not_be_constructed(**_kwargs):
+        raise AssertionError("FriendSpec constructed before roster semantics were validated")
+
+    monkeypatch.setattr(runmeta, "FriendSpec", friendspec_must_not_be_constructed)
+    with pytest.raises(UsageError, match=error):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize("mode", ["report", "crossexam"])
+def test_saved_roster_uniqueness_is_checked_before_friendspec(monkeypatch, tmp_path, mode):
+    from adversarial_friends.commands import runmeta
+
+    meta = _resume_meta()
+    first = meta["roster"][0]
+    second = dict(first)
+    if mode == "report":
+        second["lens"] = "security"
+    else:
+        second["name"] = "fake-ops-1"
+    meta["roster"] = [first, second]
+    meta["invocation"]["mode"] = mode
+    run_dir = _run_dir(tmp_path, meta)
+
+    def friendspec_must_not_be_constructed(**_kwargs):
+        raise AssertionError("FriendSpec constructed before roster uniqueness was validated")
+
+    monkeypatch.setattr(runmeta, "FriendSpec", friendspec_must_not_be_constructed)
+    with pytest.raises(UsageError, match=r"duplicate friend name|same friend"):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("spent_calls", -1),
+        ("attempted_calls", -1),
+        ("iterations_run", -1),
+        ("rounds_run", -1),
+        ("dry_streak", -1),
+        ("resume_iteration", 0),
+        ("active_elapsed_s", -1),
+        ("required_friends", 0),
+    ],
+)
+def test_checkpoint_numeric_semantics_are_rejected_before_namespace(
+    monkeypatch, tmp_path, field, value
+):
+    from adversarial_friends.commands import runmeta
+
+    meta = _resume_meta()
+    meta[field] = value
+    run_dir = _run_dir(tmp_path, meta)
+
+    def namespace_must_not_be_constructed(**_kwargs):
+        raise AssertionError("Namespace constructed before checkpoint semantics were validated")
 
     monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
     with pytest.raises(UsageError, match=field):

@@ -372,33 +372,53 @@ def friend_key(spec: FriendSpec) -> str:
     the order of `--friend` flags decided which, and so whether a gate
     cleared.
     """
-    key = f"{spec.cli}/{spec.lens}"
-    if spec.model:
-        key += f"@{spec.model}"
-    if spec.effort:
-        key += f"+{spec.effort}"
+    return _friend_key_values(spec.cli, spec.lens, spec.model, spec.effort)
+
+
+def _friend_key_values(cli: str, lens: str, model: str | None, effort: str | None) -> str:
+    key = f"{cli}/{lens}"
+    if model:
+        key += f"@{model}"
+    if effort:
+        key += f"+{effort}"
     return key
 
 
 def validate_roster_uniqueness(specs: list[FriendSpec], *, judging: bool) -> None:
     """Enforce the path-name and ledger-identity invariants of a final roster."""
+    rows = [(spec.name, spec.cli, spec.lens, spec.model, spec.effort) for spec in specs]
+    _validate_roster_identity_rows(rows, judging=judging)
+
+
+def validate_roster_entry_uniqueness(entries: list[dict[str, Any]], *, judging: bool) -> None:
+    """Enforce final-roster uniqueness before constructing ``FriendSpec`` objects."""
+    rows = [
+        (entry["name"], entry["cli"], entry["lens"], entry.get("model"), entry.get("effort"))
+        for entry in entries
+    ]
+    _validate_roster_identity_rows(rows, judging=judging)
+
+
+def _validate_roster_identity_rows(
+    rows: list[tuple[str, str, str, str | None, str | None]], *, judging: bool
+) -> None:
     names: set[str] = set()
     identities: dict[str, str] = {}
-    for spec in specs:
-        if spec.name in names:
+    for name, cli, lens, model, effort in rows:
+        if name in names:
             raise UsageError(
-                f"duplicate friend name {spec.name!r}: names must be unique because "
+                f"duplicate friend name {name!r}: names must be unique because "
                 "they become output paths"
             )
-        names.add(spec.name)
+        names.add(name)
         if not judging:
             continue
-        key = friend_key(spec)
+        key = _friend_key_values(cli, lens, model, effort)
         if key in identities:
             raise UsageError(
-                f"friends {identities[key]!r} and {spec.name!r} are the same friend -- "
-                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
-                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
+                f"friends {identities[key]!r} and {name!r} are the same friend -- "
+                f"cli {cli!r}, lens {lens!r}, model {model!r}, effort "
+                f"{effort!r} -- and would share one ledger identity ({key}); "
                 "give one a different lens, model, or effort"
             )
-        identities[key] = spec.name
+        identities[key] = name

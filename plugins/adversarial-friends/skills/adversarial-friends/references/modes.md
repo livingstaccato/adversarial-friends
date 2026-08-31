@@ -184,20 +184,25 @@ afriend run docs/design.md --mode crossexam --merge orchestrator
              "rationale": "same missing guard, different wording"}]}
 ```
 
-Then resume. **The resuming command line carries no other flags** — mode,
-ceilings, roster and artifact all come from the run directory, because the
-same response has to produce the same run:
+Then resume. **The resuming command line carries no other non-authority
+configuration flags** — mode, ceilings, roster and artifact all come from the
+run directory, because the same response has to produce the same run:
 
 ```bash
 afriend run --resume <run-id>
+# If and only if the halted invocation granted external tools:
+afriend run --resume <run-id> --allow-external-tools
 ```
 
 The saved snapshot is immutable input identity, not a hint. Resume verifies
 the frozen artifact hash and, for repository runs, the saved commit and tree;
 it refuses a missing or mismatched snapshot rather than reviewing current
-files. Invocation-local authority is the exception to restored configuration:
+files. Invocation-local authority is the exception to restored configuration.
 `--allow-external-tools`, unsandboxed execution, extra arguments, and passed
-environment variables must be repeated exactly on the current command line.
+environment variables are the exceptions. These authority grants must be
+repeated exactly on the current command line. For example, repeat
+`--allow-external-tools` only when the halted invocation recorded that grant;
+omitting it or newly adding it is refused.
 Historical 0.2.0 runs report external authority as `legacy-unknown` because
 their metadata did not record enough evidence to claim denial.
 
@@ -326,8 +331,10 @@ afriend providers clear-model ollama
 settings for one automatically discovered run. Disabled providers are not
 probed. Readiness is assessed before `--max-friends`: only `ready` providers
 consume capacity; `reachable-unconfigured`, `unavailable`, `disabled`,
-`host-excluded`, and `policy-blocked` candidates do not. Run `afriend doctor`
-to see each effective state, its policy source, and remediation.
+`host-excluded`, and `policy-blocked` candidates do not. `afriend doctor`
+lists every known provider with one of those readiness states, its policy
+source, and remediation. It exits `0` if at least one provider is ready and
+exits `3` if no provider is ready.
 
 External tools are denied by default. The denial is distinct from local
 read-only/OS confinement and covers provider-managed tools, plugins, apps,
@@ -383,10 +390,10 @@ every command in this build:
 
 | Code | Meaning | Reachable today via |
 |---|---|---|
-| `0` | success | a run that reached terminal states with nothing blocked, `afriend doctor` (at least one friend found) |
+| `0` | success | a run that reached terminal states with nothing blocked; `afriend doctor` when at least one provider is ready |
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
 | `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` without verifiably changed evidence |
-| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no friend binary is found |
+| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no provider is ready |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
 | `12` | below quorum | `--require-friends N` set, and fewer than `N` friends produced a usable answer this run |
