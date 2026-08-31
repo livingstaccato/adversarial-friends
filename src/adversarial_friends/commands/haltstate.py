@@ -27,6 +27,7 @@ from ..failures import RepeatTracker
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
+from ..snapshots import SnapshotIdentity, history_from_meta, record_snapshot
 from .crossexam import CrossexamOutcome
 
 
@@ -141,6 +142,12 @@ def write_halt(
         meta["claim_states"] = carry_over.states
         meta["amendment_notes"] = carry_over.notes
         meta["incomplete"] = carry_over.incomplete
+    if "snapshot" in meta:
+        # The nested identity is authoritative. Reassert the compatibility
+        # fields at every halt so old readers cannot observe a different
+        # commit than the resume path will verify.
+        snapshot = SnapshotIdentity.from_meta(meta)
+        record_snapshot(meta, snapshot, history_from_meta(meta, snapshot))
     downgrades = meta.setdefault("downgrades", [])
     review.copy_transition_warnings(downgrades)
     store.write_run_json(meta)

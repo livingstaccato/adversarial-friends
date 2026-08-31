@@ -28,6 +28,17 @@ def _run_json(tmp_path):
     return json.loads((_run_dir(tmp_path) / "run.json").read_text())
 
 
+def _write_run_json(tmp_path, meta):
+    (_run_dir(tmp_path) / "run.json").write_text(json.dumps(meta, indent=2, sort_keys=True))
+
+
+def _downgrade_meta_to_legacy(tmp_path):
+    meta = _run_json(tmp_path)
+    meta.pop("snapshot", None)
+    meta.pop("snapshot_history", None)
+    _write_run_json(tmp_path, meta)
+
+
 def _ledger(tmp_path):
     text = (_run_dir(tmp_path) / "claims.jsonl").read_text()
     return [json.loads(line) for line in text.splitlines() if line.strip()]
@@ -195,6 +206,118 @@ def test_a_resumed_crossexam_judges_in_later_rounds(tmp_path):
     _resume(tmp_path)
     assert (_run_dir(tmp_path) / "round-2").is_dir()
     assert [r for r in _ledger(tmp_path) if r["type"] == "verdict"]
+
+
+def test_resume_dispatches_the_verified_frozen_artifact_after_live_source_changes(tmp_path):
+    artifact = _artifact(tmp_path)
+    original = artifact.read_text()
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:judge_uphold_a",
+        "--friend",
+        "fake:judge_uphold_b",
+        "--merge",
+        "orchestrator",
+        "--keep",
+        mode="crossexam",
+    )
+    assert result.returncode == 10, result.stderr
+    artifact.write_text("# changed live source\n")
+    _respond(tmp_path, [])
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+    prompt = (_run_dir(tmp_path) / "round-2" / "fake-judge_uphold_a-0.prompt").read_text()
+    assert original in prompt
+    assert "changed live source" not in prompt
+    sandbox_copy = (
+        _run_dir(tmp_path) / "isolation" / "round-2" / "fake-judge_uphold_a-0" / artifact.name
+    )
+    assert sandbox_copy.read_text() == original
+
+
+def test_resume_does_not_require_the_live_source_artifact(tmp_path):
+    artifact = _artifact(tmp_path)
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:judge_uphold_a",
+        "--friend",
+        "fake:judge_uphold_b",
+        "--merge",
+        "orchestrator",
+        mode="crossexam",
+    )
+    assert result.returncode == 10, result.stderr
+    artifact.unlink()
+    _respond(tmp_path, [])
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+
+
+def test_legacy_migration_waits_until_malformed_ledger_validation_succeeds(tmp_path):
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    _respond(tmp_path, [])
+    _downgrade_meta_to_legacy(tmp_path)
+    with (_run_dir(tmp_path) / "claims.jsonl").open("a") as ledger:
+        ledger.write("{malformed ledger\n")
+    run_json = _run_dir(tmp_path) / "run.json"
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert run_json.read_bytes() == before
+
+
+def test_resume_frozen_read_failure_does_not_rewrite_run_json(tmp_path):
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    _respond(tmp_path, [])
+    frozen = next((_run_dir(tmp_path) / "artifact").iterdir())
+    frozen.unlink()
+    run_json = _run_dir(tmp_path) / "run.json"
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "frozen artifact" in resumed.stderr
+    assert run_json.read_bytes() == before
+
+
+def test_invalid_snapshot_history_does_not_rewrite_run_json(tmp_path):
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    _respond(tmp_path, [])
+    meta = _run_json(tmp_path)
+    meta["snapshot_history"] = None
+    _write_run_json(tmp_path, meta)
+    run_json = _run_dir(tmp_path) / "run.json"
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "snapshot_history" in resumed.stderr
+    assert run_json.read_bytes() == before
+
+
+def test_legacy_migration_waits_until_response_validation_succeeds(tmp_path):
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    _downgrade_meta_to_legacy(tmp_path)
+    (_run_dir(tmp_path) / "round-1" / "RESPONSE.json").write_text("{malformed response")
+    run_json = _run_dir(tmp_path) / "run.json"
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert run_json.read_bytes() == before
 
 
 def test_resuming_an_unknown_run_is_a_usage_error(tmp_path):

@@ -277,8 +277,13 @@ def test_a_revised_artifact_reopens_what_the_earlier_text_settled(tmp_path):
     )
     assert result.returncode in (0, 1), result.stderr
     assert "the guard was added." in artifact.read_text()
-    downgrades = _run_json(tmp_path)["downgrades"]
+    meta = _run_json(tmp_path)
+    downgrades = meta["downgrades"]
     assert any("the artifact changed before iteration" in d for d in downgrades), downgrades
+    history = meta["snapshot_history"]
+    assert len(history) == 2
+    assert history[1]["predecessor"] == (history[0]["commit"] or history[0]["artifact_hash"])
+    assert meta["snapshot"] == history[-1]
 
 
 def test_a_successor_deferred_to_the_next_iteration_says_so(tmp_path):

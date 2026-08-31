@@ -17,6 +17,8 @@ import contextlib
 import json
 from pathlib import Path
 
+import pytest
+
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Alias, Claim
 from adversarial_friends.merge import canonical_claims, next_claim_number
@@ -147,6 +149,45 @@ def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):
     assert meta["halted_round_dry"] is True
     assert meta["halted_round_failed"] is False
     assert meta["dry_streak"] == 1
+
+
+def test_write_halt_refuses_conflicting_snapshot_compatibility_keys(monkeypatch, tmp_path):
+    """A halt must not silently choose between conflicting authoritative and
+    compatibility identities."""
+    from adversarial_friends.commands import haltstate
+    from adversarial_friends.errors import UsageError
+    from adversarial_friends.runstore import RunStore
+    from adversarial_friends.snapshots import SnapshotIdentity
+
+    monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
+    store = RunStore(tmp_path, "run-snapshot")
+    store.lock()
+    identity = SnapshotIdentity(
+        None,
+        None,
+        None,
+        "artifact/spec.md",
+        "sha256:" + "0" * 64,
+    )
+    meta = {
+        "snapshot": identity.to_dict(),
+        "snapshot_history": [identity.to_dict()],
+        "repo_root": "/stale/repository",
+        "snapshot_sha": "f" * 40,
+    }
+
+    with pytest.raises(UsageError, match=r"snapshot.*conflicts.*repo_root"):
+        haltstate.write_halt(
+            argparse.Namespace(mode="report"),
+            store,
+            meta,
+            ReviewState(),
+            1,
+            0,
+            None,
+        )
+
+    assert not (store.run_dir / "run.json").exists()
 
 
 # --- c-0011: an adjudication response is applied once ----------------------

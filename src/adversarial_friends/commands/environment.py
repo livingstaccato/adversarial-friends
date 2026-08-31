@@ -17,9 +17,10 @@ import threading
 from types import FrameType
 from typing import Any
 
-from .. import isolation
+from ..adapters import FriendSpec
 from ..errors import UsageError
 from ..runstore import RunStore
+from ..snapshots import SnapshotIdentity
 
 # The type signal.signal() both accepts and returns, per typeshed: a handler
 # callable, a raw int (SIG_IGN/SIG_DFL's underlying value), or None.
@@ -54,6 +55,31 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
     if result.returncode != 0:
         return None
     return Path(result.stdout.strip()).resolve()
+
+
+def reconcile_snapshot_scope(
+    artifact: Path,
+    identity: SnapshotIdentity,
+    specs: list[FriendSpec],
+    downgrades: list[str],
+) -> tuple[Path | None, list[FriendSpec]]:
+    """Make dispatch scope agree with the identity that was actually captured.
+
+    The invocation path can appear to be in a repository while its final
+    symlink target is outside it. Snapshot creation correctly refuses to
+    claim a repository identity in that case; this is the corresponding
+    dispatch policy. It is also applied to loop successors, because a link
+    can be retargeted between iterations.
+    """
+    if identity.repo_root is not None:
+        return identity.repo_root, specs
+    note = (
+        f"{artifact.name} is not inside a git repository; every friend was "
+        "downgraded to doc scope (no repository to snapshot or read)."
+    )
+    if note not in downgrades:
+        downgrades.append(note)
+    return None, [dataclasses.replace(spec, scope="doc") for spec in specs]
 
 
 def install_abort_handlers(
@@ -122,8 +148,13 @@ class Revision:
     frozen: Path
     digest: str
     text: str
-    snapshot_sha: str | None
+    identity: SnapshotIdentity
     downgrade: str | None
+
+    @property
+    def snapshot_sha(self) -> str | None:
+        """Compatibility view for the dispatch APIs that still take a SHA."""
+        return self.identity.commit
 
 
 def freeze_revision(
@@ -133,8 +164,7 @@ def freeze_revision(
     digest: str,
     resuming: bool,
     last_digest: str | None,
-    repo_root: Path | None,
-    snapshot_sha: str | None,
+    identity: SnapshotIdentity,
     iteration: int,
 ) -> Revision:
     """Freeze what this iteration will review, and say if it changed.
@@ -161,15 +191,22 @@ def freeze_revision(
     if not resuming:
         frozen, digest = store.artifact_copy(artifact)
     text = frozen.read_text(encoding="utf-8")
-    if last_digest is None or digest == last_digest:
-        return Revision(frozen, digest, text, snapshot_sha, None)
-    if repo_root is not None:
-        snapshot_sha = isolation.snapshot_commit(repo_root)
+    comparison_digest = last_digest if last_digest is not None else identity.artifact_hash
+    if digest == comparison_digest:
+        return Revision(frozen, digest, text, identity, None)
+    predecessor = identity.commit or identity.artifact_hash
+    identity = SnapshotIdentity.create(
+        identity.repo_root,
+        frozen,
+        digest,
+        predecessor=predecessor,
+        source_artifact=artifact,
+    )
     return Revision(
         frozen,
         digest,
         text,
-        snapshot_sha,
+        identity,
         f"the artifact changed before iteration {iteration}; claims settled against "
         "the earlier text were re-opened and judged again, since a revision can "
         "decide them differently, and the repository was re-snapshotted so friends "

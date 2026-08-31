@@ -6,14 +6,12 @@ Split out of cli.py.
 
 import argparse
 import concurrent.futures
-import dataclasses
 from pathlib import Path
 import signal
 import time
 from typing import Any
 import uuid
 
-from .. import isolation
 from ..adapters import friend_key
 from ..ceilings import (
     Budget,
@@ -30,11 +28,23 @@ from ..orchestrator import (
 )
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
+from ..snapshots import (
+    SnapshotIdentity,
+    history_from_meta,
+    record_snapshot,
+    resume_frozen_artifact,
+    select_snapshot,
+)
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
 from .critique import run_critique
 from .crossexam import run_rounds
-from .environment import _resolve_repo_root, clock_offset, freeze_revision
+from .environment import (
+    _resolve_repo_root,
+    clock_offset,
+    freeze_revision,
+    reconcile_snapshot_scope,
+)
 from .haltstate import loop_position, write_halt
 from .resume import resume_iteration
 from .runmeta import JUDGING_MODES, _base_meta, finish_run, loop_is_done, validate_run_args
@@ -43,6 +53,8 @@ from .setup import prepare_run
 
 def cmd_run(args: argparse.Namespace) -> int:
     args, artifact = validate_run_args(args)
+    resume_dir = getattr(args, "_resume_dir", None)
+    resume_meta = getattr(args, "_resume_meta", None) if resume_dir is not None else None
     # Deliberately NOT resolved here: resolving would follow a symlinked
     # artifact to its target's own name, so a review of `link_spec.md ->
     # real_spec.md` would report and store the artifact as "real_spec.md"
@@ -66,14 +78,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     reporter = setup.reporter
     external_tool_policy = setup.external_tool_policy
     try:
-        repo_root = _resolve_repo_root(artifact)
-        if repo_root is None:
-            downgrades.append(
-                f"{artifact.name} is not inside a git repository; every friend was "
-                "downgraded to doc scope (no repository to snapshot or read)."
-            )
-            specs = [dataclasses.replace(s, scope="doc") for s in specs]
-
+        if resume_meta is not None:
+            # The recorded repository is part of the immutable identity. A
+            # resume must not silently follow a moved live artifact into a
+            # different repository and bless a replacement snapshot there.
+            repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
+        else:
+            repo_root = _resolve_repo_root(artifact)
         offset = clock_offset(downgrades)
 
         def now() -> float:
@@ -83,12 +94,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         # passed, so it must not be added to the start as well or it would
         # cancel out and the ceiling would never be reached.
         run_started = time.monotonic()
-        resume_dir = getattr(args, "_resume_dir", None)
         if resume_dir is not None:
             run_id = resume_dir.name
             store = RunStore(resume_dir.parent, run_id, resume=True)
-            frozen = next(iter((resume_dir / "artifact").iterdir()))
-            digest = getattr(args, "_resume_meta", {}).get("artifact_hash", "")
+            frozen = resume_frozen_artifact(resume_dir)
+            # Resume selection below takes the hash from the validated saved
+            # identity. This placeholder is never trusted or persisted.
+            digest = ""
         else:
             run_id = f"run-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
             store = RunStore(Path(args.out) if args.out else default_root(), run_id)
@@ -104,6 +116,29 @@ def cmd_run(args: argparse.Namespace) -> int:
         # a run.json write into that window against a directory another
         # resumer may be mid-write on.
         store.lock()
+        snapshot = select_snapshot(
+            repo_root,
+            frozen,
+            digest,
+            resume_meta,
+            source_artifact=artifact if resume_meta is None else None,
+        )
+        repo_root, specs = reconcile_snapshot_scope(artifact, snapshot, specs, downgrades)
+        digest = snapshot.artifact_hash
+        snapshot_history = (
+            history_from_meta(resume_meta, snapshot) if resume_meta is not None else [snapshot]
+        )
+        if resume_meta is not None:
+            # Legacy identities have no tree. Verification above derives it;
+            # keep that migration in memory until the normal halt/completion
+            # metadata write. A later read-only resume validation (ledger,
+            # response, roster, grants) may still refuse the run, and no
+            # refusal may rewrite the saved state it was asked to inspect.
+            migrated_meta = dict(resume_meta)
+            record_snapshot(migrated_meta, snapshot, snapshot_history)
+            if migrated_meta != resume_meta:
+                resume_meta = migrated_meta
+                args._resume_meta = migrated_meta
         review = ReviewState.replay(store.ledger.records())
         review.copy_transition_warnings(downgrades)
         schema_file = schema_path(store.run_dir)
@@ -119,20 +154,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         # check the runner can actually make: a `fixed` disposition naming an
         # unchanged location was accepted rather than refused.
         #
-        # Taken for `gate` regardless of scope, since that is the only mode
-        # whose resolutions need it. It is a commit object built from the
-        # index, with no worktree and no checkout, so the cost is small and
-        # confined to the mode that benefits.
-        snapshot_sha = None
-        # Taken whenever there is a repository, not only for repo-scope
-        # friends or `gate`. `afriend resolve` accepts any run directory and
-        # never reads the mode, so a doc-scope crossexam with no snapshot
-        # made every location `unverifiable` -- and an `unverifiable` check
-        # does not refuse a `fixed` disposition, so the ledger recorded a
-        # verified-looking fix for a file nobody had touched. The cost is a
-        # commit object built from the index: no worktree, no checkout.
-        if repo_root is not None:
-            snapshot_sha = isolation.snapshot_commit(repo_root)
+        # Fresh runs take it whenever a repository exists because `resolve`
+        # accepts every mode. Resumes reuse the verified saved commit above:
+        # process restart is not an input revision and must never mint one.
+        snapshot_sha = snapshot.commit
 
         def run_meta() -> dict[str, Any]:
             # Built the same way whether the run finishes or halts: a halted
@@ -144,8 +169,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 friends_meta,
                 downgrades,
                 specs,
-                repo_root,
-                snapshot_sha,
+                snapshot,
+                snapshot_history,
                 preset=resolved.preset,
                 roster_source=resolved.source,
                 env_withheld=env_withheld,
@@ -280,12 +305,19 @@ def cmd_run(args: argparse.Namespace) -> int:
                     digest,
                     resume_dir is not None,
                     last_digest,
-                    repo_root,
-                    snapshot_sha,
+                    snapshot,
                     iteration,
                 )
                 frozen, digest = revision.frozen, revision.digest
-                artifact_text, snapshot_sha = revision.text, revision.snapshot_sha
+                artifact_text = revision.text
+                if revision.identity != snapshot:
+                    snapshot = revision.identity
+                    snapshot_history.append(snapshot)
+                repo_root, specs = reconcile_snapshot_scope(artifact, snapshot, specs, downgrades)
+                _, round_specs = reconcile_snapshot_scope(
+                    artifact, snapshot, round_specs, downgrades
+                )
+                snapshot_sha = snapshot.commit
                 if revision.downgrade is not None:
                     downgrades.append(revision.downgrade)
                     carry_over = None
@@ -299,7 +331,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         round_specs,
                         registry,
                         fake_cmd,
-                        artifact,
+                        frozen,
                         artifact_text,
                         repo_root,
                         snapshot_sha,
@@ -356,7 +388,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     registry,
                     fake_cmd,
                     schema_file,
-                    artifact,
+                    frozen,
                     repo_root,
                     snapshot_sha,
                     abort_event,
@@ -416,7 +448,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         registry,
                         fake_cmd,
                         verdict_schema_path(store.run_dir),
-                        artifact,
+                        frozen,
                         artifact_text,
                         repo_root,
                         snapshot_sha,

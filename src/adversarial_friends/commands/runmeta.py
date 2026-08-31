@@ -25,6 +25,7 @@ from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
+from ..snapshots import SnapshotIdentity, record_snapshot
 from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import judges_for, loop_should_terminate
 from .exits import decide_exit
@@ -115,8 +116,8 @@ def _base_meta(
     friends_meta: list[dict[str, Any]],
     downgrades: list[str],
     specs: list[FriendSpec],
-    repo_root: Path | None = None,
-    snapshot_sha: str | None = None,
+    snapshot: SnapshotIdentity,
+    snapshot_history: list[SnapshotIdentity],
     preset: str = "inherit",
     roster_source: str | None = None,
     env_withheld: list[str] | None = None,
@@ -128,7 +129,7 @@ def _base_meta(
     same run. Invocation-local security grants are only audited here; resume
     validates them against an exact, explicit command-line re-assertion.
     """
-    return {
+    meta: dict[str, Any] = {
         "mode": args.mode,
         # The preset ACTUALLY used, not the flag: it defaults per mode (gate
         # defaults to thorough, §7), so printing the flag would report
@@ -139,12 +140,6 @@ def _base_meta(
         "artifact": artifact.name,
         "artifact_path": str(stable_artifact_path(artifact)),
         "artifact_hash": digest,
-        # Persisted so `afriend resolve` can verify a location against how
-        # this run first saw it (§6.4). Without them a resolution could only
-        # ever be `unverifiable`, since the snapshot commit exists but
-        # nothing would remember which one it was.
-        "repo_root": str(repo_root) if repo_root else None,
-        "snapshot_sha": snapshot_sha,
         "friends": friends_meta,
         "external_tool_policy": (
             "allow" if getattr(args, "allow_external_tools", False) else "deny"
@@ -165,6 +160,10 @@ def _base_meta(
         # they were protected would be the leak it exists to prevent.
         "env_withheld": env_withheld or [],
     }
+    # The nested form is authoritative. The final two fields written by
+    # record_snapshot remain for v0.2 readers such as `afriend resolve`.
+    record_snapshot(meta, snapshot, snapshot_history)
+    return meta
 
 
 def _resume_type_error(name: str, value: object) -> UsageError:
@@ -354,7 +353,7 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
     if not args.artifact:
         raise UsageError("an artifact path is required (or --resume RUN_ID)")
     artifact = Path(args.artifact)
-    if not artifact.is_file():
+    if not args.resume and not artifact.is_file():
         raise UsageError(f"artifact not found: {artifact}")
     if args.mode not in IMPLEMENTED_MODES:
         raise UsageError(

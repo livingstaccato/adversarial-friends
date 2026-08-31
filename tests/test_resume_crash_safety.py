@@ -23,16 +23,22 @@ leaves behind.
 
 import argparse
 import json
+from pathlib import Path
+import subprocess
 import threading
 
-from adversarial_friends import orchestrator
+import pytest
+
+from adversarial_friends import isolation, orchestrator
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands.resume import resume_round_one
+from adversarial_friends.errors import UsageError
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Alias, Claim, Resolution, Verdict
 from adversarial_friends.merge import canonical_claims
 from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.runstore import RunStore
+from adversarial_friends.snapshots import SnapshotIdentity
 
 _FINDING = {
     "severity": "high",
@@ -88,6 +94,10 @@ def _store(tmp_path, name):
     store = RunStore(tmp_path, name)
     store.lock()
     return store
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
 def _args(mode="crossexam"):
@@ -258,3 +268,41 @@ def test_a_clean_merge_retry_reports_no_earlier_attempt(tmp_path):
 
     assert [a.duplicate for a in resumed.aliases] == ["c-0002@1"]
     assert not any("already applied by an earlier" in d for d in resumed.downgrades)
+
+
+def test_missing_snapshot_refusal_leaves_all_resume_state_untouched(tmp_path):
+    """Snapshot verification precedes response application. If the saved
+    commit vanished, a retry must leave the audit response, ledger, and
+    metadata exactly as the operator supplied them."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    artifact = repo / "spec.md"
+    artifact.write_text("# contract\n")
+    store = _store(tmp_path, "run-snapshot-refusal")
+    frozen, digest = store.artifact_copy(artifact)
+    commit = isolation.snapshot_commit(repo)
+    meta = {
+        "repo_root": str(repo),
+        "snapshot_sha": commit,
+        "artifact_path": str(artifact),
+        "artifact_hash": digest,
+    }
+    store.write_run_json(meta)
+    round_dir = store.round_dir(1)
+    (round_dir / "RESPONSE.json").write_text('{"version": 1, "merges": []}')
+    before = {
+        "run": (store.run_dir / "run.json").read_bytes(),
+        "ledger": (store.run_dir / "claims.jsonl").read_bytes()
+        if (store.run_dir / "claims.jsonl").exists()
+        else b"",
+        "response": (round_dir / "RESPONSE.json").read_bytes(),
+    }
+
+    with pytest.raises(UsageError, match=r"saved snapshot.*missing"):
+        SnapshotIdentity.from_meta({**meta, "snapshot_sha": "0" * 40}).verify(frozen)
+
+    assert (store.run_dir / "run.json").read_bytes() == before["run"]
+    ledger = store.run_dir / "claims.jsonl"
+    assert (ledger.read_bytes() if ledger.exists() else b"") == before["ledger"]
+    assert (round_dir / "RESPONSE.json").read_bytes() == before["response"]

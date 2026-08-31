@@ -7,6 +7,7 @@ its siblings test_run_end_to_end_basics.py and
 test_run_end_to_end_lenses.py) share.
 """
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -111,6 +112,165 @@ def test_symlinked_artifact_is_reviewed_via_its_real_content(tmp_path):
     assert copied.read_text() == "# spec\nreal content behind a symlink\n"
 
 
+def _in_repo_symlink_to_outside(tmp_path):
+    repo = _git_repo(tmp_path / "repo")
+    (repo / "tracked.py").write_text("repository bytes\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# outside repository bytes\n")
+    link = repo / "spec.md"
+    link.symlink_to(outside)
+    return repo, link, outside
+
+
+@pytest.mark.parametrize("source_change", ["retarget", "remove"])
+def test_snapshot_refuses_if_symlink_target_changes_during_capture(
+    monkeypatch, tmp_path, source_change
+):
+    from adversarial_friends import isolation
+    from adversarial_friends.errors import UsageError
+    from adversarial_friends.snapshots import SnapshotIdentity
+
+    repo = _git_repo(tmp_path / "repo")
+    inside = repo / "inside.md"
+    inside.write_bytes(b"# stable frozen bytes\n")
+    outside = tmp_path / "outside.md"
+    outside.write_bytes(b"# outside bytes\n")
+    source = repo / "spec.md"
+    source.symlink_to(inside)
+    frozen = tmp_path / "frozen.md"
+    frozen.write_bytes(inside.read_bytes())
+    digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
+    real_snapshot = isolation.snapshot_commit
+
+    def change_source_after_snapshot(root):
+        commit = real_snapshot(root)
+        source.unlink()
+        if source_change == "retarget":
+            source.symlink_to(outside)
+        return commit
+
+    monkeypatch.setattr(isolation, "snapshot_commit", change_source_after_snapshot)
+    with pytest.raises(UsageError, match=r"repository artifact.*(changed|unavailable)"):
+        SnapshotIdentity.create(repo, frozen, digest, source_artifact=source)
+
+
+def test_in_repo_symlink_to_outside_downgrades_repo_scope_before_dispatch(tmp_path):
+    _repo, link, _outside = _in_repo_symlink_to_outside(tmp_path)
+
+    result = run_af(tmp_path, link, "--friend", "fake:cwd_probe:repo")
+
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["roster"][0]["scope"] == "doc"
+    assert meta["friends"][0]["declared_scope"] == "doc"
+    assert any("no repository to snapshot or read" in note for note in meta["downgrades"])
+
+
+def test_in_repo_symlink_to_outside_records_a_complete_no_repo_identity_for_doc_scope(
+    tmp_path,
+):
+    _repo, link, outside = _in_repo_symlink_to_outside(tmp_path)
+
+    result = run_af(tmp_path, link, "--friend", "fake:good")
+
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["snapshot"]["repo_root"] is None
+    assert meta["snapshot"]["commit"] is None
+    assert meta["snapshot"]["tree"] is None
+    assert meta["repo_root"] is None
+    assert meta["snapshot_sha"] is None
+    assert meta["artifact_hash"] == "sha256:" + hashlib.sha256(outside.read_bytes()).hexdigest()
+    assert meta["roster"][0]["scope"] == "doc"
+    assert any("no repository to snapshot or read" in note for note in meta["downgrades"])
+
+
+def test_in_repo_symlink_to_outside_reconciles_a_mixed_roster_consistently(tmp_path):
+    _repo, link, _outside = _in_repo_symlink_to_outside(tmp_path)
+
+    result = run_af(
+        tmp_path,
+        link,
+        "--friend",
+        "fake:cwd_probe:repo",
+        "--friend",
+        "fake:good",
+    )
+
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert {friend["declared_scope"] for friend in meta["friends"]} == {"doc"}
+    assert {spec["scope"] for spec in meta["roster"]} == {"doc"}
+    matching = [note for note in meta["downgrades"] if "no repository to snapshot or read" in note]
+    assert len(matching) == 1
+
+
+def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypatch, tmp_path):
+    from adversarial_friends.commands import run as run_module
+
+    repo = _git_repo(tmp_path / "repo")
+    inside = repo / "inside.md"
+    inside.write_text("# inside repository bytes\n")
+    link = repo / "spec.md"
+    link.symlink_to(inside)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# successor outside bytes\n")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    real_freeze = run_module.freeze_revision
+    retargeted = False
+
+    def retarget_then_freeze(*args, **kwargs):
+        nonlocal retargeted
+        if not retargeted:
+            link.unlink()
+            link.symlink_to(outside)
+            retargeted = True
+        return real_freeze(*args, **kwargs)
+
+    monkeypatch.setattr(run_module, "freeze_revision", retarget_then_freeze)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(link),
+            "--mode",
+            "loop",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_uphold_a:repo",
+            "--friend",
+            "fake:judge_uphold_b",
+            "--max-loop-iterations",
+            "1",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    first, successor = meta["snapshot_history"]
+    assert first["commit"] is not None
+    assert successor["predecessor"] == first["commit"]
+    assert successor["repo_root"] is None
+    assert successor["commit"] is None
+    assert successor["tree"] is None
+    assert meta["snapshot"] == successor
+    assert meta["repo_root"] is None
+    assert meta["snapshot_sha"] is None
+    assert {friend["declared_scope"] for friend in meta["friends"]} == {"doc"}
+    assert {spec["scope"] for spec in meta["roster"]} == {"doc"}
+    assert any("no repository to snapshot or read" in note for note in meta["downgrades"])
+
+
 def test_doc_scope_friend_actually_runs_inside_its_own_private_directory(tmp_path):
     """Direct, unambiguous proof that dispatch's `cwd` is the friend's own
     isolation directory -- not, say, Path.cwd() of the `afriend` process
@@ -132,6 +292,46 @@ def test_doc_scope_friend_actually_runs_inside_its_own_private_directory(tmp_pat
     assert reported_cwd.name == "fake-cwd_probe-0"  # == cwd_for[spec.name]'s basename
     assert reported_cwd != Path.cwd()
     assert not reported_cwd.exists()  # torn down once afriend run returned
+
+
+def test_fresh_dispatch_uses_the_frozen_copy_if_live_source_changes_after_freeze(
+    monkeypatch, tmp_path
+):
+    from adversarial_friends import cli
+    from adversarial_friends.commands import run as run_module
+
+    artifact = tmp_path / "spec.md"
+    original = "# immutable dispatch bytes\n"
+    artifact.write_text(original)
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    real_freeze = run_module.freeze_revision
+
+    def freeze_then_edit(*args, **kwargs):
+        revision = real_freeze(*args, **kwargs)
+        artifact.write_text("# changed after freeze\n")
+        return revision
+
+    monkeypatch.setattr(run_module, "freeze_revision", freeze_then_edit)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(artifact),
+            "--mode",
+            "report",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:good",
+            "--keep",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+
+    run_dir = next((tmp_path / "runs").iterdir())
+    sandbox_copy = run_dir / "isolation" / "round-1" / "fake-good-0" / artifact.name
+    assert sandbox_copy.read_text() == original
 
 
 def test_repo_scope_friend_gets_a_real_private_worktree(tmp_path):
