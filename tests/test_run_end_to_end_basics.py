@@ -107,23 +107,15 @@ def test_ollama_without_a_model_fails_with_the_fix_not_an_opaque_error(tmp_path)
     remedy. Supersedes the old "HTTP transport is not implemented" rejection:
     the transport ships now, but a model is still required.
 
-    Exit 0, not 2 -- this is one friend failing on a run that still completed
-    and wrote a report, which is the same shape as any other failed friend.
+    An explicit roster is operator intent, so a missing required model is a
+    preflight refusal rather than a silently dropped friend in a partial run.
     """
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
     result = run_af(tmp_path, artifact, "--friend", "ollama:ops", "--friend", "fake:good")
-    assert result.returncode == 0, result.stderr
-    runs = sorted((tmp_path / "runs").iterdir())
-    meta = json.loads((runs[0] / "run.json").read_text())
-    ollama = next(f for f in meta["friends"] if f["name"].startswith("ollama"))
-    ollama_status = ollama["status"]
-    assert "requires an explicit model" in ollama_status
-    assert ollama["transport"] == "http"
-    assert ollama["os_confined"] is False
-    # The working friend on the same run is unaffected.
-    fake_status = next(f["status"] for f in meta["friends"] if f["name"].startswith("fake"))
-    assert fake_status == "ok"
+    assert result.returncode == 3, result.stderr
+    assert "no model is configured" in result.stderr
+    assert not (tmp_path / "runs").exists()
 
 
 def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path):

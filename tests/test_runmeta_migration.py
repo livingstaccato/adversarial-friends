@@ -122,6 +122,7 @@ def test_migration_synthesizes_snapshot_only_from_v020_compatibility_keys():
         "artifact_path": raw["artifact_path"],
         "artifact_hash": raw["artifact_hash"],
         "predecessor": None,
+        "source_path": None,
     }
 
 

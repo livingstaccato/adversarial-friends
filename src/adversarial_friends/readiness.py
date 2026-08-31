@@ -76,8 +76,14 @@ def assess_all(
     host_provider: str | None = None,
     enforce: Callable[[Adapter], object] | None = None,
     external_tool_policy: ExternalToolPolicy | None = None,
+    selection_policy: bool = True,
 ) -> dict[str, FriendReadiness]:
-    """Assess every provider without spending probes on disabled entries."""
+    """Assess providers once, optionally ignoring automatic-selection policy.
+
+    Explicitly named friends set ``selection_policy=False``: naming a friend
+    overrides enabled/host/discovery selection, but never availability,
+    configuration, adapter validation, or authority.
+    """
     environ = os.environ if env is None else env
     probe_fn = http_transport.probe if probe is None else probe
     host = detect_host(environ, host_provider=host_provider)
@@ -86,7 +92,7 @@ def assess_all(
     for name, adapter in sorted(registry.items()):
         setting = provider_policy.setting(name)
         declared_where = adapter.endpoint if adapter.transport == "http" else adapter.binary
-        if not setting.enabled:
+        if selection_policy and not setting.enabled:
             rows[name] = _row(
                 name,
                 ReadinessState.DISABLED,
@@ -95,7 +101,7 @@ def assess_all(
                 setting.model,
             )
             continue
-        if adapter.transport == "http" and environ.get(NO_HTTP_DISCOVERY_ENV):
+        if selection_policy and adapter.transport == "http" and environ.get(NO_HTTP_DISCOVERY_ENV):
             rows[name] = _row(
                 name,
                 ReadinessState.DISABLED,
@@ -147,7 +153,7 @@ def assess_all(
                 continue
             where = executable
 
-        if not include_self and name == host:
+        if selection_policy and not include_self and name == host:
             rows[name] = _row(
                 name,
                 ReadinessState.HOST_EXCLUDED,

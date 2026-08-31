@@ -20,6 +20,7 @@ from e2e_helpers import FAKE, _safe_path_dir, run_af
 import pytest
 
 from adversarial_friends import adapters, cli, dispatch
+from adversarial_friends.commands import friends as friends_module
 
 # --- Lens wiring (Task 13 coordinator finding) ----------------------------
 #
@@ -231,6 +232,11 @@ def test_unexpected_exception_in_one_friends_dispatch_does_not_end_the_run(monke
     subprocess) because the patch target is an internal module name."""
     monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
     monkeypatch.setenv("PATH", str(_safe_path_dir()))
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda binary: f"/bin/{binary}" if binary == "codex" else None,
+    )
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
 
@@ -279,13 +285,24 @@ def test_oversized_prompt_for_a_non_stdin_adapter_records_an_e2big_downgrade(tmp
     and recorded up front (see dispatch.PROMPT_ARGV_WARN_BYTES's check
     inside cmd_run), not solved -- switching prompt modes is a design
     change. The downgrade must appear regardless of whether the friend
-    actually resolves (claude is not on the safe-PATH used by this test,
-    so it also fails for an unrelated reason -- 'binary not found' -- but
-    the downgrade is recorded before dispatch even starts, independent of
-    that outcome)."""
+    dispatches. A tiny executable shim makes Claude pass explicit preflight;
+    the fake friend still provides the usable result this test needs."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n" + ("x" * 150_000) + "\n")
-    result = run_af(tmp_path, artifact, "--friend", "claude:ops", "--friend", "fake:good")
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    claude = binary_dir / "claude"
+    claude.write_text("#!/bin/sh\nexit 1\n")
+    claude.chmod(0o755)
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "claude:ops",
+        "--friend",
+        "fake:good",
+        env_extra={"PATH": f"{binary_dir}{os.pathsep}{_safe_path_dir()}"},
+    )
     assert result.returncode == 0, result.stderr
     runs = sorted((tmp_path / "runs").iterdir())
     meta = json.loads((runs[0] / "run.json").read_text())

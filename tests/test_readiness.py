@@ -184,6 +184,27 @@ def test_include_self_makes_detected_host_ready(registry):
     assert rows["codex"].state is ReadinessState.READY
 
 
+def test_explicit_selection_bypasses_disabled_host_and_http_discovery_only(registry):
+    probes: list[str] = []
+    rows = assess_all(
+        registry,
+        ProviderPolicy(
+            {
+                "codex": ProviderSetting(enabled=False),
+                "ollama": ProviderSetting(enabled=False, model="qwen3:0.6b"),
+            }
+        ),
+        env={"CODEX_SESSION_ID": "session", "AF_NO_HTTP_DISCOVERY": "1"},
+        which=lambda name: f"/bin/{name}" if name == "codex" else None,
+        probe=lambda endpoint: probes.append(endpoint) or False,
+        selection_policy=False,
+    )
+
+    assert rows["codex"].state is ReadinessState.READY
+    assert rows["ollama"].state is ReadinessState.UNAVAILABLE
+    assert probes == [registry["ollama"].endpoint]
+
+
 def test_policy_blocked_provider_has_stable_reason_and_location(registry):
     def enforce(adapter):
         if adapter.name == "codex":

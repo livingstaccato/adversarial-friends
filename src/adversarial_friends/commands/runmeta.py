@@ -71,6 +71,7 @@ def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
             "artifact_path": meta.get("artifact_path", meta.get("artifact", "")),
             "artifact_hash": meta.get("artifact_hash", ""),
             "predecessor": None,
+            "source_path": None,
         }
     meta.setdefault("snapshot_history", [copy.deepcopy(meta["snapshot"])])
     return meta

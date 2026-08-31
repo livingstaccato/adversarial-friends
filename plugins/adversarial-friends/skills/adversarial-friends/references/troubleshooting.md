@@ -35,12 +35,13 @@ to make a denial claim.
 
 ## Resume refuses the saved snapshot
 
-Resume verifies the frozen artifact hash plus the recorded Git commit and
-tree before dispatch. If the artifact changed, the commit disappeared, or
-the repository no longer matches, the run is left unchanged and resume exits
-with a usage error. Restore the recorded repository/commit and frozen
-artifact; do not replace the snapshot with current files, because that would
-silently change what the existing claims reviewed.
+Resume verifies the frozen artifact hash plus the recorded Git commit, tree,
+and repository-relative artifact blob before dispatch. If the artifact
+changed, the commit disappeared, the blob does not match, or the repository
+no longer matches, the run is left unchanged and resume exits with a usage
+error. Restore the recorded repository/commit and frozen artifact; do not
+replace the snapshot with current files, because that would silently change
+what the existing claims reviewed.
 
 ## Verified invocation traps
 

@@ -195,9 +195,10 @@ afriend run --resume <run-id> --allow-external-tools
 ```
 
 The saved snapshot is immutable input identity, not a hint. Resume verifies
-the frozen artifact hash and, for repository runs, the saved commit and tree;
-it refuses a missing or mismatched snapshot rather than reviewing current
-files. Invocation-local authority is the exception to restored configuration.
+the frozen artifact hash and, for repository runs, the saved commit, tree, and
+repository-relative artifact blob; it refuses a missing or mismatched snapshot
+rather than reviewing current files. Invocation-local authority is the
+exception to restored configuration.
 `--allow-external-tools`, unsandboxed execution, extra arguments, and passed
 environment variables are the exceptions. These authority grants must be
 repeated exactly on the current command line. For example, repeat

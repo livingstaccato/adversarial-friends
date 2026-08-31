@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, MutableMapping
 import dataclasses
 from dataclasses import dataclass
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
@@ -18,7 +18,15 @@ from .errors import UsageError
 COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
 HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _SNAPSHOT_FIELDS = frozenset(
-    {"repo_root", "commit", "tree", "artifact_path", "artifact_hash", "predecessor"}
+    {
+        "repo_root",
+        "commit",
+        "tree",
+        "artifact_path",
+        "artifact_hash",
+        "predecessor",
+        "source_path",
+    }
 )
 
 
@@ -126,6 +134,79 @@ def _commit_blob(repo: Path, commit: str, relative: Path) -> bytes:
     return result.stdout
 
 
+def _resume_commit_blob(repo: Path, commit: str, source_path: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "cat-file", "blob", f"{commit}:{source_path}"],
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise _unavailable(f"cannot read saved commit artifact: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace").strip() or "blob is missing"
+        raise _unavailable(f"saved commit artifact is unavailable: {detail}")
+    return result.stdout
+
+
+def _validate_source_path(value: str) -> str:
+    candidate = PurePosixPath(value)
+    if (
+        not value
+        or "\0" in value
+        or candidate.is_absolute()
+        or value != candidate.as_posix()
+        or not candidate.parts
+        or candidate == PurePosixPath(".")
+        or ".." in candidate.parts
+    ):
+        raise UsageError(
+            "cannot resume: saved snapshot source_path must be a canonical repository-relative path"
+        )
+    return value
+
+
+def _recover_source_path(identity: SnapshotIdentity, meta: Mapping[str, object]) -> str | None:
+    """Recover pre-binding metadata without trusting the current file bytes.
+
+    v0.2 stored the invocation path only at top level. Existing files are
+    resolved to preserve the old symlink-to-target binding; deleted regular
+    files use their lexical path and are then proved against the saved commit
+    by ``verify``. A missing/retargeted symlink cannot be reconstructed
+    safely and therefore fails at that same blob proof.
+    """
+    if identity.repo_root is None:
+        return None
+    saved_path = meta.get("artifact_path")
+    saved_name = meta.get("artifact")
+    raw = (
+        saved_path
+        if isinstance(saved_path, str) and saved_path
+        else saved_name
+        if isinstance(saved_name, str) and saved_name
+        else None
+    )
+    if not isinstance(raw, str) or not raw:
+        raise UsageError(
+            "cannot resume: saved repository snapshot has no recoverable source artifact path"
+        )
+    repo = identity.repo_root.resolve()
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = repo / candidate
+    try:
+        if candidate.exists() or candidate.is_symlink():
+            candidate = candidate.resolve(strict=True)
+        else:
+            candidate = candidate.absolute()
+        relative = candidate.relative_to(repo)
+    except (OSError, ValueError) as exc:
+        raise UsageError(
+            "cannot resume: saved source artifact path is outside or unavailable "
+            f"for the recorded repository: {raw!r}"
+        ) from exc
+    return _validate_source_path(relative.as_posix())
+
+
 def _required_string(raw: Mapping[str, object], field: str) -> str:
     if field not in raw:
         raise UsageError(f"cannot resume: saved snapshot field {field!r} is required")
@@ -200,6 +281,7 @@ def _validate_present_snapshot_fields(raw: Mapping[str, object]) -> None:
         _required_string(raw, "artifact_path")
     artifact_hash = _required_string(raw, "artifact_hash") if "artifact_hash" in raw else None
     predecessor = _optional_string(raw, "predecessor") if "predecessor" in raw else None
+    source_path = _optional_string(raw, "source_path") if "source_path" in raw else None
     if commit is not None:
         _validate_commit(commit)
     if tree is not None:
@@ -214,6 +296,8 @@ def _validate_present_snapshot_fields(raw: Mapping[str, object]) -> None:
         raise UsageError(
             "cannot resume: saved snapshot predecessor must be a commit or artifact hash"
         )
+    if source_path is not None:
+        _validate_source_path(source_path)
 
 
 def _nested_legacy_conflict(
@@ -269,6 +353,7 @@ class SnapshotIdentity:
     artifact_path: str
     artifact_hash: str
     predecessor: str | None = None
+    source_path: str | None = None
 
     @classmethod
     def create(
@@ -336,7 +421,15 @@ class SnapshotIdentity:
             if captured_repo is not None and commit is not None
             else None
         )
-        return cls(captured_repo, commit, tree, str(artifact), digest, predecessor)
+        return cls(
+            captured_repo,
+            commit,
+            tree,
+            str(artifact),
+            digest,
+            predecessor,
+            relative.as_posix() if relative is not None else None,
+        )
 
     @classmethod
     def _from_dict(cls, raw: object) -> SnapshotIdentity:
@@ -347,6 +440,7 @@ class SnapshotIdentity:
         artifact_path = _required_string(raw, "artifact_path")
         artifact_hash = _required_string(raw, "artifact_hash")
         predecessor = _optional_string(raw, "predecessor")
+        source_path = _optional_string(raw, "source_path") if "source_path" in raw else None
         if (repo_text is None) != (commit is None):
             raise UsageError(
                 "cannot resume: saved snapshot repo_root and commit must be present together"
@@ -368,6 +462,10 @@ class SnapshotIdentity:
                 "cannot resume: saved snapshot artifact_hash must be "
                 "sha256:<64 lowercase hex digits>"
             )
+        if source_path is not None:
+            _validate_source_path(source_path)
+        if repo_text is None and source_path is not None:
+            raise UsageError("cannot resume: saved snapshot source_path requires a repository")
         return cls(
             Path(repo_text) if repo_text is not None else None,
             commit,
@@ -375,13 +473,22 @@ class SnapshotIdentity:
             artifact_path,
             artifact_hash,
             predecessor,
+            source_path,
         )
+
+    @classmethod
+    def _recover_binding(
+        cls, identity: SnapshotIdentity, meta: Mapping[str, object]
+    ) -> SnapshotIdentity:
+        if identity.repo_root is None or identity.source_path is not None:
+            return identity
+        return dataclasses.replace(identity, source_path=_recover_source_path(identity, meta))
 
     @classmethod
     def from_meta(cls, meta: object) -> SnapshotIdentity:
         meta = _string_mapping(meta, "snapshot metadata")
         if "snapshot" not in meta:
-            return cls._from_dict(_legacy_dict(meta))
+            return cls._recover_binding(cls._from_dict(_legacy_dict(meta)), meta)
 
         raw_value = meta["snapshot"]
         nested_error: UsageError | None = None
@@ -409,18 +516,18 @@ class SnapshotIdentity:
         if nested is not None:
             assert raw is not None
             _nested_legacy_conflict(raw, meta, complete=True)
-            return nested
+            return cls._recover_binding(nested, meta)
         if legacy is not None:
             if raw is not None and nested_error is None:
                 _nested_legacy_conflict(raw, meta, complete=False)
-            return legacy
+            return cls._recover_binding(legacy, meta)
         if _has_complete_legacy_shape(meta):
             assert legacy_error is not None
             raise legacy_error
         if nested_error is not None:
             raise nested_error from None
         assert raw is not None
-        return cls._from_dict(raw)
+        return cls._recover_binding(cls._from_dict(raw), meta)
 
     @classmethod
     def from_current_meta(cls, meta: object) -> SnapshotIdentity:
@@ -429,7 +536,7 @@ class SnapshotIdentity:
         if "snapshot" not in mapped:
             raise UsageError("cannot resume: saved snapshot field is required")
         raw = _string_mapping(mapped["snapshot"], "snapshot")
-        current = cls._from_dict(raw)
+        current = cls._recover_binding(cls._from_dict(raw), mapped)
         _nested_legacy_conflict(raw, mapped, complete=True)
         return current
 
@@ -481,6 +588,21 @@ class SnapshotIdentity:
         actual_tree = git_tree(self.repo_root, self.commit)
         if self.tree is not None and actual_tree != self.tree:
             raise UsageError("cannot resume: saved snapshot tree does not match commit")
+        if self.source_path is None:
+            raise UsageError(
+                "cannot resume: saved repository snapshot has no source artifact binding"
+            )
+        _validate_source_path(self.source_path)
+        commit_hash = (
+            "sha256:"
+            + hashlib.sha256(
+                _resume_commit_blob(self.repo_root, self.commit, self.source_path)
+            ).hexdigest()
+        )
+        if commit_hash != self.artifact_hash:
+            raise UsageError(
+                "cannot resume: saved commit artifact does not match the frozen artifact identity"
+            )
         return dataclasses.replace(self, tree=actual_tree)
 
     def to_dict(self) -> dict[str, object]:
@@ -491,6 +613,7 @@ class SnapshotIdentity:
             "artifact_path": self.artifact_path,
             "artifact_hash": self.artifact_hash,
             "predecessor": self.predecessor,
+            "source_path": self.source_path,
         }
 
 
@@ -521,7 +644,8 @@ def history_from_meta(
         if not isinstance(entry, Mapping):
             raise UsageError(f"cannot resume: saved snapshot_history[{index}] must be an object")
         try:
-            history.append(SnapshotIdentity._from_dict(entry))
+            identity = SnapshotIdentity._from_dict(entry)
+            history.append(SnapshotIdentity._recover_binding(identity, meta))
         except UsageError as exc:
             raise UsageError(
                 f"cannot resume: saved snapshot_history[{index}] is invalid: {exc}"

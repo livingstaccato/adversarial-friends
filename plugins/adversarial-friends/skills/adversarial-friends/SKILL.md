@@ -58,7 +58,9 @@ The host is the orchestrator, not an independent reviewer. A Codex-hosted
 run therefore excludes `codex` from automatic discovery by default; the same
 rule applies to every detected host. Use `--include-self` only when a
 deliberate self-review is useful. An explicit `--friend` roster is already a
-deliberate choice and may name the host or a disabled provider.
+deliberate choice and may name the host or a disabled provider. Explicit
+friends still preflight executable/endpoint availability, required models,
+adapter policy, and external-tool authority before a run directory is created.
 
 Persistent provider defaults are user-owned, outside the reviewed repository:
 

@@ -27,6 +27,7 @@ from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
+from ..readiness import ReadinessState, assess_all
 from ..roster import DEGRADED_MODES, apply_capacity, resolve
 
 
@@ -117,7 +118,8 @@ def resolve_friends(
     # §8.1: --lens restricts which lenses discovery assigns. Unknown names
     # are refused rather than silently ignored -- a typo would otherwise
     # quietly shrink the run to whichever lenses happened to match.
-    if args.friend:
+    explicit = bool(args.friend)
+    if explicit:
         specs = _specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
         if args.roster:
             downgrades.append(
@@ -168,6 +170,41 @@ def resolve_friends(
             f"--max-friends={limit} dropped {dropped}; this run has fewer "
             "independent judges than the roster named."
         )
+    if explicit:
+        # Naming a friend overrides automatic enabled/host/discovery
+        # selection, not whether that friend can actually be dispatched.
+        # Assess only the capacity-limited explicit roster, exactly once,
+        # before RunStore can create a run directory or prompt.
+        explicit_names = {spec.cli for spec in specs if spec.cli != "fake"}
+        readiness = assess_all(
+            {name: registry[name] for name in explicit_names},
+            provider_policy,
+            env=os.environ,
+            which=shutil.which,
+            include_self=True,
+            external_tool_policy=external_tool_policy,
+            selection_policy=False,
+        )
+        checked: list[FriendSpec] = []
+        rejected: list[str] = []
+        for spec in specs:
+            if spec.cli == "fake":
+                checked.append(spec)
+                continue
+            row = readiness[spec.cli]
+            effective_model = invocation_model or spec.model or row.model
+            configured_http = (
+                row.state is ReadinessState.REACHABLE_UNCONFIGURED and effective_model is not None
+            )
+            if not row.ready and not configured_http:
+                if row.state is ReadinessState.POLICY_BLOCKED:
+                    raise UsageError(row.reason)
+                rejected.append(f"{spec.name} ({spec.cli}): {row.reason}")
+                continue
+            checked.append(replace(spec, model=effective_model))
+        if rejected:
+            raise NoFriendsError("explicit friend preflight failed: " + "; ".join(rejected))
+        specs = checked
     # The preset fills effort only where nothing stronger set it, so a roster
     # entry's own `effort` wins -- that is what makes preset weaker than
     # roster in §10.1's order rather than merely different.

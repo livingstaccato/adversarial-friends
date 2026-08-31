@@ -327,6 +327,8 @@ def test_create_proves_the_captured_commit_blob_matches_frozen_bytes(tmp_path):
         capture_output=True,
     ).stdout
     assert committed == frozen.read_bytes()
+    assert identity.source_path == "nested/spec.md"
+    assert identity.to_dict()["source_path"] == "nested/spec.md"
 
 
 def test_create_does_not_claim_repo_binding_for_an_artifact_outside_repo(monkeypatch, tmp_path):
@@ -343,6 +345,7 @@ def test_create_does_not_claim_repo_binding_for_an_artifact_outside_repo(monkeyp
     assert identity.repo_root is None
     assert identity.commit is None
     assert identity.tree is None
+    assert identity.source_path is None
     create_commit.assert_not_called()
 
 
@@ -676,6 +679,7 @@ def test_snapshot_fields_and_history_have_deterministic_order(halted_run):
         "artifact_path",
         "artifact_hash",
         "predecessor",
+        "source_path",
     ]
     assert meta["snapshot_history"] == [identity.to_dict()]
     assert meta["repo_root"] == str(halted_run.repo)

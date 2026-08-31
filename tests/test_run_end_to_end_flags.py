@@ -216,6 +216,7 @@ def test_explicit_friend_bypasses_disabled_and_host_excluded_provider(monkeypatc
         lambda *_args, **_kwargs: ProviderPolicy({"codex": ProviderSetting(enabled=False)}),
     )
     monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    monkeypatch.setattr(friends_module.shutil, "which", lambda binary: f"/bin/{binary}")
     args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--friend", "codex:ops"])
     resolved = friends_module.resolve_friends(args, registry, None, [])
     assert [spec.cli for spec in resolved.specs] == ["codex"]
