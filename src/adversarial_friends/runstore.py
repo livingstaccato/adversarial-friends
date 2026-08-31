@@ -170,6 +170,68 @@ class RunStore:
                 os.close(fd)
         return path
 
+    def _stage_text(self, path: Path, text: str) -> Path:
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            with contextlib.suppress(OSError):
+                os.fsync(handle.fileno())
+        return path
+
+    def _fsync_run_dir(self) -> None:
+        with contextlib.suppress(OSError):
+            fd = os.open(self.run_dir, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+    def write_terminal_artifacts(self, meta: dict[str, Any], report: str) -> None:
+        """Commit terminal run.json and report.md as one rollback-safe pair.
+
+        Both payloads are serialized and staged before either public file is
+        replaced. The report is replaced first, so a process can never expose
+        terminal run.json beside the old waiting report. If the second replace
+        fails, the staged old report is restored before the original exception
+        is re-raised.
+        """
+        metadata = json.dumps(meta, indent=2, sort_keys=True)
+        run_path = self.run_dir / "run.json"
+        report_path = self.run_dir / "report.md"
+        run_new = self.run_dir / ".run.json.terminal-new"
+        report_new = self.run_dir / ".report.md.terminal-new"
+        report_old = self.run_dir / ".report.md.terminal-old"
+        staged = (run_new, report_new, report_old)
+        prior_report = report_path.read_text(encoding="utf-8") if report_path.exists() else None
+        try:
+            self._stage_text(run_new, metadata)
+            self._stage_text(report_new, report)
+            if prior_report is not None:
+                self._stage_text(report_old, prior_report)
+            report_new.replace(report_path)
+            try:
+                run_new.replace(run_path)
+            except BaseException as original:
+                try:
+                    if prior_report is None:
+                        report_path.unlink(missing_ok=True)
+                    else:
+                        try:
+                            report_old.replace(report_path)
+                        except OSError:
+                            # A test hook or wrapper may fail Path.replace;
+                            # os.replace is the independent recovery path.
+                            os.replace(report_old, report_path)  # noqa: PTH105
+                    self._fsync_run_dir()
+                except OSError as rollback_error:
+                    original.add_note(f"terminal report rollback also failed: {rollback_error}")
+                raise
+            self._fsync_run_dir()
+        finally:
+            for path in staged:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+
     def write_run_json(self, meta: dict[str, Any]) -> Path:
         return self._write_atomic(
             self.run_dir / "run.json", json.dumps(meta, indent=2, sort_keys=True)

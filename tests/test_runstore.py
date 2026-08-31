@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from adversarial_friends.errors import UsageError
@@ -86,3 +88,67 @@ def test_write_report_roundtrips(tmp_path):
     store = RunStore(tmp_path, "run-001")
     path = store.write_report("# Adversarial review\n")
     assert path.read_text() == "# Adversarial review\n"
+
+
+def _waiting_artifacts(store):
+    store.write_run_json({"lifecycle_state": "waiting-for-orchestrator"})
+    store.write_report("# waiting\n")
+    return (
+        (store.run_dir / "run.json").read_bytes(),
+        (store.run_dir / "report.md").read_bytes(),
+    )
+
+
+def _assert_waiting_artifacts(store, expected):
+    assert (store.run_dir / "run.json").read_bytes() == expected[0]
+    assert (store.run_dir / "report.md").read_bytes() == expected[1]
+    assert not list(store.run_dir.glob(".*.terminal-*"))
+
+
+def test_terminal_artifacts_are_replaced_as_one_consistent_pair(tmp_path):
+    store = RunStore(tmp_path, "run-terminal")
+    _waiting_artifacts(store)
+
+    store.write_terminal_artifacts(
+        {"lifecycle_state": "terminal", "exit_code": 0},
+        "# terminal\n",
+    )
+
+    assert '"lifecycle_state": "terminal"' in (store.run_dir / "run.json").read_text()
+    assert (store.run_dir / "report.md").read_text() == "# terminal\n"
+    assert not list(store.run_dir.glob(".*.terminal-*"))
+
+
+def test_terminal_staging_failure_preserves_both_prior_artifacts(monkeypatch, tmp_path):
+    store = RunStore(tmp_path, "run-stage-failure")
+    expected = _waiting_artifacts(store)
+    original_open = Path.open
+
+    def fail_report_stage(path, *args, **kwargs):
+        if path.name == ".report.md.terminal-new":
+            raise OSError("simulated report staging failure")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_report_stage)
+    with pytest.raises(OSError, match="report staging"):
+        store.write_terminal_artifacts({"lifecycle_state": "terminal"}, "# terminal\n")
+    _assert_waiting_artifacts(store, expected)
+
+
+@pytest.mark.parametrize("failed_target", ["report.md", "run.json"])
+def test_terminal_replacement_failure_rolls_back_the_first_replacement(
+    monkeypatch, tmp_path, failed_target
+):
+    store = RunStore(tmp_path, f"run-replace-{failed_target}")
+    expected = _waiting_artifacts(store)
+    original_replace = Path.replace
+
+    def fail_selected_replace(path, target):
+        if path.name.endswith(".terminal-new") and Path(target).name == failed_target:
+            raise OSError(f"simulated {failed_target} replacement failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_selected_replace)
+    with pytest.raises(OSError, match=rf"{failed_target} replacement"):
+        store.write_terminal_artifacts({"lifecycle_state": "terminal"}, "# terminal\n")
+    _assert_waiting_artifacts(store, expected)

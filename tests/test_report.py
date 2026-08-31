@@ -108,6 +108,69 @@ def test_empty_findings_says_so_without_claiming_success():
     assert "no findings" in out.lower()
 
 
+def test_terminal_report_reads_the_persisted_outcome_without_redeciding_it():
+    out = render(
+        [],
+        [],
+        meta(
+            lifecycle_state="terminal",
+            stop_reason="max-loop-iterations",
+            exit_code=11,
+            converged=False,
+            ceiling_hit="max-loop-iterations",
+            started_at="2026-08-31T10:00:00Z",
+            finished_at="2026-08-31T10:00:02Z",
+            duration_s=2.0,
+        ),
+    )
+    assert "Stop reason: `max-loop-iterations`" in out
+    assert "Exit code: `11`" in out
+    assert "Converged: `False`" in out
+
+
+def test_terminal_gate_report_names_persisted_decision_and_ordered_blockers():
+    out = render(
+        [],
+        [],
+        meta(
+            mode="gate",
+            lifecycle_state="terminal",
+            stop_reason="gate-blocked",
+            exit_code=1,
+            converged=True,
+            gate_decision="blocked",
+            gate_blocking_claims=["c-0002@1", "c-0001@1"],
+        ),
+    )
+    assert "### Gate" in out
+    assert "Decision: `blocked`" in out
+    assert out.index("c-0002@1") < out.index("c-0001@1")
+
+
+def test_terminal_clear_gate_report_explicitly_names_empty_blockers():
+    out = render(
+        [],
+        [],
+        meta(
+            mode="gate",
+            lifecycle_state="terminal",
+            stop_reason="completed",
+            exit_code=0,
+            converged=True,
+            gate_decision="clear",
+            gate_blocking_claims=[],
+        ),
+    )
+    assert "Decision: `clear`" in out
+    assert "Blocking claims: _(none)_" in out
+
+
+def test_halt_report_names_the_nonterminal_waiting_state():
+    out = render([], [], meta(lifecycle_state="waiting-for-orchestrator"))
+    assert "Run state: `waiting-for-orchestrator`" in out
+    assert "Exit code:" not in out
+
+
 # --- adversarial / break-it cases -----------------------------------------
 
 

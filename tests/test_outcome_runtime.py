@@ -1,0 +1,211 @@
+"""Lifecycle integrations for the pure RunOutcome contract."""
+
+import argparse
+from datetime import UTC, datetime
+import json
+import sys
+
+from e2e_helpers import FAKE
+import pytest
+
+from adversarial_friends.ceilings import Budget
+from adversarial_friends.cliargs import build_parser
+from adversarial_friends.commands import run as run_command, runmeta
+from adversarial_friends.errors import UsageError
+from adversarial_friends.failures import RepeatTracker
+from adversarial_friends.outcomes import RunOutcome, terminal_outcome
+from adversarial_friends.runstore import RunStore
+
+
+def _outcome(**facts):
+    return terminal_outcome(
+        mode="report",
+        converged=False,
+        loop_exhausted=False,
+        budget_reason=None,
+        blocking_ids=[],
+        any_success=True,
+        unresolved=False,
+        **facts,
+    )
+
+
+def _args(tmp_path, artifact):
+    return build_parser().parse_args(
+        [
+            "run",
+            str(artifact),
+            "--friend",
+            "fake:good",
+            "--out",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+
+def _fake_environment(monkeypatch):
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+
+
+def test_wall_clock_rollback_does_not_invalidate_monotonic_duration():
+    got = _outcome(
+        started_at="2026-08-31T10:00:01Z",
+        finished_at="2026-08-31T10:00:00Z",
+        duration_s=2.0,
+    )
+    assert got.duration_s == 2.0
+
+
+def test_frozen_dataclass_exposes_the_contract_fields():
+    fields = set(RunOutcome.__dataclass_fields__)
+    assert fields == {
+        "started_at",
+        "finished_at",
+        "duration_s",
+        "stop_reason",
+        "exit_code",
+        "converged",
+        "gate_decision",
+        "blocker_ids",
+        "ceiling_hit",
+        "attempted_calls",
+        "spent_calls",
+        "iterations_run",
+        "rounds_run",
+        "dry_streak",
+        "repeat_tracker",
+    }
+
+
+def test_unexpected_runtime_error_is_persisted_then_reraised(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+    monkeypatch.setattr(
+        run_command,
+        "run_critique",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated bug")),
+    )
+
+    with pytest.raises(RuntimeError, match="simulated bug"):
+        run_command.cmd_run(_args(tmp_path, artifact))
+
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["stop_reason"] == "runtime-error"
+    assert meta["exit_code"] == 1
+    assert meta["lifecycle_state"] == "terminal"
+    assert "Stop reason: `runtime-error`" in (run_dir / "report.md").read_text(encoding="utf-8")
+
+
+def test_terminal_persistence_failure_does_not_hide_the_original_runtime_error(
+    monkeypatch, tmp_path
+):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+    monkeypatch.setattr(
+        run_command,
+        "run_critique",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated bug")),
+    )
+    monkeypatch.setattr(
+        runmeta,
+        "render",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("report unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="simulated bug") as caught:
+        run_command.cmd_run(_args(tmp_path, artifact))
+
+    assert any("report unavailable" in note for note in caught.value.__notes__)
+
+
+def test_terminal_duration_uses_monotonic_time_when_utc_moves_backward(monkeypatch, tmp_path):
+    class LaterStartClock:
+        @classmethod
+        def now(cls, _tz) -> datetime:
+            return datetime(2026, 8, 31, 10, 0, 1, tzinfo=UTC)
+
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+    monkeypatch.setattr(run_command, "datetime", LaterStartClock)
+    monkeypatch.setattr(runmeta, "_finished_at", lambda: "2026-08-31T10:00:00Z")
+
+    assert run_command.cmd_run(_args(tmp_path, artifact)) == 0
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["finished_at"] < meta["started_at"]
+    assert meta["duration_s"] >= 0
+
+
+def test_non_utf8_artifact_is_refused_before_run_directory_creation(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_bytes(b"\xff\xfe")
+    _fake_environment(monkeypatch)
+
+    with pytest.raises(UsageError, match="UTF-8"):
+        run_command.cmd_run(_args(tmp_path, artifact))
+    assert not (tmp_path / "runs").exists()
+
+
+def test_post_create_initialization_failure_removes_unexplained_partial_run(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+    monkeypatch.setattr(
+        run_command,
+        "select_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("init failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="init failed"):
+        run_command.cmd_run(_args(tmp_path, artifact))
+    assert not list((tmp_path / "runs").glob("run-*"))
+
+
+def test_terminal_render_failure_preserves_the_prior_artifact_pair(monkeypatch, tmp_path):
+    store = RunStore(tmp_path, "run-render-failure")
+    store.write_run_json({"lifecycle_state": "waiting-for-orchestrator"})
+    store.write_report("# waiting\n")
+    meta_path = store.run_dir / "run.json"
+    report_path = store.run_dir / "report.md"
+    before = (meta_path.read_bytes(), report_path.read_bytes())
+    monkeypatch.setattr(
+        runmeta,
+        "render",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("render failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="render failed"):
+        runmeta.finish_run(
+            argparse.Namespace(mode="report", require_friends=None, json=False),
+            store,
+            {
+                "artifact": "spec.md",
+                "mode": "report",
+                "preset": "inherit",
+                "friends": [],
+                "downgrades": [],
+                "started_at": "2026-08-31T00:00:00Z",
+            },
+            None,
+            None,
+            True,
+            1,
+            ["fake-good-0"],
+            1,
+            0,
+            [],
+            Budget(max_calls=2, max_rounds=1, max_wall_clock_s=60),
+            1,
+            RepeatTracker(),
+            False,
+            False,
+            1.0,
+        )
+
+    assert meta_path.read_bytes() == before[0]
+    assert report_path.read_bytes() == before[1]

@@ -25,6 +25,7 @@ from adversarial_friends.failures import RepeatTracker
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Claim
 from adversarial_friends.normalize import NormalizeResult
+from adversarial_friends.outcomes import terminal_outcome
 from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.spawn import SpawnResult
@@ -298,25 +299,30 @@ def test_an_auth_abort_forces_a_failing_exit_even_when_some_friends_succeeded():
     """The exact shape of the bug report: 2 of 4 friends answered, so
     `any_success` is True -- but the roster is broken and the operator
     needs to know, not see a run that looks like it completed."""
-    code = decide_exit(
-        abort_signum=None,
-        any_success=True,
+    run_outcome = terminal_outcome(
         mode="report",
-        cross=None,
-        blocking=[],
-        auth_abort=AUTH_MESSAGE,
+        converged=False,
+        loop_exhausted=False,
+        budget_reason=None,
+        blocking_ids=[],
+        any_success=True,
+        unresolved=False,
+        auth_abort=True,
     )
+    code = decide_exit(run_outcome, detail=AUTH_MESSAGE)
     assert code == 1
 
 
 def test_with_no_auth_abort_a_full_success_still_exits_zero():
     """The precedence check does not fire when nothing aborted."""
-    code = decide_exit(
-        abort_signum=None,
-        any_success=True,
+    run_outcome = terminal_outcome(
         mode="report",
-        cross=None,
-        blocking=[],
-        auth_abort=None,
+        converged=False,
+        loop_exhausted=False,
+        budget_reason=None,
+        blocking_ids=[],
+        any_success=True,
+        unresolved=False,
     )
+    code = decide_exit(run_outcome)
     assert code == 0

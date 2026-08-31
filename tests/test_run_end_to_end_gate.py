@@ -87,6 +87,9 @@ def test_an_upheld_claim_blocks_the_gate(tmp_path):
     assert "gate blocked" in result.stderr
     meta = _run_json(tmp_path)
     assert meta["gate_blocked"] is True
+    assert meta["gate_decision"] == "blocked"
+    assert meta["stop_reason"] == "gate-blocked"
+    assert meta["exit_code"] == result.returncode
     assert meta["gate_blocking_claims"]
 
 
@@ -100,6 +103,7 @@ def test_a_refuted_claim_does_not_block(tmp_path):
     repo = _repo(tmp_path)
     result = _gate(tmp_path, repo, "judge_refute_a", "judge_refute_b", "judge_refute_c")
     assert _run_json(tmp_path)["gate_blocking_claims"] == []
+    assert _run_json(tmp_path)["gate_decision"] == "clear"
     assert result.returncode == 0, result.stderr
 
 

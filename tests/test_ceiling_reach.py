@@ -52,9 +52,11 @@ def test_a_run_past_its_wall_clock_ceiling_stops_and_says_so(tmp_path):
         env_extra={"AF_CLOCK_OFFSET_S": "600"},
     )
     assert result.returncode == 11, (result.returncode, result.stderr)
-    assert "budget-exhausted" in result.stderr, result.stderr
+    assert "max-wall-clock" in result.stderr, result.stderr
     meta = _run_json(tmp_path)
-    assert meta["ceiling_hit"] == "budget-exhausted"
+    assert meta["ceiling_hit"] == "max-wall-clock"
+    assert meta["stop_reason"] == "max-wall-clock"
+    assert meta["exit_code"] == result.returncode
     # Which ceiling, and when: the label names the kind, the downgrade the
     # instance. Both are needed -- an operator who set two ceilings cannot
     # tell from "budget-exhausted" alone which one stopped the run.

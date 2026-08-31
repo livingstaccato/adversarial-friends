@@ -54,6 +54,7 @@ class CritiqueOutcome:
     # friend of a large roster answered is not the cross-examination its
     # exit code implies. See `--require-friends` in cliargs.py.
     succeeded_friends: int = 0
+    successful_friend_ids: list[str] = field(default_factory=list)
     # §7.3: a round is dry when every required friend completed successfully
     # AND every claim it produced was an alias of one already known -- i.e.
     # the round cost a full fan-out and learned nothing new.
@@ -222,6 +223,7 @@ def run_critique(
             continue
         outcome.any_success = True
         outcome.succeeded_friends += 1
+        outcome.successful_friend_ids.append(spec.name)
         incoming = []
         # `or []`, not a .get default: `findings` is nullable in the schema
         # (strict mode requires every property in `required`, so a friend
@@ -279,6 +281,10 @@ def run_critique(
         raise NeedsOrchestrator(
             f"{names} produced output that could not be parsed into claims. "
             f"Fill in `findings` for each in {path}, save it as RESPONSE.json "
-            "beside it, then re-run with --resume."
+            "beside it, then re-run with --resume.",
+            calls=outcome.calls,
+            friends_meta=outcome.friends_meta,
+            downgrades=outcome.downgrades,
+            successful_friend_ids=outcome.successful_friend_ids,
         )
     return outcome, all_claims, counter

@@ -12,7 +12,9 @@ them, so the resuming command line must repeat each prior grant exactly.
 
 import argparse
 import dataclasses
+from datetime import UTC, datetime
 import json
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,14 +22,21 @@ from ..adapters import FriendSpec, validate_roster_uniqueness
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
+from ..failures import RepeatTracker
 from ..ledger import Claim
+from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
 from ..snapshots import SnapshotIdentity, record_snapshot
 from ..trust import MODEL_RE, validate_roster_entry
-from ..verdicts import judges_for, loop_should_terminate
+from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
+from .checkpoint import (
+    legacy_successful_friend_ids,
+    normalize_friend_rows,
+    normalize_resume_report_state,
+)
 from .exits import decide_exit
 
 if TYPE_CHECKING:
@@ -121,6 +130,7 @@ def _base_meta(
     preset: str = "inherit",
     roster_source: str | None = None,
     env_withheld: list[str] | None = None,
+    started_at: str | None = None,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -130,6 +140,9 @@ def _base_meta(
     validates them against an exact, explicit command-line re-assertion.
     """
     meta: dict[str, Any] = {
+        "schema_version": 2,
+        "lifecycle_state": "running",
+        "started_at": started_at or _finished_at(),
         "mode": args.mode,
         # The preset ACTUALLY used, not the flag: it defaults per mode (gate
         # defaults to thorough, §7), so printing the flag would report
@@ -239,6 +252,139 @@ def _restore_roster(value: object) -> list[FriendSpec]:
     return restored
 
 
+def _checkpoint_count(meta: dict[str, Any], name: str, default: int) -> int:
+    value = meta.get(name, default)
+    if type(value) is not int or not 0 <= value <= MAX_JSON_SAFE_INTEGER:
+        raise UsageError(f"cannot resume: saved {name} must be a nonnegative integer")
+    return value
+
+
+def _checkpoint_elapsed(meta: dict[str, Any]) -> float:
+    value = meta.get("active_elapsed_s", 0.0)
+    if type(value) not in {int, float}:
+        raise UsageError(
+            "cannot resume: saved active_elapsed_s must be a finite nonnegative number"
+        )
+    try:
+        elapsed = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise UsageError(
+            "cannot resume: saved active_elapsed_s must be a finite nonnegative number"
+        ) from exc
+    if not math.isfinite(elapsed) or elapsed < 0:
+        raise UsageError(
+            "cannot resume: saved active_elapsed_s must be a finite nonnegative number"
+        )
+    return elapsed
+
+
+def _checkpoint_successes(
+    meta: dict[str, Any], friends: list[dict[str, Any]], critique_round: int
+) -> list[str]:
+    if "successful_friend_ids" not in meta:
+        successes = legacy_successful_friend_ids(friends, critique_round)
+    else:
+        value = meta["successful_friend_ids"]
+        if type(value) is not list or not all(type(item) is str and item for item in value):
+            raise UsageError(
+                "cannot resume: saved successful_friend_ids must be a list of nonempty strings"
+            )
+        successes = list(value)
+    if len(successes) != len(set(successes)):
+        raise UsageError("cannot resume: saved successful_friend_ids must be unique")
+    recorded_count = meta.get("succeeded_friends", len(successes))
+    if type(recorded_count) is not int or recorded_count != len(successes):
+        raise UsageError("cannot resume: saved succeeded_friends must match successful_friend_ids")
+    return successes
+
+
+def _checkpoint_tracker(meta: dict[str, Any]) -> dict[str, object]:
+    value = meta.get("repeat_tracker", {})
+    if type(value) is not dict or set(value) - {"last", "count", "disabled"}:
+        raise UsageError("cannot resume: saved repeat_tracker has an invalid shape")
+    tracker = value
+    normalized: dict[str, object] = {}
+    for section in ("last", "disabled"):
+        entries = tracker.get(section, {})
+        if type(entries) is not dict or any(
+            type(key) is not str or type(item) is not str for key, item in entries.items()
+        ):
+            raise UsageError(
+                f"cannot resume: saved repeat_tracker.{section} must map strings to strings"
+            )
+        normalized[section] = dict(entries)
+    counts = tracker.get("count", {})
+    if type(counts) is not dict or any(
+        type(key) is not str or type(item) is not int or not 0 <= item <= MAX_JSON_SAFE_INTEGER
+        for key, item in counts.items()
+    ):
+        raise UsageError(
+            "cannot resume: saved repeat_tracker.count must map strings to nonnegative integers"
+        )
+    normalized["count"] = dict(counts)
+    return normalized
+
+
+def _normalized_checkpoint(meta: dict[str, Any], restored: argparse.Namespace) -> dict[str, Any]:
+    normalized = dict(meta)
+    spent_calls = _checkpoint_count(meta, "spent_calls", 0)
+    attempted_calls = _checkpoint_count(meta, "attempted_calls", spent_calls)
+    if attempted_calls != spent_calls:
+        raise UsageError("cannot resume: saved attempted_calls must equal saved spent_calls")
+    iterations_run = _checkpoint_count(meta, "iterations_run", 0)
+    rounds_run = _checkpoint_count(meta, "rounds_run", 0)
+    dry_streak = _checkpoint_count(meta, "dry_streak", 0)
+    resume_iteration = _checkpoint_count(
+        meta, "resume_iteration", iterations_run if iterations_run > 0 else 1
+    )
+    if resume_iteration < 1:
+        raise UsageError("cannot resume: saved resume_iteration must be a positive integer")
+    if resume_iteration not in {max(1, iterations_run), iterations_run + 1}:
+        raise UsageError(
+            "cannot resume: saved resume_iteration is inconsistent with iterations_run"
+        )
+    roster_names = {spec.name for spec in restored._resume_roster}
+    friends = normalize_friend_rows(meta.get("friends", []), roster_names)
+    max_rounds = getattr(restored, "max_rounds", 1)
+    if type(max_rounds) is not int or max_rounds < 1:
+        raise UsageError("cannot resume: saved max_rounds must be a positive integer")
+    critique_round = (resume_iteration - 1) * max_rounds + 1
+    if any(row["round"] > critique_round for row in friends):
+        raise UsageError("cannot resume: saved friends contain a row after the pending round")
+    successes = _checkpoint_successes(meta, friends, critique_round)
+    if any(friend not in roster_names for friend in successes):
+        raise UsageError(
+            "cannot resume: saved successful_friend_ids contains a friend outside the roster"
+        )
+    required = meta.get("required_friends", getattr(restored, "require_friends", None))
+    if required is not None and (
+        type(required) is not int or not 1 <= required <= MAX_JSON_SAFE_INTEGER
+    ):
+        raise UsageError("cannot resume: saved required_friends must be a positive integer or null")
+    if required != getattr(restored, "require_friends", None):
+        raise UsageError(
+            "cannot resume: saved required_friends disagrees with the original invocation"
+        )
+    normalized.update(
+        {
+            "attempted_calls": attempted_calls,
+            "spent_calls": spent_calls,
+            "iterations_run": iterations_run,
+            "rounds_run": rounds_run,
+            "dry_streak": dry_streak,
+            "resume_iteration": resume_iteration,
+            "active_elapsed_s": _checkpoint_elapsed(meta),
+            "successful_friend_ids": successes,
+            "succeeded_friends": len(successes),
+            "required_friends": required,
+            "repeat_tracker": _checkpoint_tracker(meta),
+            "friends": friends,
+        }
+    )
+    normalized.update(normalize_resume_report_state(meta))
+    return normalized
+
+
 def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     """Rebuild the original invocation's settings from its run directory."""
     run_dir = _find_run_dir(args.resume, args.out)
@@ -291,6 +437,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         restored._resume_roster,
         judging=getattr(restored, "mode", "report") != "report",
     )
+    meta = _normalized_checkpoint(meta, restored)
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta
@@ -298,8 +445,14 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     # per iteration, so a resumed loop has to re-enter the iteration it
     # halted in and then carry on -- iteration 1 of 5 resuming as though it
     # were the whole run would silently drop four.
-    restored._resume_iteration = int(meta.get("iterations_run", 1) or 1)
-    restored._resume_streak = int(meta.get("dry_streak", 0) or 0)
+    restored._resume_iteration = meta["resume_iteration"]
+    restored._resume_streak = meta["dry_streak"]
+    restored._resume_attempted_calls = meta["attempted_calls"]
+    restored._resume_spent_calls = meta["spent_calls"]
+    restored._resume_iterations_run = meta["iterations_run"]
+    restored._resume_rounds_run = meta["rounds_run"]
+    restored._resume_active_elapsed_s = meta["active_elapsed_s"]
+    restored._resume_successful_friend_ids = meta["successful_friend_ids"]
     return restored
 
 
@@ -414,15 +567,10 @@ def loop_is_done(streak: int, claims: list[Any], cross: Any, roster: list[str]) 
 
 def finalize_meta(
     meta: dict[str, Any],
-    mode: str,
     *,
-    iterations_run: int,
-    streak: int,
-    blocking: list[Claim],
     budget: Budget,
     downgrades: list[str],
     cross: "CrossexamOutcome | None",
-    rounds_reached: int,
 ) -> dict[str, Any]:
     """Fold every mode's end-of-run fields into `meta`, in place.
 
@@ -437,28 +585,19 @@ def finalize_meta(
     caller passes the base metadata and expects its keys to survive, and a
     copy here would silently drop anything added between the two points.
     """
-    if mode == "loop":
-        meta["iterations_run"] = iterations_run
-        meta["dry_streak"] = streak
-    if mode == "gate":
-        meta["gate_blocked"] = bool(blocking)
-        meta["gate_blocking_claims"] = [c.id for c in blocking]
-    if budget.exhausted_by and not meta.get("ceiling_hit"):
-        # Same spelling crossexam uses: the label names the ceiling, the
-        # downgrade says which one and when.
-        meta["ceiling_hit"] = BUDGET_EXHAUSTED
+    if budget.exhausted_by:
         reason = f"{BUDGET_EXHAUSTED}: {budget.exhausted_by}"
         if reason not in downgrades:
             downgrades.append(reason)
     if cross is not None:
-        meta["rounds_run"] = max(rounds_reached, cross.rounds_run)
         meta["claim_states"] = cross.states
         meta["amendment_notes"] = cross.notes
-        meta["ceiling_hit"] = cross.ceiling_hit or (
-            BUDGET_EXHAUSTED if budget.exhausted_by else None
-        )
         meta["incomplete"] = cross.incomplete
     return meta
+
+
+def _finished_at() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def finish_run(
@@ -469,12 +608,18 @@ def finish_run(
     abort_signum: int | None,
     any_success: bool,
     succeeded_friends: int | None,
+    successful_friend_ids: list[str],
     iterations_run: int,
     streak: int,
     downgrades: list[str],
     budget: Budget,
     rounds_reached: int,
+    tracker: RepeatTracker,
+    loop_converged: bool,
+    loop_exhausted: bool,
+    active_elapsed_s: float,
     auth_abort: str | None = None,
+    runtime_error: str | None = None,
 ) -> int:
     """Wrap up a completed run: the gate's blocking claims, the finalized
     meta, run.json and report.md on disk, the printed path, and the exit
@@ -496,23 +641,65 @@ def finish_run(
 
     meta = finalize_meta(
         base_meta,
-        args.mode,
-        iterations_run=iterations_run,
-        streak=streak,
-        blocking=blocking,
         budget=budget,
         downgrades=downgrades,
         cross=cross,
-        rounds_reached=rounds_reached,
     )
-    store.write_run_json(meta)
-    store.write_report(
-        render(
-            review,
-            meta,
-            states=cross.states if cross else None,
+    meta["successful_friend_ids"] = list(successful_friend_ids)
+    meta["succeeded_friends"] = len(successful_friend_ids)
+    meta["required_friends"] = args.require_friends
+    meta["active_elapsed_s"] = active_elapsed_s
+    unresolved = bool(
+        cross is not None
+        and (
+            cross.incomplete or any(state not in TERMINAL_STATES for state in cross.states.values())
         )
     )
+    quorum_failed = bool(
+        args.require_friends is not None
+        and succeeded_friends is not None
+        and succeeded_friends < args.require_friends
+    )
+    finished_at = _finished_at()
+    started_at = str(meta.get("started_at", finished_at))
+    outcome: RunOutcome = terminal_outcome(
+        mode=args.mode,
+        converged=(
+            loop_converged
+            if args.mode == "loop"
+            else any_success
+            and not unresolved
+            and auth_abort is None
+            and abort_signum is None
+            and budget.exhausted_by is None
+            and runtime_error is None
+        ),
+        loop_exhausted=loop_exhausted,
+        budget_reason=budget.exhausted_by,
+        blocking_ids=[claim.id for claim in blocking],
+        any_success=any_success,
+        unresolved=unresolved,
+        auth_abort=auth_abort is not None,
+        abort_signum=abort_signum,
+        runtime_error=runtime_error is not None,
+        quorum_failed=quorum_failed,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_s=active_elapsed_s,
+        attempted_calls=budget.calls,
+        spent_calls=budget.calls,
+        iterations_run=iterations_run,
+        rounds_run=max(rounds_reached, cross.rounds_run if cross is not None else 0),
+        dry_streak=streak,
+        repeat_tracker=tracker.snapshot(),
+    )
+    meta = outcome.apply(meta)
+    report = render(
+        review,
+        meta,
+        states=cross.states if cross else None,
+    )
+    store.write_terminal_artifacts(meta, report)
     if args.json:
         # The path is still what a shell pipeline wants; --json is for a
         # caller that would otherwise have to read run.json itself.
@@ -520,14 +707,10 @@ def finish_run(
     else:
         print(store.run_dir)
 
-    return decide_exit(
-        abort_signum,
-        any_success,
-        args.mode,
-        cross,
-        blocking,
-        ceiling_hit=BUDGET_EXHAUSTED if budget.exhausted_by else None,
-        succeeded_friends=succeeded_friends,
-        require_friends=args.require_friends,
-        auth_abort=auth_abort,
-    )
+    detail = runtime_error or auth_abort
+    if quorum_failed and outcome.exit_code == 12:
+        detail = (
+            f"only {succeeded_friends} of {args.require_friends} required friends "
+            "produced a usable answer"
+        )
+    return decide_exit(outcome, detail=detail)

@@ -86,9 +86,8 @@ def test_repeated_claims_alias_rather_than_multiplying(tmp_path):
     assert aliases, "a second identical iteration should have produced aliases"
 
 
-def test_a_single_iteration_behaves_like_crossexam(tmp_path):
-    """--max-loop-iterations 1 is a crossexam with loop bookkeeping, and must
-    not change any of its conclusions."""
+def test_a_single_unconverged_iteration_is_the_loop_ceiling(tmp_path):
+    """One iteration keeps crossexam conclusions but exhausts the loop range."""
     result = _loop(
         tmp_path,
         "fake:judge_uphold_a",
@@ -98,7 +97,27 @@ def test_a_single_iteration_behaves_like_crossexam(tmp_path):
     meta = _run_json(tmp_path)
     assert meta["iterations_run"] == 1
     assert set(meta["claim_states"].values()) == {"settled-upheld"}
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 11, result.stderr
+    assert meta["stop_reason"] == "max-loop-iterations"
+    assert meta["ceiling_hit"] == "max-loop-iterations"
+
+
+def test_terminal_metadata_has_one_exact_lifecycle_and_checkpoint_state(tmp_path):
+    result = _loop(
+        tmp_path,
+        "fake:judge_uphold_a",
+        "fake:judge_uphold_b",
+        extra=("--max-loop-iterations", "1"),
+    )
+    meta = _run_json(tmp_path)
+    assert result.returncode == meta["exit_code"]
+    assert meta["schema_version"] == 2
+    assert meta["lifecycle_state"] == "terminal"
+    assert meta["started_at"].endswith("Z")
+    assert meta["finished_at"].endswith("Z")
+    assert meta["duration_s"] >= 0
+    assert meta["spent_calls"] == meta["attempted_calls"]
+    assert set(meta["repeat_tracker"]) == {"last", "count", "disabled"}
 
 
 def test_the_call_ceiling_stops_a_loop(tmp_path):
@@ -111,7 +130,7 @@ def test_the_call_ceiling_stops_a_loop(tmp_path):
         extra=("--max-loop-iterations", "5", "--max-calls", "2"),
     )
     assert result.returncode == 11, (result.returncode, result.stderr)
-    assert "budget-exhausted" in result.stderr
+    assert "max-calls" in result.stderr
 
 
 def test_a_loop_records_how_many_iterations_it_ran(tmp_path):
@@ -125,7 +144,7 @@ def test_report_mode_is_still_unaffected(tmp_path):
     result = run_af(tmp_path, _artifact(tmp_path), "--friend", "fake:good")
     assert result.returncode == 0, result.stderr
     meta = _run_json(tmp_path)
-    assert "iterations_run" not in meta
+    assert meta["iterations_run"] == 1
     assert "claim_states" not in meta
     report = (_run_dir(tmp_path) / "report.md").read_text()
     assert "the guard is missing" in report
@@ -169,7 +188,7 @@ def test_a_friend_that_recovers_is_not_disabled(tmp_path):
         "fake:judge_uphold_b",
         extra=("--max-rounds", "4"),
     )
-    assert result.returncode in (0, 1), result.stderr
+    assert result.returncode == 1, result.stderr
     meta = _run_json(tmp_path)
     downgrades = " ".join(meta["downgrades"])
     assert "not be dispatched again" not in downgrades
@@ -275,7 +294,7 @@ def test_a_revised_artifact_reopens_what_the_earlier_text_settled(tmp_path):
         mode="loop",
         env_extra={"AF_TEST_EDIT_ARTIFACT": str(artifact)},
     )
-    assert result.returncode in (0, 1), result.stderr
+    assert result.returncode == 11, result.stderr
     assert "the guard was added." in artifact.read_text()
     meta = _run_json(tmp_path)
     downgrades = meta["downgrades"]

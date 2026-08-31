@@ -61,7 +61,7 @@ def _respond(tmp_path, merges, round_no=1):
     return data
 
 
-def _resume(tmp_path):
+def _resume(tmp_path, env_extra=None):
     return subprocess.run(
         [
             sys.executable,
@@ -74,7 +74,7 @@ def _resume(tmp_path):
         ],
         capture_output=True,
         text=True,
-        env=_env(),
+        env=_env(env_extra),
     )
 
 
@@ -109,8 +109,71 @@ def test_a_halted_run_is_still_readable(tmp_path):
     _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
     meta = _run_json(tmp_path)
     assert meta["invocation"]["mode"] == "report"
+    assert meta["schema_version"] == 2
+    assert meta["lifecycle_state"] == "waiting-for-orchestrator"
+    assert "finished_at" not in meta
+    assert "exit_code" not in meta
     assert meta["roster"]
     assert (_run_dir(tmp_path) / "report.md").is_file()
+
+
+def test_partial_quorum_survives_orchestrator_resume(tmp_path):
+    halted = _halt(
+        tmp_path,
+        "good",
+        "crash",
+        extra=("--require-friends", "2"),
+    )
+    assert halted.returncode == 10, halted.stderr
+    checkpoint = _run_json(tmp_path)
+    assert checkpoint["successful_friend_ids"] == ["fake-good-0"]
+    assert checkpoint["succeeded_friends"] == 1
+    assert checkpoint["required_friends"] == 2
+
+    _respond(tmp_path, [])
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 12, resumed.stderr
+    terminal = _run_json(tmp_path)
+    assert terminal["stop_reason"] == "incomplete"
+    assert terminal["exit_code"] == 12
+    assert terminal["successful_friend_ids"] == ["fake-good-0"]
+
+
+def test_full_quorum_survives_orchestrator_resume(tmp_path):
+    halted = _halt(
+        tmp_path,
+        "good",
+        "good",
+        extra=("--require-friends", "2"),
+    )
+    assert halted.returncode == 10, halted.stderr
+    assert len(_run_json(tmp_path)["successful_friend_ids"]) == 2
+    _respond(tmp_path, [])
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+
+
+def test_zero_success_survives_extraction_resume_without_fail_open(tmp_path):
+    halted = _halt(
+        tmp_path,
+        "offtopic",
+        "crash",
+        extra=("--require-friends", "2"),
+    )
+    assert halted.returncode == 10, halted.stderr
+    assert _run_json(tmp_path)["successful_friend_ids"] == []
+    request_path = _run_dir(tmp_path) / "round-1" / "REQUEST.json"
+    data = json.loads(request_path.read_text())
+    data["unparseable"][0]["findings"] = []
+    (request_path.parent / "RESPONSE.json").write_text(json.dumps(data))
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 1, resumed.stderr
+    assert _run_json(tmp_path)["stop_reason"] == "incomplete"
 
 
 def test_exact_merge_does_not_halt(tmp_path):
@@ -368,6 +431,65 @@ def test_a_resumed_loop_carries_on_into_its_next_iteration(tmp_path):
     assert result.returncode == 10, (result.returncode, result.stderr)
     assert (_run_dir(tmp_path) / "round-3" / "REQUEST.json").is_file()
     assert _run_json(tmp_path)["iterations_run"] == 2
+
+
+def test_second_iteration_halt_has_exact_counters_and_separate_resume_position(tmp_path):
+    _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="loop",
+        extra=("--max-rounds", "2", "--max-loop-iterations", "2"),
+    )
+    first = _run_json(tmp_path)
+    assert first["attempted_calls"] == first["spent_calls"] == 2
+    assert first["iterations_run"] == 1
+    assert first["rounds_run"] == 1
+    assert first["resume_iteration"] == 1
+    _respond(tmp_path, [])
+
+    halted_again = _resume(tmp_path)
+
+    assert halted_again.returncode == 10, halted_again.stderr
+    second = _run_json(tmp_path)
+    assert second["attempted_calls"] == second["spent_calls"]
+    assert second["attempted_calls"] > first["attempted_calls"]
+    assert second["iterations_run"] == 2
+    assert second["rounds_run"] == 3
+    assert second["resume_iteration"] == 2
+    report = (_run_dir(tmp_path) / "report.md").read_text()
+    assert "Rounds run: 3" in report
+
+
+def test_wall_clock_budget_accumulates_active_time_across_multiple_resumes(tmp_path):
+    halted = _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="loop",
+        extra=(
+            "--max-rounds",
+            "2",
+            "--max-loop-iterations",
+            "2",
+            "--max-wall-clock",
+            "150",
+        ),
+    )
+    assert halted.returncode == 10, halted.stderr
+    _respond(tmp_path, [])
+    halted_again = _resume(tmp_path, {"AF_CLOCK_OFFSET_S": "20"})
+    assert halted_again.returncode == 10, halted_again.stderr
+    elapsed_after_two_processes = _run_json(tmp_path)["active_elapsed_s"]
+    assert 20 <= elapsed_after_two_processes < 150
+    _respond(tmp_path, [], round_no=3)
+
+    exhausted = _resume(tmp_path, {"AF_CLOCK_OFFSET_S": "140"})
+
+    assert exhausted.returncode == 11, exhausted.stderr
+    terminal = _run_json(tmp_path)
+    assert terminal["stop_reason"] == "max-wall-clock"
+    assert terminal["duration_s"] >= 150
 
 
 def test_a_resumed_loop_does_not_re_judge_what_it_already_settled(tmp_path):

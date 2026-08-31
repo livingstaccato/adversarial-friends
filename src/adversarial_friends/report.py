@@ -265,6 +265,44 @@ def render(
     lines: list[str] = [f"# Adversarial review — {run_meta['artifact']}", ""]
     lines.append(f"Mode: `{run_meta['mode']}` · preset: `{run_meta['preset']}`")
     lines.append("")
+    lifecycle_state = run_meta.get("lifecycle_state")
+    if lifecycle_state == "terminal":
+        lines.extend(
+            [
+                "## Outcome",
+                "",
+                f"Stop reason: `{_escape_cell(run_meta['stop_reason'])}` · "
+                f"Exit code: `{_escape_cell(run_meta['exit_code'])}` · "
+                f"Converged: `{_escape_cell(run_meta['converged'])}`",
+                "",
+            ]
+        )
+        if run_meta.get("mode") == "gate":
+            lines.extend(
+                [
+                    "### Gate",
+                    "",
+                    f"Decision: `{_escape_cell(run_meta.get('gate_decision'))}`",
+                    "",
+                ]
+            )
+            blockers = run_meta.get("gate_blocking_claims") or []
+            if blockers:
+                lines.append("Blocking claims:")
+                lines.append("")
+                lines.extend(f"- {_code_span(str(claim_id))}" for claim_id in blockers)
+                lines.append("")
+            else:
+                lines.extend(["Blocking claims: _(none)_", ""])
+    elif lifecycle_state is not None:
+        lines.extend(
+            [
+                "## Outcome",
+                "",
+                f"Run state: `{_escape_cell(lifecycle_state)}`",
+                "",
+            ]
+        )
     lines.append("## Friends")
     lines.append("")
     lines.append(

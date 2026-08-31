@@ -281,7 +281,14 @@ def resume_round_one(
     # by omission, not a crash, and the honest choice when the true number
     # was simply never recorded.
     resume_meta = getattr(args, "_resume_meta", {}) or {}
-    budget.spend(int(resume_meta.get("spent_calls", 0) or 0))
+    prior_calls = int(resume_meta.get("spent_calls", 0) or 0)
+    if budget.calls == 0:
+        # Compatibility for direct callers that still construct a blank
+        # Budget. cmd_run restores before its first ceiling check, so it
+        # arrives here already carrying the exact checkpoint total.
+        budget.spend(prior_calls)
+    elif budget.calls != prior_calls:
+        raise ValueError("resume budget calls disagree with the saved checkpoint")
 
     if args.mode not in JUDGING_MODES:
         return resumed

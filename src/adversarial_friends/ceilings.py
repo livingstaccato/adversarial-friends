@@ -72,7 +72,17 @@ class Budget:
     max_wall_clock_s: float = DEFAULT_MAX_WALL_CLOCK_S
     calls: int = 0
     started: float = 0.0
+    # Active monotonic time consumed by earlier processes in this same run.
+    # Operator think-time while a run waits for an orchestrator is excluded:
+    # no process is active to add it to this accumulator.
+    prior_elapsed_s: float = 0.0
     exhausted_by: str | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        value = self.prior_elapsed_s
+        if type(value) not in {int, float} or not math.isfinite(float(value)) or value < 0:
+            raise ValueError("prior_elapsed_s must be a finite nonnegative number")
+        self.prior_elapsed_s = float(value)
 
     def spend(self, calls: int) -> None:
         self.calls += calls
@@ -88,7 +98,11 @@ class Budget:
         return self.calls + calls > self.max_calls
 
     def out_of_time(self, now: float) -> bool:
-        return now - self.started >= self.max_wall_clock_s
+        return self.elapsed(now) >= self.max_wall_clock_s
+
+    def elapsed(self, now: float) -> float:
+        """Total active process time, including validated prior invocations."""
+        return self.prior_elapsed_s + max(0.0, now - self.started)
 
     def seconds_left(self, now: float) -> float:
         """What remains of the wall-clock ceiling, never below zero.
@@ -100,7 +114,7 @@ class Budget:
         timeout at what is left makes the ceiling bound the run rather than
         the gaps between its rounds.
         """
-        return max(0.0, self.started + self.max_wall_clock_s - now)
+        return max(0.0, self.max_wall_clock_s - self.elapsed(now))
 
     def exhaust(self, reason: str) -> None:
         # First ceiling hit wins: it is the one that actually truncated the

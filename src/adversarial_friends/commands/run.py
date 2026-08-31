@@ -6,7 +6,9 @@ Split out of cli.py.
 
 import argparse
 import concurrent.futures
+from datetime import UTC, datetime
 from pathlib import Path
+import shutil
 import signal
 import time
 from typing import Any
@@ -20,6 +22,7 @@ from ..ceilings import (
     within_deadline,
 )
 from ..claimschema import schema_path
+from ..errors import AfError, UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
 from ..orchestrator import (
@@ -51,10 +54,24 @@ from .runmeta import JUDGING_MODES, _base_meta, finish_run, loop_is_done, valida
 from .setup import prepare_run
 
 
+def _read_artifact_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise UsageError(f"artifact must be valid UTF-8: {path}") from exc
+    except OSError as exc:
+        raise UsageError(f"cannot read artifact {path}: {exc}") from exc
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     args, artifact = validate_run_args(args)
     resume_dir = getattr(args, "_resume_dir", None)
     resume_meta = getattr(args, "_resume_meta", None) if resume_dir is not None else None
+    if resume_dir is None:
+        # Decode before RunStore creates anything. A malformed artifact is a
+        # usage refusal, not a runtime-error run with an unexplained partial
+        # directory that cannot be resumed.
+        _read_artifact_text(artifact)
     # Deliberately NOT resolved here: resolving would follow a symlinked
     # artifact to its target's own name, so a review of `link_spec.md ->
     # real_spec.md` would report and store the artifact as "real_spec.md"
@@ -77,6 +94,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     installed_handlers = setup.installed_handlers
     reporter = setup.reporter
     external_tool_policy = setup.external_tool_policy
+    store: RunStore | None = None
     try:
         if resume_meta is not None:
             # The recorded repository is part of the immutable identity. A
@@ -94,6 +112,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         # passed, so it must not be added to the start as well or it would
         # cancel out and the ceiling would never be reached.
         run_started = time.monotonic()
+        invocation_started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        if resume_meta is not None and isinstance(resume_meta.get("started_at"), str):
+            invocation_started_at = str(resume_meta["started_at"])
         if resume_dir is not None:
             run_id = resume_dir.name
             store = RunStore(resume_dir.parent, run_id, resume=True)
@@ -142,7 +163,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         review = ReviewState.replay(store.ledger.records())
         review.copy_transition_warnings(downgrades)
         schema_file = schema_path(store.run_dir)
-        artifact_text = frozen.read_text(encoding="utf-8")
+        artifact_text = _read_artifact_text(frozen)
 
         # The snapshot serves two independent purposes, and taking it only
         # for the first one was a bug: repo-scope friends are checked out
@@ -174,6 +195,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 preset=resolved.preset,
                 roster_source=resolved.source,
                 env_withheld=env_withheld,
+                started_at=invocation_started_at,
             )
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
@@ -190,7 +212,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             ),
             max_rounds=args.max_rounds,
             max_wall_clock_s=args.max_wall_clock,
+            calls=int(getattr(args, "_resume_spent_calls", 0)),
             started=run_started,
+            prior_elapsed_s=float(getattr(args, "_resume_active_elapsed_s", 0.0)),
         )
         # The same `max_iterations` the derived default uses, so the
         # warning and the default cannot disagree about what a run costs.
@@ -217,10 +241,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         all_claims: list[Claim] = []
         friends_meta: list[dict[str, Any]] = []
         counter = 0
-        any_success = False
+        successful_friend_ids = list(getattr(args, "_resume_successful_friend_ids", []))
+        any_success = bool(successful_friend_ids)
         # None: no fresh critique round yet -- decide_exit's
         # --require-friends check fails open on None rather than guess.
-        succeeded_friends: int | None = None
+        succeeded_friends: int | None = (
+            len(successful_friend_ids) if resume_dir is not None else None
+        )
         # Set once any round hits a deterministic auth failure; only stops
         # further scheduling -- the round that found it is already persisted.
         auth_abort: str | None = None
@@ -231,7 +258,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         carry_over = None
         last_digest: str | None = None
         streak = 0
-        iterations_run = 0
+        iterations_run = int(getattr(args, "_resume_iterations_run", 0))
         # Carried into write_halt so a resumed iteration can compute the
         # streak from what actually happened. The defaults describe an
         # EXTRACTION halt, where run_critique raises before returning
@@ -247,7 +274,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         # iteration can run no judging round at all, and reporting that
         # iteration's count said "Rounds run: 1" for a run that had just
         # spent eight.
-        rounds_reached = 0
+        rounds_reached = int(getattr(args, "_resume_rounds_run", 0))
+        loop_converged = False
+        loop_exhausted = False
 
         # Any halt for the orchestrator must leave a resumable run behind.
         # A resumed run rebuilds its whole configuration from run.json, so
@@ -363,7 +392,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # reconstruction drops claims a merge retired, so
                     # counting the live set re-issues ids already spent.
                     counter = resumed.counter
-                    any_success = True
+                    any_success = bool(successful_friend_ids)
+                    succeeded_friends = len(successful_friend_ids)
                     iterations_run = iteration
                     rounds_reached = max(rounds_reached, base_round)
                     streak = step.streak
@@ -373,6 +403,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     if step.done or loop_is_done(
                         streak, all_claims, cross, [friend_key(s) for s in specs]
                     ):
+                        loop_converged = True
                         break
                     resume_dir = None
                     continue
@@ -414,6 +445,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # that just ran have enough friends", not "across every
                 # iteration of a loop, how many ever succeeded".
                 succeeded_friends = critique.succeeded_friends
+                successful_friend_ids = list(critique.successful_friend_ids)
 
                 if critique.auth_abort is not None:
                     # Deterministic (§7.2): stop rather than ask for
@@ -487,11 +519,32 @@ def cmd_run(args: argparse.Namespace) -> int:
                 streak = next_streak(streak, failed=critique.any_failed, dry=dry)
                 halted_dry, halted_failed = dry, critique.any_failed
                 if loop_is_done(streak, all_claims, cross, [friend_key(s) for s in specs]):
+                    loop_converged = True
                     break
                 if budget.exhausted_by:
                     break
+            else:
+                # A `for`-range ending is an observed fact distinct from
+                # reaching the same iteration count through resume. Only
+                # this path means the configured loop iteration ceiling was
+                # naturally exhausted.
+                loop_exhausted = (
+                    args.mode == "loop"
+                    and not abort_event.is_set()
+                    and auth_abort is None
+                    and budget.exhausted_by is None
+                )
 
-        except NeedsOrchestrator:
+        except NeedsOrchestrator as halt:
+            extraction_halt = halt.calls > 0
+            if extraction_halt:
+                budget.spend(halt.calls)
+                rounds_reached = max(rounds_reached, base_round)
+                friends_meta.extend(halt.friends_meta)
+                downgrades.extend(halt.downgrades)
+                successful_friend_ids = list(halt.successful_friend_ids)
+                any_success = bool(successful_friend_ids)
+                succeeded_friends = len(successful_friend_ids)
             write_halt(
                 args,
                 store,
@@ -504,7 +557,39 @@ def cmd_run(args: argparse.Namespace) -> int:
                 round_failed=halted_failed,
                 budget=budget,
                 tracker=tracker,
+                rounds_run=rounds_reached,
+                active_elapsed_s=budget.elapsed(now()),
+                successful_friend_ids=successful_friend_ids,
+                iteration_completed=not extraction_halt,
             )
+            raise
+        except Exception as exc:
+            if isinstance(exc, AfError):
+                raise
+            try:
+                finish_run(
+                    args,
+                    store,
+                    run_meta(),
+                    cross,
+                    abort_signum["value"],
+                    any_success,
+                    succeeded_friends,
+                    successful_friend_ids,
+                    iterations_run,
+                    streak,
+                    downgrades,
+                    budget,
+                    rounds_reached,
+                    tracker,
+                    loop_converged,
+                    loop_exhausted,
+                    budget.elapsed(now()),
+                    auth_abort=auth_abort,
+                    runtime_error=f"{type(exc).__name__}: {exc}",
+                )
+            except Exception as persistence_error:
+                exc.add_note(f"terminal persistence also failed: {persistence_error}")
             raise
 
         return finish_run(
@@ -515,13 +600,25 @@ def cmd_run(args: argparse.Namespace) -> int:
             abort_signum["value"],
             any_success,
             succeeded_friends,
+            successful_friend_ids,
             iterations_run,
             streak,
             downgrades,
             budget,
             rounds_reached,
+            tracker,
+            loop_converged,
+            loop_exhausted,
+            budget.elapsed(now()),
             auth_abort=auth_abort,
         )
+    except Exception:
+        # Initialization failures before a durable run.json exists must not
+        # leave a fresh directory that looks resumable but explains nothing.
+        # A resumed directory predates this process and is never removed.
+        if store is not None and resume_dir is None and not (store.run_dir / "run.json").is_file():
+            shutil.rmtree(store.run_dir, ignore_errors=True)
+        raise
     finally:
         # Stops the heartbeat thread. In the same `finally` as the signal
         # handlers because both are process-level state this command

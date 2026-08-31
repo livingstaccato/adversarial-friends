@@ -93,6 +93,55 @@ def test_write_halt_records_the_budgets_true_spend(monkeypatch, tmp_path):
 
     meta = json.loads((store.run_dir / "run.json").read_text())
     assert meta["spent_calls"] == 37
+    assert meta["lifecycle_state"] == "waiting-for-orchestrator"
+    assert meta["started_at"].endswith("Z")
+    assert "finished_at" not in meta
+    assert "exit_code" not in meta
+
+
+def test_write_halt_records_exact_checkpoint_counters_and_active_elapsed(monkeypatch, tmp_path):
+    from adversarial_friends.commands import haltstate
+
+    monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
+    store = _store(tmp_path, "run-halt-counters")
+    budget = Budget(max_calls=100, max_wall_clock_s=3600.0, started=10.0)
+    budget.spend(7)
+
+    write_halt(
+        _args(),
+        store,
+        {},
+        ReviewState(),
+        2,
+        1,
+        None,
+        budget=budget,
+        rounds_run=4,
+        active_elapsed_s=12.5,
+        successful_friend_ids=["fake-good-0"],
+    )
+
+    meta = json.loads((store.run_dir / "run.json").read_text())
+    assert meta["attempted_calls"] == meta["spent_calls"] == 7
+    assert meta["iterations_run"] == 2
+    assert meta["rounds_run"] == 4
+    assert meta["resume_iteration"] == 2
+    assert meta["active_elapsed_s"] == 12.5
+    assert meta["successful_friend_ids"] == ["fake-good-0"]
+
+
+def test_budget_composes_prior_active_elapsed_without_counting_inactive_wait():
+    budget = Budget(
+        max_calls=100,
+        max_wall_clock_s=100.0,
+        started=1_000.0,
+        prior_elapsed_s=40.0,
+    )
+
+    assert budget.elapsed(1_020.0) == 60.0
+    assert budget.seconds_left(1_020.0) == 40.0
+    assert not budget.out_of_time(1_059.0)
+    assert budget.out_of_time(1_060.0)
 
 
 def test_write_halt_without_a_budget_omits_the_field(monkeypatch, tmp_path):

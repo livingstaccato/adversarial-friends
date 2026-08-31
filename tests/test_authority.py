@@ -11,6 +11,7 @@ from adversarial_friends.authority import (
     PolicyError,
     enforce,
 )
+from adversarial_friends.commands.checkpoint import legacy_successful_friend_ids
 from adversarial_friends.commands.runmeta import _restore_args
 from adversarial_friends.dispatch import _dispatch
 from adversarial_friends.errors import UsageError
@@ -267,6 +268,307 @@ def _write_resume_fixture(
     (tmp_path / "spec.md").write_text("# spec\n")
     (run_dir / "run.json").write_text(json.dumps(meta))
     return run_dir
+
+
+def _write_checkpoint_fixture(tmp_path, checkpoint):
+    run_dir = _write_resume_fixture(
+        tmp_path,
+        {"mode": "report", "merge": "exact", "require_friends": 1},
+        [_saved_spec("fake-good-0")],
+    )
+    path = run_dir / "run.json"
+    meta = json.loads(path.read_text())
+    meta.update(checkpoint)
+    path.write_text(json.dumps(meta))
+    return run_dir
+
+
+def _friend_row(name: str, round_no: int, status: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "model": None,
+        "effort": None,
+        "round": round_no,
+        "status": status,
+    }
+
+
+def test_saved_checkpoint_refuses_disagreeing_attempted_and_spent_counts(tmp_path):
+    run_dir = _write_checkpoint_fixture(tmp_path, {"attempted_calls": 7, "spent_calls": 6})
+    with pytest.raises(UsageError, match=r"attempted_calls.*spent_calls"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_saved_checkpoint_refuses_an_impossible_resume_position(tmp_path):
+    run_dir = _write_checkpoint_fixture(tmp_path, {"iterations_run": 2, "resume_iteration": 7})
+    with pytest.raises(UsageError, match="resume_iteration"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_saved_checkpoint_refuses_successes_outside_the_frozen_roster(tmp_path):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {
+            "successful_friend_ids": ["invented-friend"],
+            "succeeded_friends": 1,
+        },
+    )
+    with pytest.raises(UsageError, match=r"successful_friend_ids.*roster"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_legacy_checkpoint_derives_only_unambiguous_resume_defaults(tmp_path):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {"friends": [_friend_row("fake-good-0", 1, "ok")]},
+    )
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    assert restored._resume_attempted_calls == 0
+    assert restored._resume_spent_calls == 0
+    assert restored._resume_iterations_run == 0
+    assert restored._resume_rounds_run == 0
+    assert restored._resume_iteration == 1
+    assert restored._resume_active_elapsed_s == 0.0
+    assert restored._resume_successful_friend_ids == ["fake-good-0"]
+    assert restored._resume_meta["repeat_tracker"] == {
+        "last": {},
+        "disabled": {},
+        "count": {},
+    }
+
+
+@pytest.mark.parametrize(
+    ("pending_statuses", "expected"),
+    [
+        (("failed: exit 1", "failed: timeout"), []),
+        (("ok [orphans suspected]", "failed: exit 1"), ["fake-a"]),
+        (("ok", "ok [orphans suspected]"), ["fake-a", "fake-b"]),
+    ],
+)
+def test_legacy_success_recovery_uses_only_the_pending_critique_round(
+    tmp_path, pending_statuses, expected
+):
+    run_dir = _write_resume_fixture(
+        tmp_path,
+        {
+            "mode": "loop",
+            "merge": "orchestrator",
+            "max_rounds": 2,
+            "max_loop_iterations": 3,
+            "require_friends": 2,
+        },
+        [_saved_spec("fake-a"), _saved_spec("fake-b", "security")],
+    )
+    path = run_dir / "run.json"
+    meta = json.loads(path.read_text())
+    meta.update(
+        {
+            "iterations_run": 2,
+            "rounds_run": 3,
+            "friends": [
+                _friend_row("fake-a", 1, "ok"),
+                _friend_row("fake-b", 1, "ok"),
+                # Judging rows are successful too, but are not critique
+                # quorum evidence for the pending second iteration.
+                _friend_row("fake-a", 2, "ok"),
+                _friend_row("fake-b", 2, "ok"),
+                _friend_row("fake-a", 3, pending_statuses[0]),
+                _friend_row("fake-b", 3, pending_statuses[1]),
+                # A repeated, identical row is non-ambiguous legacy history
+                # and must not make a valid loop checkpoint unresumable.
+                _friend_row("fake-a", 3, pending_statuses[0]),
+            ],
+        }
+    )
+    path.write_text(json.dumps(meta))
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    assert restored._resume_successful_friend_ids == expected
+
+
+@pytest.mark.parametrize(
+    "friends",
+    [
+        {"name": "fake-good-0"},
+        [1],
+        [{}],
+        [{"name": 1, "round": 1, "status": "ok"}],
+        [{"name": "fake-good-0", "round": True, "status": "ok"}],
+        [{"name": "fake-good-0", "round": 0, "status": "ok"}],
+        [{"name": "fake-good-0", "round": 1, "status": 1}],
+        [{"name": "fake-good-0", "round": 1, "status": "mystery"}],
+        [
+            {
+                "name": "fake-good-0",
+                "model": None,
+                "effort": None,
+                "round": 1,
+                "status": "failed: ",
+            }
+        ],
+        [{"name": "fake-good-0", "round": 1, "status": "ok", "model": []}],
+        [{"name": "fake-good-0", "round": 1, "status": "ok", "readonly": "yes"}],
+        [
+            {
+                "name": "fake-good-0",
+                "round": 1,
+                "status": "ok",
+                "external_tool_sources": [1],
+            }
+        ],
+    ],
+)
+def test_malformed_saved_friend_rows_are_rejected_without_rewriting_artifacts(tmp_path, friends):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {
+            "friends": friends,
+            "successful_friend_ids": [],
+            "succeeded_friends": 0,
+        },
+    )
+    report = run_dir / "report.md"
+    report.write_text("waiting report\n")
+    before_meta = (run_dir / "run.json").read_bytes()
+    before_report = report.read_bytes()
+
+    with pytest.raises(UsageError, match="friends"):
+        _restore_args(_resume_args(run_dir))
+
+    assert (run_dir / "run.json").read_bytes() == before_meta
+    assert report.read_bytes() == before_report
+
+
+def test_legacy_checkpoint_rejects_conflicting_duplicate_friend_status(tmp_path):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {
+            "friends": [
+                _friend_row("fake-good-0", 1, "ok"),
+                _friend_row("fake-good-0", 1, "failed: exit 1"),
+            ]
+        },
+    )
+    with pytest.raises(UsageError, match=r"friends.*ambiguous"):
+        _restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("first_status", "second_status"),
+    [
+        ("ok", "ok [orphans suspected]"),
+        ("failed: exit 1", "failed: timeout"),
+        ("ok", "OK"),
+        ("ok", " ok"),
+        ("failed: exit 1", "FAILED: exit 1"),
+        ("failed: exit 1", "failed: exit 1 "),
+    ],
+)
+def test_legacy_success_recovery_rejects_nonidentical_duplicate_statuses(
+    first_status, second_status
+):
+    rows = [
+        _friend_row("fake-good-0", 1, first_status),
+        _friend_row("fake-good-0", 1, second_status),
+    ]
+
+    with pytest.raises(UsageError, match=r"ambiguous duplicate statuses.*fake-good-0"):
+        legacy_successful_friend_ids(rows, 1)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("ok", ["fake-good-0"]),
+        ("ok [orphans suspected]", ["fake-good-0"]),
+        ("failed: exit 1", []),
+    ],
+)
+def test_legacy_success_recovery_deduplicates_only_identical_statuses(status, expected):
+    row = _friend_row("fake-good-0", 1, status)
+
+    assert legacy_successful_friend_ids([row, dict(row)], 1) == expected
+
+
+def test_legacy_checkpoint_rejects_missing_pending_critique_rows(tmp_path):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {
+            "iterations_run": 2,
+            "friends": [_friend_row("fake-good-0", 1, "ok")],
+        },
+    )
+    with pytest.raises(UsageError, match=r"friends.*pending critique round"):
+        _restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("claim_states", []),
+        ("claim_states", {"c-0001@1": 1}),
+        ("claim_states", {"c-0001@1": "invented-state"}),
+        ("amendment_notes", {}),
+        ("amendment_notes", [1]),
+        ("incomplete", "yes"),
+        ("halted_round_dry", 1),
+        ("halted_round_failed", None),
+    ],
+)
+def test_malformed_saved_report_state_is_rejected_before_resume(tmp_path, field, value):
+    run_dir = _write_checkpoint_fixture(
+        tmp_path,
+        {
+            "friends": [_friend_row("fake-good-0", 1, "ok")],
+            "successful_friend_ids": ["fake-good-0"],
+            "succeeded_friends": 1,
+            field: value,
+        },
+    )
+    with pytest.raises(UsageError, match=field):
+        _restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    "tracker",
+    [
+        [],
+        {"count": {"fake-good-0": "many"}},
+        {"last": {"fake-good-0": 1}},
+        {"disabled": {"fake-good-0": ["reason"]}},
+    ],
+)
+def test_saved_checkpoint_refuses_malformed_repeat_tracker(tmp_path, tracker):
+    run_dir = _write_checkpoint_fixture(tmp_path, {"repeat_tracker": tracker})
+    with pytest.raises(UsageError, match="repeat_tracker"):
+        _restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("attempted_calls", True),
+        ("spent_calls", -1),
+        ("iterations_run", 1.5),
+        ("rounds_run", "1"),
+        ("dry_streak", None),
+        ("resume_iteration", 0),
+        ("active_elapsed_s", True),
+        ("active_elapsed_s", -1),
+        ("active_elapsed_s", float("inf")),
+        ("successful_friend_ids", None),
+        ("successful_friend_ids", "fake-good-0"),
+        ("succeeded_friends", True),
+        ("required_friends", 0),
+    ],
+)
+def test_saved_checkpoint_hostile_scalar_types_are_usage_errors(tmp_path, name, value):
+    run_dir = _write_checkpoint_fixture(tmp_path, {name: value})
+    with pytest.raises(UsageError, match=name):
+        _restore_args(_resume_args(run_dir))
 
 
 @pytest.mark.parametrize(("name", "value"), SECURITY_GRANTS.items())

@@ -19,6 +19,7 @@ it as zero or as a guess.
 """
 
 import argparse
+from datetime import UTC, datetime
 from typing import Any
 
 from .. import verdicts as vd
@@ -94,6 +95,10 @@ def write_halt(
     round_failed: bool = False,
     budget: Budget | None = None,
     tracker: RepeatTracker | None = None,
+    rounds_run: int = 0,
+    active_elapsed_s: float = 0.0,
+    successful_friend_ids: list[str] | None = None,
+    iteration_completed: bool = True,
 ) -> None:
     """Leave behind a run directory a resume can actually continue from.
 
@@ -117,17 +122,40 @@ def write_halt(
     firing -- each resuming process believed only its own round 1 had ever
     run.
     """
+    meta["schema_version"] = 2
+    meta["lifecycle_state"] = "waiting-for-orchestrator"
+    meta.setdefault("started_at", datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+    for terminal_key in (
+        "finished_at",
+        "duration_s",
+        "stop_reason",
+        "exit_code",
+        "converged",
+        "gate_decision",
+        "gate_blocked",
+        "gate_blocking_claims",
+        "ceiling_hit",
+    ):
+        meta.pop(terminal_key, None)
     if budget is not None:
+        meta["attempted_calls"] = budget.calls
         meta["spent_calls"] = budget.calls
+    meta["rounds_run"] = rounds_run
+    meta["resume_iteration"] = iteration
+    meta["active_elapsed_s"] = active_elapsed_s
+    successes = list(successful_friend_ids or [])
+    meta["successful_friend_ids"] = successes
+    meta["succeeded_friends"] = len(successes)
+    meta["required_friends"] = getattr(args, "require_friends", None)
     if tracker is not None:
         # Same failure as Budget.calls, same fix: a RepeatTracker also
         # lives only in the process that built it. Without this, a friend
         # disabled for repeated failure in an earlier iteration came back
         # after every resume.
         meta["repeat_tracker"] = tracker.snapshot()
+    meta["iterations_run"] = iteration if iteration_completed else max(0, iteration - 1)
+    meta["dry_streak"] = streak
     if args.mode == "loop":
-        meta["iterations_run"] = iteration
-        meta["dry_streak"] = streak
         # Whether the critique round that ran just before this halt learned
         # anything. Without these two, the resumed iteration had nothing to
         # compute dryness from and hard-coded `round_is_dry(False, True)` --

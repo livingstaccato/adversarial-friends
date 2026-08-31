@@ -179,13 +179,13 @@ def test_a_call_ceiling_exits_eleven(tmp_path):
         tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b", extra=("--max-calls", "2")
     )
     assert result.returncode == 11, (result.returncode, result.stderr)
-    assert "budget-exhausted" in result.stderr
+    assert "max-calls" in result.stderr
 
 
 def test_the_ceiling_is_visible_in_the_report(tmp_path):
     _crossexam(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b", extra=("--max-calls", "2"))
     report = (_run_dir(tmp_path) / "report.md").read_text()
-    assert "budget-exhausted" in report
+    assert "max-calls" in report
 
 
 def test_an_unreachable_ceiling_is_warned_about_up_front(tmp_path):

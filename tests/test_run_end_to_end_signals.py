@@ -194,6 +194,10 @@ def _assert_signal_tears_everything_down(tmp_path, sig: int):
     )
     assert proc.returncode == 128 + sig, (proc.returncode, stderr)
     assert f"aborted by signal {sig}" in stderr, stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["stop_reason"] == "interrupted"
+    assert meta["exit_code"] == proc.returncode
 
     worktrees_after = subprocess.run(
         ["git", "worktree", "list"],

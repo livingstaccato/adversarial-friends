@@ -67,6 +67,24 @@ class NeedsOrchestrator(AfError):
 
     exit_code = NEEDS_ORCHESTRATOR_EXIT
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        calls: int = 0,
+        friends_meta: list[dict[str, Any]] | None = None,
+        downgrades: list[str] | None = None,
+        successful_friend_ids: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        # Extraction halts are raised from inside run_critique after the
+        # dispatch completed. Carry those observed facts to the centralized
+        # halt writer instead of losing them with the stack frame.
+        self.calls = calls
+        self.friends_meta = list(friends_meta or [])
+        self.downgrades = list(downgrades or [])
+        self.successful_friend_ids = list(successful_friend_ids or [])
+
 
 @dataclass(frozen=True)
 class MergeDecision:

@@ -253,7 +253,7 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
         ]
     )
 
-    assert cli.cmd_run(parsed) == 0
+    assert cli.cmd_run(parsed) == 11
 
     run_dir = next((tmp_path / "runs").iterdir())
     meta = json.loads((run_dir / "run.json").read_text())
