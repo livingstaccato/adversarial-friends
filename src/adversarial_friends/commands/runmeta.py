@@ -340,6 +340,7 @@ def _checkpoint_successes(
 
 
 def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
+    resumevalidation.validate_metadata_bound(meta)
     raw_proposals = meta.get("theme_proposals", [])
     if type(raw_proposals) is not list:
         raise UsageError("cannot resume: saved theme_proposals must be a list")
