@@ -2,6 +2,7 @@ import pytest
 
 from adversarial_friends import adapters, roster
 from adversarial_friends.errors import NoFriendsError, UsageError
+from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 
 ADAPTER_DIR = (
     __import__("pathlib").Path(__file__).resolve().parents[1]
@@ -40,6 +41,11 @@ def test_detects_codex_host():
     assert roster.detect_host({"CODEX_SANDBOX": "seatbelt"}) == "codex"
 
 
+def test_detects_current_codex_host_markers():
+    assert roster.detect_host({"CODEX_SESSION_ID": "session"}) == "codex"
+    assert roster.detect_host({"CODEX_THREAD_ID": "thread"}) == "codex"
+
+
 def test_no_host_detected_when_env_is_bare():
     assert roster.detect_host({}) is None
 
@@ -56,11 +62,57 @@ def test_include_self_keeps_the_host(registry):
     assert any(f.cli == "claude" for f in friends)
 
 
+def test_current_codex_host_is_excluded_unless_include_self(registry):
+    env = {**NO_HTTP, "CODEX_SESSION_ID": "session"}
+    excluded = roster.resolve(registry, LENSES, env, which_all)
+    included = roster.resolve(registry, LENSES, env, which_all, include_self=True)
+    assert all(friend.cli != "codex" for friend in excluded)
+    assert any(friend.cli == "codex" for friend in included)
+
+
+def test_explicit_host_provider_marks_wrapper_host(registry):
+    friends = roster.resolve(
+        registry,
+        LENSES,
+        NO_HTTP,
+        which_all,
+        host_provider="opencode",
+    )
+    assert all(friend.cli != "opencode" for friend in friends)
+
+
 def test_lenses_are_assigned_round_robin(registry):
     friends = roster.resolve(registry, LENSES, NO_HTTP, which_all)
     assigned = [f.lens for f in friends]
     assert assigned[:3] == LENSES[:3]
     assert len(set(assigned[:3])) == 3
+
+
+def test_capacity_is_applied_after_readiness(registry):
+    specs = roster.resolve(
+        registry,
+        ["ops"],
+        {},
+        which=lambda name: f"/bin/{name}" if name == "opencode" else None,
+        probe=lambda _: True,
+        provider_policy=ProviderPolicy({"ollama": ProviderSetting(enabled=True, model=None)}),
+        max_friends=1,
+    )
+    assert [spec.cli for spec in specs] == ["opencode"]
+
+
+def test_provider_model_preference_flows_into_selected_friend(registry):
+    specs = roster.resolve(
+        registry,
+        ["ops"],
+        {},
+        which=lambda _: None,
+        probe=lambda _: True,
+        provider_policy=ProviderPolicy(
+            {"ollama": ProviderSetting(enabled=True, model="qwen3:0.6b")}
+        ),
+    )
+    assert [(spec.cli, spec.model) for spec in specs] == [("ollama", "qwen3:0.6b")]
 
 
 def test_default_timeout_is_used_when_none_is_passed(registry):

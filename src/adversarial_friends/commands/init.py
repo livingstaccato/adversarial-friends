@@ -17,11 +17,12 @@ from pathlib import Path
 import shutil
 import sys
 
+from .. import providerconfig
 from ..adapters import load_adapters
 from ..errors import NoFriendsError, UsageError
 from ..paths import ADAPTER_DIR
 from ..prompt import available_lenses
-from ..roster import discover_clis
+from ..readiness import ReadinessState, assess_all
 from ..rosterfile import default_roster_path, render
 
 
@@ -34,8 +35,11 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
 
     registry = load_adapters(ADAPTER_DIR)
-    found = discover_clis(registry, shutil.which)
-    if not found:
+    policy = providerconfig.load(registry)
+    readiness = assess_all(registry, policy, which=shutil.which)
+    eligible = {ReadinessState.READY, ReadinessState.REACHABLE_UNCONFIGURED}
+    selected = [name for name, row in readiness.items() if row.state in eligible]
+    if not selected:
         raise NoFriendsError(
             "no agent CLIs found on PATH, so there is nothing to write a roster "
             "from. Install at least two (claude, codex, agy, opencode) or run a "
@@ -45,8 +49,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     lenses = available_lenses()
     notes: list[str] = []
     entries = []
-    for index, cli in enumerate(found):
+    for index, cli in enumerate(selected):
         adapter = registry[cli]
+        assessed = readiness[cli]
         lens = lenses[index % len(lenses)]
         entry: dict[str, object] = {
             "name": f"{cli}-{lens}",
@@ -56,7 +61,9 @@ def cmd_init(args: argparse.Namespace) -> int:
             # of its own only ever sees the artifact.
             "scope": "repo" if adapter.readonly_argv else "doc",
         }
-        if adapter.transport == "http":
+        if assessed.model is not None:
+            entry["model"] = assessed.model
+        if adapter.transport == "http" and assessed.model is None:
             # An HTTP friend is a bare model behind an endpoint and has no
             # default -- a roster naming one without a model would fail at
             # dispatch, so the placeholder is written and called out.

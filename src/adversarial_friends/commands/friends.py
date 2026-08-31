@@ -19,14 +19,14 @@ import os
 from pathlib import Path
 import shutil
 
-from .. import rosterfile
+from .. import providerconfig, rosterfile
 from ..adapters import Adapter, FriendSpec, friend_key
 from ..cliargs import _specs_from_flags
 from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
-from ..roster import DEGRADED_MODES, resolve
+from ..roster import DEGRADED_MODES, apply_capacity, resolve
 
 
 @dataclass
@@ -34,6 +34,37 @@ class ResolvedRoster:
     specs: list[FriendSpec]
     preset: str
     source: str | None = None
+
+
+def _validated_selection_args(
+    args: argparse.Namespace, registry: dict[str, Adapter]
+) -> tuple[set[str], set[str], str | None, list[str]]:
+    """Validate selection controls without assessing current providers."""
+    enabled = set(getattr(args, "enable_provider", []))
+    disabled = set(getattr(args, "disable_provider", []))
+    contradictory = enabled & disabled
+    if contradictory:
+        raise UsageError(
+            f"provider(s) {sorted(contradictory)} were passed to both "
+            "--enable-provider and --disable-provider"
+        )
+    provider_unknown = (enabled | disabled) - set(registry)
+    if provider_unknown:
+        raise UsageError(
+            f"unknown provider(s) {sorted(provider_unknown)}; known: {sorted(registry)}"
+        )
+    host_provider = getattr(args, "host_provider", None)
+    if host_provider is not None and host_provider not in registry:
+        raise UsageError(f"unknown --host-provider {host_provider!r}; known: {sorted(registry)}")
+
+    lenses = available_lenses()
+    if getattr(args, "lens", None):
+        known = set(lenses)
+        unknown = [name for name in args.lens if name not in known]
+        if unknown:
+            raise UsageError(f"unknown lens(es) {sorted(unknown)}; available: {sorted(known)}")
+        lenses = list(args.lens)
+    return enabled, disabled, host_provider, lenses
 
 
 def resolve_friends(
@@ -49,17 +80,35 @@ def resolve_friends(
     # override one run from the command line.
     preset = args.preset or default_preset(args.mode)
     roster_source: str | None = None
+    enabled, disabled, host_provider, lenses = _validated_selection_args(args, registry)
+    provider_policy = providerconfig.load(registry, os.environ)
+    if enabled or disabled:
+        settings = dict(provider_policy.providers)
+        for name in enabled | disabled:
+            current = provider_policy.setting(name)
+            settings[name] = providerconfig.ProviderSetting(
+                enabled=name in enabled,
+                model=current.model,
+            )
+        provider_policy = providerconfig.ProviderPolicy(settings)
+    invocation_model = getattr(args, "model", None)
+    if invocation_model is not None:
+        # Invocation flags are §10.1's strongest layer. Apply the global
+        # model before readiness so a reachable HTTP provider is not rejected
+        # as unconfigured before that stronger layer gets a chance to fill it.
+        provider_policy = providerconfig.ProviderPolicy(
+            {
+                name: providerconfig.ProviderSetting(
+                    enabled=provider_policy.setting(name).enabled,
+                    model=invocation_model,
+                )
+                for name in registry
+            }
+        )
 
     # §8.1: --lens restricts which lenses discovery assigns. Unknown names
     # are refused rather than silently ignored -- a typo would otherwise
     # quietly shrink the run to whichever lenses happened to match.
-    lenses = available_lenses()
-    if getattr(args, "lens", None):
-        known = set(lenses)
-        unknown = [name for name in args.lens if name not in known]
-        if unknown:
-            raise UsageError(f"unknown lens(es) {sorted(unknown)}; available: {sorted(known)}")
-        lenses = list(args.lens)
     if args.friend:
         specs = _specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
         if args.roster:
@@ -81,6 +130,8 @@ def resolve_friends(
                 include_self=args.include_self,
                 overrides=rosterfile.load(roster_path),
                 timeout=args.timeout,
+                provider_policy=provider_policy,
+                host_provider=host_provider,
             )
             roster_source = str(roster_path)
         else:
@@ -91,9 +142,22 @@ def resolve_friends(
                 shutil.which,
                 include_self=args.include_self,
                 timeout=args.timeout,
+                provider_policy=provider_policy,
+                host_provider=host_provider,
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
+    # Capacity applies to the resolved, ready roster before per-friend
+    # diagnostics. A discarded friend never runs, so its preset limitations
+    # must not be reported as limitations of the run that remains.
+    limit = getattr(args, "max_friends", None)
+    specs, dropped_specs = apply_capacity(specs, limit)
+    if dropped_specs:
+        dropped = [spec.name for spec in dropped_specs]
+        downgrades.append(
+            f"--max-friends={limit} dropped {dropped}; this run has fewer "
+            "independent judges than the roster named."
+        )
     # The preset fills effort only where nothing stronger set it, so a roster
     # entry's own `effort` wins -- that is what makes preset weaker than
     # roster in §10.1's order rather than merely different.
@@ -112,18 +176,6 @@ def resolve_friends(
                     downgrades.append(note)
             filled.append(replace(spec, effort=effort_for(preset, adapter)))
         specs = filled
-    # §17's --max-friends. Applied after resolution so it caps whatever
-    # source produced the roster, and reported: a silently shortened roster
-    # is a run with fewer independent judges than the operator thinks.
-    limit = getattr(args, "max_friends", None)
-    if limit is not None and len(specs) > limit:
-        dropped = [s.name for s in specs[limit:]]
-        specs = specs[:limit]
-        downgrades.append(
-            f"--max-friends={limit} dropped {dropped}; this run has fewer "
-            "independent judges than the roster named."
-        )
-
     # §10.1 layer 4: invocation flags outrank the roster and the preset.
     model = getattr(args, "model", None)
     effort = getattr(args, "effort", None)
@@ -186,15 +238,20 @@ def roster_for_run(
     the two rules that can stop a run before anything is spent -- §8.3's
     minimum and a resumed run's recorded roster.
     """
-    resolved = resolve_friends(args, registry, fake_cmd, downgrades)
-    specs = resolved.specs
     # A resumed run judges with the roster its ledger was written against.
-    # `resolve_friends` still runs above -- it validates the invocation and
-    # supplies the preset -- but its roster is discarded here rather than
-    # allowed to replace the recorded one.
     resume_roster = getattr(args, "_resume_roster", None)
-    if resume_roster:
+    if resume_roster is not None:
+        _validated_selection_args(args, registry)
         specs = list(resume_roster)
+        resume_meta = getattr(args, "_resume_meta", {}) or {}
+        resolved = ResolvedRoster(
+            specs=specs,
+            preset=args.preset or default_preset(args.mode),
+            source=resume_meta.get("roster_source"),
+        )
+    else:
+        resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+        specs = resolved.specs
 
     for spec in specs:
         validate_friend_name(spec.name)

@@ -47,12 +47,222 @@ def test_doctor_json_is_machine_readable(tmp_path):
     parsed = json.loads(result.stdout)
     assert isinstance(parsed["friends"], list)
     assert all("auth_classifiable" in row for row in parsed["friends"])
+    assert all({"state", "reason", "where", "model"} <= row.keys() for row in parsed["friends"])
+    assert parsed["usable"] == sum(row["state"] == "ready" for row in parsed["friends"])
+
+
+def test_doctor_text_uses_the_same_readiness_state_and_reason(tmp_path):
+    result = subprocess.run(
+        [sys.executable, str(AF), "doctor"], capture_output=True, text=True, env=_env()
+    )
+    assert "state=" in result.stdout
+    assert "reason=" in result.stdout
+
+
+def test_doctor_preserves_http_discovery_opt_out(monkeypatch, capsys):
+    import argparse
+
+    from adversarial_friends.commands import doctor as doctor_module
+
+    probes: list[str] = []
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    monkeypatch.setattr(doctor_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        doctor_module.http_transport,
+        "probe",
+        lambda endpoint: probes.append(endpoint) or True,
+    )
+
+    code = doctor_module.cmd_doctor(argparse.Namespace(json=True, gc=False, out=None))
+    payload = json.loads(capsys.readouterr().out)
+    ollama = next(row for row in payload["friends"] if row["name"] == "ollama")
+
+    assert code == 3
+    assert probes == []
+    assert ollama["state"] == "disabled"
+    assert "AF_NO_HTTP_DISCOVERY" in ollama["reason"]
+    assert payload["usable"] == 0
+
+
+def test_same_provider_cannot_be_enabled_and_disabled_for_one_run(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--enable-provider",
+        "codex",
+        "--disable-provider",
+        "codex",
+    )
+    assert result.returncode == 2
+    assert "both --enable-provider and --disable-provider" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
+def test_explicit_friend_bypasses_disabled_and_host_excluded_provider(monkeypatch, tmp_path):
+    from adversarial_friends import adapters
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
+    )
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy({"codex": ProviderSetting(enabled=False)}),
+    )
+    monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--friend", "codex:ops"])
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+    assert [spec.cli for spec in resolved.specs] == ["codex"]
+
+
+def test_per_run_enable_overrides_persistently_disabled_provider(monkeypatch, tmp_path):
+    from adversarial_friends import adapters
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
+    )
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name != "codex") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name == "codex" else None,
+    )
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--enable-provider",
+            "codex",
+            "--include-self",
+        ]
+    )
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+    assert [spec.cli for spec in resolved.specs] == ["codex"]
+
+
+def test_per_run_disable_overrides_persistently_enabled_provider(monkeypatch, tmp_path):
+    from adversarial_friends import adapters
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.errors import NoFriendsError
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
+    )
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "codex") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name == "codex" else None,
+    )
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--disable-provider", "codex"]
+    )
+    with pytest.raises(NoFriendsError):
+        friends_module.resolve_friends(args, registry, None, [])
+
+
+def test_frozen_resume_roster_skips_fresh_resolution_and_probes(monkeypatch):
+    from adversarial_friends.adapters import FriendSpec
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+
+    frozen = FriendSpec(
+        name="codex-ops",
+        cli="codex",
+        lens="ops",
+        model="gpt-5",
+        effort="high",
+        scope="repo",
+        timeout=900,
+    )
+    args = build_parser().parse_args(["run", "spec.md", "--mode", "report"])
+    args._resume_roster = [frozen]
+    args._resume_meta = {"roster_source": None}
+
+    def fresh_resolution_would_probe(*_args, **_kwargs):
+        raise AssertionError("resume attempted fresh provider resolution")
+
+    monkeypatch.setattr(friends_module, "resolve_friends", fresh_resolution_would_probe)
+
+    resolved, specs = friends_module.roster_for_run(args, {}, None, [])
+
+    assert specs == [frozen]
+    assert resolved.specs == [frozen]
+
+
+def test_frozen_resume_roster_still_validates_restored_provider_controls(monkeypatch):
+    from adversarial_friends.adapters import FriendSpec
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.errors import UsageError
+
+    frozen = FriendSpec(
+        name="codex-ops",
+        cli="codex",
+        lens="ops",
+        model=None,
+        effort=None,
+        scope="repo",
+        timeout=900,
+    )
+    args = build_parser().parse_args(["run", "spec.md", "--mode", "report"])
+    args._resume_roster = [frozen]
+    args._resume_meta = {"roster_source": None}
+    args.enable_provider = ["codex"]
+    args.disable_provider = ["codex"]
+
+    monkeypatch.setattr(
+        friends_module,
+        "resolve_friends",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("resume attempted fresh provider resolution")
+        ),
+    )
+
+    with pytest.raises(UsageError, match="both --enable-provider and --disable-provider"):
+        friends_module.roster_for_run(args, {}, None, [])
 
 
 # --- --model / --effort (§10.1 layer 4) ------------------------------------
 
 
-def test_model_and_effort_override_everything(tmp_path):
+def test_model_and_effort_override_everything(monkeypatch, tmp_path):
     """Invocation flags are §10.1's strongest layer -- they outrank a roster
     entry's own values, which is what makes them layer 4 rather than
     another way of spelling the same thing."""
@@ -61,19 +271,49 @@ def test_model_and_effort_override_everything(tmp_path):
         '[[friend]]\nname = "codex-ops"\ncli = "codex"\nlens = "ops"\n'
         'model = "from-roster"\neffort = "low"\n'
     )
-    run_af(
-        tmp_path,
-        _artifact(tmp_path),
-        "--roster",
-        str(roster),
-        "--model",
-        "from-flag",
-        "--effort",
-        "high",
+    from adversarial_friends import adapters
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
     )
-    friend = _run_json(tmp_path)["friends"][0]
-    assert friend["model"] == "from-flag"
-    assert friend["effort"] == "high"
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "codex") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: "/bin/codex" if name == "codex" else None,
+    )
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--model",
+            "from-flag",
+            "--effort",
+            "high",
+            "--include-self",
+        ]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert resolved.specs[0].model == "from-flag"
+    assert resolved.specs[0].effort == "high"
 
 
 def test_global_model_uses_the_friend_model_allowlist(tmp_path):
@@ -87,6 +327,36 @@ def test_global_model_uses_the_friend_model_allowlist(tmp_path):
     assert result.returncode == 2
     assert "invalid model" in result.stderr
     assert not (tmp_path / "runs").exists()
+
+
+def test_global_model_makes_reachable_http_provider_discoverable(monkeypatch, tmp_path):
+    from adversarial_friends import adapters, readiness as readiness_module
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
+    )
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "ollama") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(friends_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(readiness_module.http_transport, "probe", lambda _endpoint: True)
+    monkeypatch.delenv("AF_NO_HTTP_DISCOVERY", raising=False)
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--model", "qwen3:0.6b"])
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [(spec.cli, spec.model) for spec in resolved.specs] == [("ollama", "qwen3:0.6b")]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +396,7 @@ def test_an_unknown_lens_is_refused(tmp_path):
     assert "unknown lens" in result.stderr
 
 
-def test_max_friends_caps_and_says_so(tmp_path):
+def test_max_friends_caps_and_says_so(monkeypatch, tmp_path):
     """A silently shortened roster is a run with fewer independent judges
     than the operator thinks it has."""
     roster = tmp_path / "roster.toml"
@@ -134,10 +404,49 @@ def test_max_friends_caps_and_says_so(tmp_path):
         '[[friend]]\nname = "a"\ncli = "codex"\nlens = "ops"\n'
         '[[friend]]\nname = "b"\ncli = "claude"\nlens = "security"\n'
     )
-    run_af(tmp_path, _artifact(tmp_path), "--roster", str(roster), "--max-friends", "1")
-    meta = _run_json(tmp_path)
-    assert len(meta["friends"]) == 1
-    assert any("--max-friends=1 dropped" in d for d in meta["downgrades"])
+    from adversarial_friends import adapters
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "src"
+        / "adversarial_friends"
+        / "assets"
+        / "adapters"
+    )
+    selected = {"codex", "claude"}
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name in selected) for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name in selected else None,
+    )
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--max-friends",
+            "1",
+            "--include-self",
+        ]
+    )
+    downgrades: list[str] = []
+
+    resolved = friends_module.resolve_friends(args, registry, None, downgrades)
+
+    assert len(resolved.specs) == 1
+    assert any("--max-friends=1 dropped" in note for note in downgrades)
 
 
 # --- --require-friends -------------------------------------------------------

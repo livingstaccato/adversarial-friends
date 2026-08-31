@@ -400,6 +400,29 @@ def test_resume_judges_with_the_roster_the_ledger_was_written_against(tmp_path):
     assert [s["cli"] for s in after] == [s["cli"] for s in before]
 
 
+def test_resume_does_not_require_current_provider_selection_to_succeed(tmp_path):
+    _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
+    before = _run_json(tmp_path)["roster"]
+    _respond(tmp_path, [])
+    meta_path = _run_dir(tmp_path) / "run.json"
+    meta = json.loads(meta_path.read_text())
+    meta["invocation"]["friend"] = []
+    meta["invocation"]["disable_provider"] = [
+        "agy",
+        "claude",
+        "codex",
+        "ollama",
+        "opencode",
+    ]
+    meta["invocation"]["host_provider"] = "codex"
+    meta_path.write_text(json.dumps(meta))
+
+    result = _resume(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert _run_json(tmp_path)["roster"] == before
+
+
 def test_a_second_resume_of_the_same_run_is_refused(tmp_path):
     """A fresh run is protected by the "already exists" refusal, but a
     resume deliberately reopens a directory that has one. Two CI workers

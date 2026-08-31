@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from adversarial_friends import adapters, cliargs
+from adversarial_friends.commands.runmeta import _RESUMABLE_ARGS
 from adversarial_friends.errors import UsageError
 
 ADAPTER_DIR = (
@@ -111,3 +112,26 @@ def test_provider_subcommands_parse_exact_forms(argv, action, name, model, json_
     assert getattr(args, "name", None) == name
     assert getattr(args, "model", None) == model
     assert getattr(args, "json", False) is json_output
+
+
+def test_provider_selection_overrides_are_repeatable():
+    args = cliargs.build_parser().parse_args(
+        [
+            "run",
+            "spec.md",
+            "--enable-provider",
+            "ollama",
+            "--enable-provider",
+            "codex",
+            "--disable-provider",
+            "claude",
+        ]
+    )
+    assert args.enable_provider == ["ollama", "codex"]
+    assert args.disable_provider == ["claude"]
+
+
+def test_host_provider_parses_and_is_resumable():
+    args = cliargs.build_parser().parse_args(["run", "spec.md", "--host-provider", "wrapper-agent"])
+    assert args.host_provider == "wrapper-agent"
+    assert "host_provider" in _RESUMABLE_ARGS

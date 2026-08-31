@@ -1,24 +1,18 @@
 """End-to-end `--roster`, `--preset`, and `afriend init` (spec §10.1, §13, §17).
 
-**These assert on roster RESOLUTION, not on a friend running successfully.**
-The test-only `fake` cli has no adapter in the registry on purpose -- routing
-it through roster.resolve's validation would mean either fabricating an
-adapter or special-casing the trust boundary, and neither belongs there. So a
-roster can only name real CLIs, which are absent from these tests' safe PATH
-and therefore fail to launch.
-
-That is the right level anyway: the roster path converges with the --friend
-path the moment specs exist, and everything after that is covered by every
-other end-to-end file. What is unique to a roster is which friends get
-resolved, with what settings, from which file -- which is what these check,
-via run.json's friend table rather than via exit status.
+Most tests assert on roster resolution rather than spending a real agent
+call. Roster entries now pass through canonical readiness, so unit-level
+tests inject executable/endpoint availability explicitly; subprocess tests
+retain the safe PATH that prevents accidental metered calls.
 """
 
 import json
+from pathlib import Path
 import subprocess
 import sys
 
 from e2e_helpers import AF, _env, run_af
+import pytest
 
 ROSTER = """
 [[friend]]
@@ -27,6 +21,37 @@ cli = "codex"
 lens = "ops"
 scope = "doc"
 """
+ADAPTER_DIR = (
+    Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets" / "adapters"
+)
+
+
+def _selection_fixture(monkeypatch, *, enabled, executables=(), models=None):
+    from adversarial_friends import adapters
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = adapters.load_adapters(ADAPTER_DIR)
+    configured_models = models or {}
+    monkeypatch.setattr(
+        friends_module.providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {
+                name: ProviderSetting(
+                    enabled=name in enabled,
+                    model=configured_models.get(name),
+                )
+                for name in registry
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name in executables else None,
+    )
+    return registry, friends_module
 
 
 def _artifact(tmp_path):
@@ -49,11 +74,22 @@ def _roster(tmp_path, text=ROSTER):
 # --- --roster --------------------------------------------------------------
 
 
-def test_a_roster_file_replaces_discovery(tmp_path):
-    run_af(tmp_path, _artifact(tmp_path), "--roster", str(_roster(tmp_path)))
-    meta = _run_json(tmp_path)
-    assert [f["name"] for f in meta["friends"]] == ["codex-ops"]
-    assert meta["roster_source"] == str(_roster(tmp_path))
+def test_a_roster_file_replaces_discovery(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    roster = _roster(tmp_path)
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--roster", str(roster), "--include-self"]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [spec.name for spec in resolved.specs] == ["codex-ops"]
+    assert resolved.source == str(roster)
 
 
 def test_friend_flags_beat_a_roster(tmp_path):
@@ -115,16 +151,156 @@ def test_a_repo_local_roster_is_not_picked_up_on_its_own(tmp_path, monkeypatch):
     assert _run_json(tmp_path)["roster_source"] is None
 
 
-def test_the_user_config_roster_is_picked_up(tmp_path):
+def test_the_user_config_roster_is_picked_up(monkeypatch, tmp_path):
     """The trusted half of §13: this is the operator's own machine-wide
     configuration, and using it is the point of writing one."""
     config = tmp_path / "config" / "adversarial-friends"
     config.mkdir(parents=True)
     (config / "roster.toml").write_text(ROSTER)
-    run_af(tmp_path, _artifact(tmp_path), env_extra={"XDG_CONFIG_HOME": str(tmp_path / "config")})
-    meta = _run_json(tmp_path)
-    assert [f["name"] for f in meta["friends"]] == ["codex-ops"]
-    assert meta["roster_source"] == str(config / "roster.toml")
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config.parent))
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--include-self"])
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [spec.name for spec in resolved.specs] == ["codex-ops"]
+    assert resolved.source == str(config / "roster.toml")
+
+
+@pytest.mark.parametrize("automatic", [False, True], ids=["explicit", "user-config"])
+def test_roster_files_filter_disabled_providers_before_dispatch(monkeypatch, tmp_path, automatic):
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.errors import NoFriendsError
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch,
+        enabled={"codex"} if not automatic else set(),
+    )
+    if automatic:
+        config = tmp_path / "config"
+        roster = config / "adversarial-friends" / "roster.toml"
+        roster.parent.mkdir(parents=True)
+        roster.write_text(ROSTER)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+        argv = ["run", str(_artifact(tmp_path))]
+    else:
+        roster = _roster(tmp_path)
+        argv = [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--disable-provider",
+            "codex",
+        ]
+    executable_probes: list[str] = []
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: executable_probes.append(name) or f"/bin/{name}",
+    )
+    args = build_parser().parse_args(argv)
+
+    with pytest.raises(NoFriendsError, match=r"codex-ops.*disabled by provider policy"):
+        friends_module.resolve_friends(args, registry, None, [])
+
+    assert executable_probes == []
+
+
+def test_roster_file_excludes_detected_host_unless_include_self(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.errors import NoFriendsError
+    from adversarial_friends.readiness import HOST_ENV_MARKERS
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    roster = _roster(tmp_path)
+    for marker in HOST_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
+    monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+
+    excluded = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--roster", str(roster)])
+    with pytest.raises(NoFriendsError, match=r"codex-ops.*detected host provider"):
+        friends_module.resolve_friends(excluded, registry, None, [])
+
+    included = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--roster", str(roster), "--include-self"]
+    )
+    resolved = friends_module.resolve_friends(included, registry, None, [])
+    assert [spec.name for spec in resolved.specs] == ["codex-ops"]
+
+
+def test_unready_roster_entries_do_not_consume_capacity_or_trigger_duplicate_probes(
+    monkeypatch, tmp_path
+):
+    from adversarial_friends import readiness as readiness_module
+    from adversarial_friends.cliargs import build_parser
+
+    selected = {"codex", "ollama", "opencode"}
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled=selected, executables={"opencode"}
+    )
+    roster = _roster(
+        tmp_path,
+        '[[friend]]\nname = "missing"\ncli = "codex"\nlens = "ops"\n'
+        '[[friend]]\nname = "model-less"\ncli = "ollama"\nlens = "security"\n'
+        '[[friend]]\nname = "model-less-two"\ncli = "ollama"\nlens = "testability"\n'
+        '[[friend]]\nname = "survivor"\ncli = "opencode"\nlens = "assumptions"\n',
+    )
+    probes: list[str] = []
+    monkeypatch.setattr(
+        readiness_module.http_transport,
+        "probe",
+        lambda endpoint: probes.append(endpoint) or True,
+    )
+    monkeypatch.delenv("AF_NO_HTTP_DISCOVERY", raising=False)
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--include-self",
+            "--max-friends",
+            "1",
+        ]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [spec.name for spec in resolved.specs] == ["survivor"]
+    assert probes == [registry["ollama"].endpoint]
+
+
+def test_roster_file_projects_configured_http_model(monkeypatch, tmp_path):
+    from adversarial_friends import readiness as readiness_module
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch,
+        enabled={"ollama"},
+        models={"ollama": "qwen3:0.6b"},
+    )
+    roster = _roster(
+        tmp_path,
+        '[[friend]]\nname = "local-model"\ncli = "ollama"\nlens = "ops"\n',
+    )
+    monkeypatch.setattr(readiness_module.http_transport, "probe", lambda _endpoint: True)
+    monkeypatch.delenv("AF_NO_HTTP_DISCOVERY", raising=False)
+    args = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--roster", str(roster), "--include-self"]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [(spec.cli, spec.model) for spec in resolved.specs] == [("ollama", "qwen3:0.6b")]
 
 
 # --- afriend init ----------------------------------------------------------
@@ -156,6 +332,128 @@ def test_init_refuses_to_clobber_without_force(tmp_path):
     assert (tmp_path / "roster.toml").read_text() == "# mine\n"
 
 
+def test_init_does_not_probe_disabled_http_provider(monkeypatch, tmp_path):
+    from adversarial_friends import providerconfig, readiness as readiness_module
+    from adversarial_friends.commands import init as init_module
+    from adversarial_friends.errors import NoFriendsError
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = init_module.load_adapters(init_module.ADAPTER_DIR)
+    monkeypatch.setattr(
+        providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=False) for name in registry}
+        ),
+    )
+    probes: list[str] = []
+    monkeypatch.setattr(
+        readiness_module.http_transport,
+        "probe",
+        lambda endpoint: probes.append(endpoint) or True,
+    )
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+
+    with pytest.raises(NoFriendsError):
+        init_module.cmd_init(args)
+
+    assert probes == []
+    assert not target.exists()
+
+
+def test_init_uses_configured_http_model(monkeypatch, tmp_path):
+    from adversarial_friends import providerconfig, readiness as readiness_module
+    from adversarial_friends.commands import init as init_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = init_module.load_adapters(init_module.ADAPTER_DIR)
+    monkeypatch.setattr(
+        providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {
+                name: ProviderSetting(
+                    enabled=name == "ollama",
+                    model="qwen3:0.6b" if name == "ollama" else None,
+                )
+                for name in registry
+            }
+        ),
+    )
+    monkeypatch.setattr(readiness_module.http_transport, "probe", lambda _endpoint: True)
+    monkeypatch.delenv("AF_NO_HTTP_DISCOVERY", raising=False)
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+
+    init_module.cmd_init(args)
+
+    text = target.read_text()
+    assert 'cli = "ollama"' in text
+    assert 'model = "qwen3:0.6b"' in text
+    assert "CHANGE-ME" not in text
+
+
+def test_init_excludes_detected_host_provider(monkeypatch, tmp_path):
+    from adversarial_friends import providerconfig
+    from adversarial_friends.commands import init as init_module
+    from adversarial_friends.errors import NoFriendsError
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = init_module.load_adapters(init_module.ADAPTER_DIR)
+    monkeypatch.setattr(
+        providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "codex") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        init_module.shutil,
+        "which",
+        lambda name: "/bin/codex" if name == "codex" else None,
+    )
+    monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+
+    with pytest.raises(NoFriendsError):
+        init_module.cmd_init(args)
+
+    assert not target.exists()
+
+
+def test_init_projects_only_eligible_canonical_readiness_states(monkeypatch, tmp_path):
+    from adversarial_friends.commands import init as init_module
+    from adversarial_friends.readiness import FriendReadiness, ReadinessState
+
+    rows = {
+        "codex": FriendReadiness("codex", ReadinessState.READY, "available", "/bin/codex", None),
+        "opencode": FriendReadiness(
+            "opencode",
+            ReadinessState.POLICY_BLOCKED,
+            "blocked by policy",
+            "/bin/opencode",
+            None,
+        ),
+    }
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: rows, raising=False)
+    monkeypatch.setattr(
+        init_module.shutil,
+        "which",
+        lambda name: f"/bin/{name}" if name in rows else None,
+    )
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+
+    init_module.cmd_init(args)
+
+    text = target.read_text()
+    assert 'cli = "codex"' in text
+    assert 'cli = "opencode"' not in text
+
+
 # --- --preset --------------------------------------------------------------
 
 
@@ -165,7 +463,7 @@ def test_a_preset_is_recorded_as_used(tmp_path):
     assert _run_json(tmp_path)["preset"] == "cheap"
 
 
-def test_a_roster_effort_beats_the_preset(tmp_path):
+def test_a_roster_effort_beats_the_preset(monkeypatch, tmp_path):
     """§10.1: roster outranks preset. The preset fills only what nothing
     stronger set, which is what makes it weaker rather than merely
     different."""
@@ -173,11 +471,64 @@ def test_a_roster_effort_beats_the_preset(tmp_path):
         tmp_path,
         '[[friend]]\nname = "codex-ops"\ncli = "codex"\nlens = "ops"\neffort = "medium"\n',
     )
-    result = run_af(tmp_path, _artifact(tmp_path), "--roster", str(roster), "--preset", "thorough")
-    # codex is not installed under the safe PATH, so the friend fails -- but
-    # the effort it was given is recorded either way.
-    meta = _run_json(tmp_path)
-    assert meta["friends"][0]["effort"] == "medium", result.stderr
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--preset",
+            "thorough",
+            "--include-self",
+        ]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert resolved.specs[0].effort == "medium"
+
+
+def test_capacity_is_applied_before_discarded_friend_preset_diagnostics(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch,
+        enabled={"codex", "opencode"},
+        executables={"codex", "opencode"},
+    )
+    roster = _roster(
+        tmp_path,
+        '[[friend]]\nname = "selected"\ncli = "codex"\nlens = "ops"\n'
+        '[[friend]]\nname = "discarded"\ncli = "opencode"\nlens = "security"\n',
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--roster",
+            str(roster),
+            "--preset",
+            "thorough",
+            "--max-friends",
+            "1",
+            "--include-self",
+        ]
+    )
+    downgrades: list[str] = []
+
+    resolved = friends_module.resolve_friends(args, registry, None, downgrades)
+
+    assert [spec.name for spec in resolved.specs] == ["selected"]
+    assert any("--max-friends=1 dropped" in note for note in downgrades)
+    assert not any("opencode reports effort as unverified" in note for note in downgrades)
 
 
 def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
@@ -189,10 +540,20 @@ def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
     considered. Describing a mechanism that never runs is worse than saying
     nothing, in a file the operator is meant to read and trust.
     """
+    from adversarial_friends import providerconfig, readiness as readiness_module
     from adversarial_friends.commands import init as init_module
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
-    monkeypatch.setattr(init_module, "discover_clis", lambda *a, **k: ["ollama"])
+    monkeypatch.setattr(
+        providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "ollama") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(readiness_module.http_transport, "probe", lambda _endpoint: True)
+    monkeypatch.delenv("AF_NO_HTTP_DISCOVERY", raising=False)
     target = tmp_path / "roster.toml"
     args = type("Args", (), {"out": str(target), "force": False})()
     init_module.cmd_init(args)

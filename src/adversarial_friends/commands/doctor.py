@@ -12,12 +12,20 @@ import sys
 import tempfile
 from typing import Any
 
-from .. import http_transport
+from .. import http_transport, providerconfig
 from ..adapters import Adapter, FriendSpec, build_argv, load_adapters
 from ..claimschema import schema_path
 from ..paths import ADAPTER_DIR
-from ..roster import discover_clis
+from ..readiness import FriendReadiness, ReadinessState, assess_all
 from ..runstore import default_root
+
+
+def _legacy_status(row: FriendReadiness, adapter: Adapter) -> str:
+    if row.ready or row.state is ReadinessState.REACHABLE_UNCONFIGURED:
+        return "found"
+    if row.state is ReadinessState.UNAVAILABLE:
+        return "unreachable" if adapter.transport == "http" else "missing"
+    return row.state.value
 
 
 def _gc(root: Path) -> tuple[int, list[str]]:
@@ -46,32 +54,36 @@ def _gc(root: Path) -> tuple[int, list[str]]:
     return len(removed), removed
 
 
-def _rows(registry: dict[str, Adapter], found: list[str], tmp: Path) -> list[dict[str, Any]]:
+def _rows(
+    registry: dict[str, Adapter],
+    readiness: dict[str, FriendReadiness],
+    tmp: Path,
+) -> list[dict[str, Any]]:
     prompt_file = tmp / "prompt.txt"
     prompt_file.write_text("", encoding="utf-8")
     schema_file = schema_path(tmp)
     rows = []
     for name, adapter in sorted(registry.items()):
+        assessed = readiness[name]
         if adapter.transport == "http":
-            # "Available" for an HTTP friend means a reachable endpoint, so
-            # this probes rather than checking PATH. The capability comes
-            # from http_transport, the same source real dispatch uses --
-            # doctor must never compute it a second way.
+            # Capability comes from the same source real dispatch uses;
+            # readiness was already assessed once before this projection.
             cap = http_transport.capability_for(adapter)
-            reachable = bool(adapter.endpoint) and http_transport.probe(adapter.endpoint)
             rows.append(
                 {
                     "name": name,
-                    "status": "found" if reachable else "unreachable",
+                    "status": _legacy_status(assessed, adapter),
+                    "state": assessed.state.value,
+                    "reason": assessed.reason,
                     "schema": cap.schema,
                     "readonly": cap.readonly,
                     "effort": cap.effort,
-                    "where": adapter.endpoint,
+                    "where": assessed.where,
+                    "model": assessed.model,
                     "auth_classifiable": adapter.auth.declared(),
                 }
             )
             continue
-        binary = shutil.which(adapter.binary) if adapter.binary else None
         # capability is always what build_argv reports for a repo-scoped
         # probe spec, never re-derived by hand -- the same rule real
         # dispatch follows. doctor's whole point is to tell the operator
@@ -89,11 +101,14 @@ def _rows(registry: dict[str, Adapter], found: list[str], tmp: Path) -> list[dic
         rows.append(
             {
                 "name": name,
-                "status": "found" if name in found else "missing",
+                "status": _legacy_status(assessed, adapter),
+                "state": assessed.state.value,
+                "reason": assessed.reason,
                 "schema": cap.schema,
                 "readonly": cap.readonly,
                 "effort": cap.effort,
-                "where": binary or "",
+                "where": assessed.where,
+                "model": assessed.model,
                 "auth_classifiable": adapter.auth.declared(),
             }
         )
@@ -102,17 +117,19 @@ def _rows(registry: dict[str, Adapter], found: list[str], tmp: Path) -> list[dic
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     registry = load_adapters(ADAPTER_DIR)
-    found = discover_clis(registry, shutil.which)
+    policy = providerconfig.load(registry)
+    readiness = assess_all(registry, policy, which=shutil.which)
     collected: list[str] = []
     if getattr(args, "gc", False):
         _count, collected = _gc(Path(args.out) if getattr(args, "out", None) else default_root())
     with tempfile.TemporaryDirectory(prefix="af-doctor-") as tmp_str:
-        rows = _rows(registry, found, Path(tmp_str))
+        rows = _rows(registry, readiness, Path(tmp_str))
+    usable = sum(row.ready for row in readiness.values())
 
     if getattr(args, "json", False):
         print(
             json.dumps(
-                {"friends": rows, "collected": collected, "usable": len(found)},
+                {"friends": rows, "collected": collected, "usable": usable},
                 indent=2,
                 sort_keys=True,
             )
@@ -120,11 +137,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         for row in rows:
             print(
-                f"{row['name']:10} {row['status']:12} "
+                f"{row['name']:10} {row['status']:12} state={row['state']} "
                 f"schema={row['schema']} readonly={row['readonly']} "
-                f"effort={row['effort']} {row['where']}"
+                f"effort={row['effort']} where={row['where']} "
+                f"model={row['model']} reason={row['reason']}"
             )
         for name in collected:
             print(f"collected abandoned run: {name}", file=sys.stderr)
 
-    return 0 if found else 3
+    return 0 if usable else 3

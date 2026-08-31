@@ -291,12 +291,11 @@ def test_doctor_reports_missing_clis_and_exits_3(tmp_path):
     assert "missing" in result.stdout
 
 
-def test_doctor_reports_ollama_reachability_not_a_stub_message(tmp_path):
+def test_doctor_reports_ollama_opt_out_not_a_stub_message(tmp_path):
     """doctor used to print "unimplemented" for ollama because no HTTP
-    transport existed. It ships now, so doctor probes the endpoint and says
-    whether a server is actually listening -- `found` or `unreachable`,
-    never a build-status message. The safe test env disables HTTP discovery,
-    but doctor reports on every declared adapter regardless."""
+    transport existed. It ships now, and the safe test environment's HTTP
+    discovery opt-out is itself a canonical readiness state. Doctor reports
+    that state without probing the endpoint, never a build-status message."""
     result = subprocess.run(
         [sys.executable, str(AF), "doctor"],
         capture_output=True,
@@ -305,5 +304,6 @@ def test_doctor_reports_ollama_reachability_not_a_stub_message(tmp_path):
     )
     ollama_line = next(ln for ln in result.stdout.splitlines() if ln.startswith("ollama"))
     assert "unimplemented" not in ollama_line.lower()
-    assert ("found" in ollama_line) or ("unreachable" in ollama_line)
+    assert "state=disabled" in ollama_line
+    assert "AF_NO_HTTP_DISCOVERY" in ollama_line
     assert "readonly=False" in ollama_line  # never claims an enforcement it has not made

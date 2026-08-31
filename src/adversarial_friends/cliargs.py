@@ -42,6 +42,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="cli:lens[:model], repeatable; overrides discovery",
     )
     run_p.add_argument("--include-self", action="store_true")
+    run_p.add_argument(
+        "--host-provider",
+        default=None,
+        metavar="NAME",
+        help="explicitly identify the provider hosting this run",
+    )
+    run_p.add_argument(
+        "--enable-provider",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="enable a provider for this run (repeatable)",
+    )
+    run_p.add_argument(
+        "--disable-provider",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="disable a provider for this run (repeatable)",
+    )
     # §4.2. `exact` always reaches a terminal state unaided, which is what
     # makes the documented CLI usable from a plain shell; `orchestrator`
     # halts with exit 10 for judgment the runner cannot make.
