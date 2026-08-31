@@ -1,3 +1,5 @@
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -39,3 +41,40 @@ def test_the_reported_version_matches_the_file_that_drives_the_build():
 
     expected = (REPO / "VERSION").read_text(encoding="utf-8").strip()
     assert __version__ == expected
+
+
+def run_afriend(*args: str, config_home: Path) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["XDG_CONFIG_HOME"] = str(config_home)
+    return subprocess.run([str(AF), *args], capture_output=True, text=True, env=env)
+
+
+def test_providers_cli_updates_and_lists_json(tmp_path):
+    disabled = run_afriend("providers", "disable", "ollama", config_home=tmp_path)
+    assert disabled.returncode == 0, disabled.stderr
+    modeled = run_afriend("providers", "set-model", "ollama", "qwen3:0.6b", config_home=tmp_path)
+    assert modeled.returncode == 0, modeled.stderr
+
+    listed = run_afriend("providers", "list", "--json", config_home=tmp_path)
+    assert listed.returncode == 0, listed.stderr
+    payload = json.loads(listed.stdout)
+    assert payload["version"] == 1
+    assert payload["providers"]["ollama"] == {"enabled": False, "model": "qwen3:0.6b"}
+    assert payload["providers"]["codex"] == {"enabled": True, "model": None}
+    assert listed.stdout == json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def test_providers_cli_human_list_is_clear_and_sorted(tmp_path):
+    listed = run_afriend("providers", "list", config_home=tmp_path)
+    assert listed.returncode == 0, listed.stderr
+    lines = listed.stdout.splitlines()
+    assert lines == sorted(lines)
+    assert "codex\tenabled\tmodel: default" in lines
+    assert "ollama\tenabled\tmodel: default" in lines
+
+
+def test_providers_cli_reports_unknown_provider_as_usage_error(tmp_path):
+    result = run_afriend("providers", "disable", "not-real", config_home=tmp_path)
+    assert result.returncode == 2
+    assert "afriend:" in result.stderr
+    assert "not-real" in result.stderr

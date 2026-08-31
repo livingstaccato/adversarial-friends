@@ -170,6 +170,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--gc", action="store_true", help="remove run directories left by abandoned runs"
     )
     doctor_p.add_argument("--out", default=None, help="run root, if not the default")
+
+    providers_p = sub.add_parser("providers")
+    provider_sub = providers_p.add_subparsers(dest="provider_command", required=True)
+    list_p = provider_sub.add_parser("list")
+    list_p.add_argument("--json", action="store_true", help="machine-readable output")
+    for action in ("enable", "disable", "clear-model"):
+        action_p = provider_sub.add_parser(action)
+        action_p.add_argument("name", metavar="NAME")
+    set_model_p = provider_sub.add_parser("set-model")
+    set_model_p.add_argument("name", metavar="NAME")
+    set_model_p.add_argument("model", metavar="MODEL")
     return parser
 
 

@@ -85,3 +85,29 @@ def test_fake_scope_suffix_still_wins_over_model_parsing(registry):
     specs = cliargs._specs_from_flags(["fake:cwd_probe:repo"], 900, registry, fake_enabled=True)
     assert specs[0].scope == "repo"
     assert specs[0].model is None
+
+
+@pytest.mark.parametrize(
+    ("argv", "action", "name", "model", "json_output"),
+    [
+        (["providers", "list"], "list", None, None, False),
+        (["providers", "list", "--json"], "list", None, None, True),
+        (["providers", "enable", "codex"], "enable", "codex", None, False),
+        (["providers", "disable", "ollama"], "disable", "ollama", None, False),
+        (
+            ["providers", "set-model", "ollama", "qwen3:0.6b"],
+            "set-model",
+            "ollama",
+            "qwen3:0.6b",
+            False,
+        ),
+        (["providers", "clear-model", "codex"], "clear-model", "codex", None, False),
+    ],
+)
+def test_provider_subcommands_parse_exact_forms(argv, action, name, model, json_output):
+    args = cliargs.build_parser().parse_args(argv)
+    assert args.command == "providers"
+    assert args.provider_command == action
+    assert getattr(args, "name", None) == name
+    assert getattr(args, "model", None) == model
+    assert getattr(args, "json", False) is json_output

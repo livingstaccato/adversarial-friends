@@ -24,6 +24,7 @@ from .commands.doctor import cmd_doctor
 # tests and external callers reach into cli.py's namespace directly.
 from .commands.environment import _resolve_repo_root
 from .commands.init import cmd_init
+from .commands.providers import cmd_providers
 from .commands.resolve import cmd_resolve
 from .commands.run import cmd_run
 from .dispatch import (
@@ -55,6 +56,7 @@ __all__ = [
     "build_parser",
     "cmd_doctor",
     "cmd_init",
+    "cmd_providers",
     "cmd_resolve",
     "cmd_run",
     "main",
@@ -73,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_resolve(args)
         if args.command == "doctor":
             return cmd_doctor(args)
+        if args.command == "providers":
+            return cmd_providers(args)
         parser.print_help()
         return 0
     except AfError as exc:
