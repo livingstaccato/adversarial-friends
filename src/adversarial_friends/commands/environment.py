@@ -1,6 +1,6 @@
 """Where a run's repository is, and how a run is aborted cleanly.
 
-Split out of commands/run.py to keep it under this repo's 500-line cap. Both
+Split out of commands/run.py to keep it under the then-current line cap. Both
 concerns are about the *environment* a run happens in rather than the run
 loop itself.
 """

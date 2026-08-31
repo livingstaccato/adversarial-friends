@@ -10,7 +10,7 @@ structurally unreachable by a plain brace-scan unless it is unwrapped first.
 
 `Envelope` is a small declarative description of that shape, applied by
 `normalize()` before it falls back to scanning the raw text. Split out of
-normalize.py, which had grown past this repo's 500-line file cap.
+normalize.py, which had grown past the then-current line cap.
 """
 
 from dataclasses import dataclass

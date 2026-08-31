@@ -8,7 +8,7 @@ polled with `selectors`, so a pump thread is always back at its stop check
 within one `_POLL_INTERVAL_S` and can never be stuck in a syscall it cannot
 get out of.
 
-Split out of spawn.py, which had grown past this repo's 500-line file cap.
+Split out of spawn.py, which had grown past the then-current line cap.
 """
 
 import codecs

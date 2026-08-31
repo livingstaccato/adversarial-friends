@@ -1,7 +1,7 @@
 """Shared fixtures for the claim state machine tests.
 
-Split out when test_verdicts.py crossed this repo's 500-line-per-test-file
-cap; the two halves both need the same claim/verdict builders.
+Split out when test_verdicts.py crossed the then-current line cap; the two
+halves both need the same claim/verdict builders.
 """
 
 import dataclasses

@@ -1,4 +1,4 @@
-"""Verdict-specific report rendering kept separate from the 500-line core suite."""
+"""Verdict rendering split out after the core suite hit the then-current line cap."""
 
 from adversarial_friends.ledger import Claim, Verdict
 from adversarial_friends.report import render

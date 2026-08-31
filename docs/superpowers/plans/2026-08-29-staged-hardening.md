@@ -1179,7 +1179,7 @@ uv run mypy src
 python3 scripts/check_max_loc.py
 ```
 
-Expected: both gates pass; split a command helper only if the 500-line limit requires it.
+Expected: both gates pass; split a command helper only if the 777-line limit requires it.
 
 - [ ] **Step 8: Commit consumer migration**
 

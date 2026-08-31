@@ -1,7 +1,7 @@
 """run.json's shape, and rebuilding a halted run's configuration from it.
 
-Split out of commands/run.py when --resume arrived: cmd_run crossed this
-repo's 500-line cap, and the metadata contract is a separate concern from
+Split out of commands/run.py when --resume arrived: cmd_run crossed the
+then-current line cap, and the metadata contract is a separate concern from
 the run loop that produces it.
 
 **A resumed run takes its configuration from the run directory, never from
@@ -298,7 +298,7 @@ def finalize_meta(
     """Fold every mode's end-of-run fields into `meta`, in place.
 
     Extracted from cmd_run for the same reason the rest of this module was:
-    the run loop crossed the 500-line cap again, and this block is data
+    the run loop crossed the then-current line cap again, and this block is data
     assembly with no control flow of its own -- it reads finished state and
     writes keys. Keeping it beside the rest of run.json's shape puts every
     field that reaches that file in one place, which is where a reader looks
@@ -352,7 +352,7 @@ def finish_run(
     code.
 
     Split out of cmd_run's tail for the same reason `finalize_meta` was:
-    the function crossed this repo's 500-line cap, and finishing a run is
+    the function crossed the then-current line cap, and finishing a run is
     a self-contained concern separate from the loop that produced
     everything it wraps up.
     """

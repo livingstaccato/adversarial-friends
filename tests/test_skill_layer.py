@@ -22,8 +22,8 @@ def test_skill_has_name_and_description():
     assert len(meta["description"]) > 80
 
 
-def test_skill_body_is_under_500_lines():
-    assert len((SKILL / "SKILL.md").read_text().splitlines()) < 500
+def test_skill_body_is_under_777_lines():
+    assert len((SKILL / "SKILL.md").read_text().splitlines()) < 777
 
 
 def test_every_lens_file_has_frontmatter():

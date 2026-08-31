@@ -1,7 +1,7 @@
 """What a `--mode loop --merge orchestrator` halt persists, and how a
 resume rebuilds its starting position from it.
 
-Split out of resume.py, which crossed this repo's 500-line cap: that module
+Split out of resume.py, which crossed the then-current line cap: that module
 is about APPLYING an orchestrator response, this one is about the
 loop-level bookkeeping around a halt -- where a resumed iteration re-enters,
 what it inherits, and what a halt writes down so a NEW process (a

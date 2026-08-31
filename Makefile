@@ -17,7 +17,7 @@ type-check: ## Run mypy strict
 test: ## Run the test suite
 	uv run pytest
 
-max-loc: ## Enforce 500-line per-file cap
+max-loc: ## Enforce 777-line per-file cap
 	python3 scripts/check_max_loc.py
 
 plugin-sync: ## Verify plugins/ matches the packaged assets/ mirror

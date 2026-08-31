@@ -150,7 +150,7 @@ survive a halt lives in the ledger or in `run.json`, never only in a
 variable.
 
 `commands/haltstate.py` now holds everything a halt persists and a resume
-restores, split out of `resume.py` (which crossed the 500-line cap for the
+restores, split out of `resume.py` (which crossed the then-current line cap for the
 third time today) and `commands/run.py` gained a `finish_run` helper in
 `runmeta.py` for the same reason.
 
@@ -376,7 +376,7 @@ friend succeeding out of fifty exits `0`, so CI reads success and discards the
 rest -- is a change to the exit-code contract rather than a bug fix, and is
 left for a decision.
 
-`cmd_run` crossed the 500-line cap twice more along the way, so
+`cmd_run` crossed the then-current line cap twice more along the way, so
 `commands/setup.py` now holds everything decided before the first dispatch.
 
 ### A friend's scratch no longer lands in the tree it is reviewing
@@ -498,7 +498,7 @@ which macOS offers an equivalent of. It remains covered by
 `test_setsid_escapee_is_not_reaped` and by the orphan reporting that infers it
 from a pipe held open.
 
-spawn.py crossed the 500-line cap again, so the pumps moved to `procio.py`.
+spawn.py crossed the then-current line cap again, so the pumps moved to `procio.py`.
 
 ### dispatch.py, cross-examined
 
@@ -588,7 +588,7 @@ nodding them through. Six upheld and fixed here.
   itself — a friend dropped from `active` is never dispatched again, so it
   never records the success that would re-enable it.
 
-crossexam.py crossed the 500-line cap, so the rules a round applies before
+crossexam.py crossed the then-current line cap, so the rules a round applies before
 and after dispatch moved to `commands/judging.py`.
 
 ### A refused signal crashed the round instead of reporting an orphan
@@ -708,7 +708,7 @@ on every 50ms poll, which is quadratic across a run. Affordable to overlook
 only while output was unbounded in the first place; it now settles the same
 question from the last chunk without joining anything.
 
-spawn.py crossed the 500-line cap, so process-group reaping moved to
+spawn.py crossed the then-current line cap, so process-group reaping moved to
 `procgroup.py`.
 
 ### normalize.py, cross-examined
@@ -755,7 +755,7 @@ settled unanimously; all six were reproduced here before being fixed.
   reserved for adapters nobody has run. ollama declares none and takes that
   path on every run.
 
-normalize.py crossed the 500-line cap during this, so the envelope machinery
+normalize.py crossed the then-current line cap during this, so the envelope machinery
 moved to `envelopes.py` — "where the answer lives" apart from "turn text into
 a validated payload".
 
@@ -1278,7 +1278,7 @@ protection that did not happen, and a gate that cannot gate exiting 0.
 
 Two existing tests had encoded the pre-§8.3 behaviour -- a single-friend
 gate exiting 1, and the preset test running one friend -- and were changed
-to two friends. `cmd_run` crossed the 500-line cap with the refusal in it,
+to two friends. `cmd_run` crossed the then-current line cap with the refusal in it,
 so which friends a run dispatches now lives in one place,
 `friends.roster_for_run`, including both rules that can stop a run before
 anything is spent.

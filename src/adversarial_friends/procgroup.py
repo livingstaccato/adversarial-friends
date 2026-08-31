@@ -10,7 +10,7 @@ A descendant that leaves the group entirely (its own `os.setsid()`, see
 a real, accepted limitation rather than a bug: pgid membership is the only
 handle these functions have.
 
-Split out of spawn.py, which had grown past this repo's 500-line file cap.
+Split out of spawn.py, which had grown past the then-current line cap.
 """
 
 import contextlib

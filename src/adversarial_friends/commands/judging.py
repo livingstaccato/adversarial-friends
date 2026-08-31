@@ -9,7 +9,7 @@ shown.
 Every one of these enforces something §5.1 or §7.1 states and none of them
 needs the round loop to do it, which is why they are testable on their own.
 
-Split out of crossexam.py, which had grown past this repo's 500-line cap.
+Split out of crossexam.py, which had grown past the then-current line cap.
 """
 
 from typing import Any

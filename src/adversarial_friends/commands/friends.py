@@ -181,7 +181,7 @@ def roster_for_run(
     """The roster this run will actually dispatch, and the refusals that
     come with it.
 
-    Separated from `cmd_run` when it crossed this repo's 500-line cap. It
+    Separated from `cmd_run` when it crossed the then-current line cap. It
     is also one concern: which friends run, decided in one place, including
     the two rules that can stop a run before anything is spent -- §8.3's
     minimum and a resumed run's recorded roster.

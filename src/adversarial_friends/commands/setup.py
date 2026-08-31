@@ -1,7 +1,7 @@
 """Everything `cmd_run` settles before the first friend is dispatched.
 
-Split out of commands/run.py when that function crossed this repo's
-500-line cap for the third time. The seam is real rather than arbitrary:
+Split out of commands/run.py when that function crossed the then-current
+line cap for the third time. The seam is real rather than arbitrary:
 none of this touches the artifact, the run directory, or the round loop --
 it resolves the roster, parses the operator's escape hatches, and installs
 the process-level state a run needs (signal handlers, the progress
