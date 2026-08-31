@@ -22,6 +22,7 @@ from typing import Any
 
 from . import isolation
 from .adapters import Adapter, Capability, FriendSpec
+from .authority import ExternalToolPolicy
 from .ceilings import DEFAULT_MAX_CONCURRENCY
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
@@ -112,6 +113,7 @@ def dispatch_round(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     reporter: Progress | None = None,
     kind: str = "critique",
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> tuple[list[RoundResult], str | None]:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -211,6 +213,7 @@ def dispatch_round(
                         allow_unsandboxed,
                         extra_args,
                         pass_env,
+                        external_tool_policy,
                     )
                 except AfError:
                     # A deliberate stop, not this friend's outcome. Cleared
@@ -315,6 +318,7 @@ def persist_result(
     capability: Capability,
     outcome: SpawnResult,
     transport: str,
+    external_tool_policy: ExternalToolPolicy,
 ) -> dict[str, Any]:
     """Write one friend's raw output, stderr and metadata; return its row.
 
@@ -338,7 +342,11 @@ def persist_result(
         # recorded on the result and written nowhere, unlike every sibling
         # flag on this line.
         f"output_truncated={outcome.output_truncated}\n"
-        f"transport={transport}\nos_confined={outcome.os_confined}\n",
+        f"transport={transport}\nos_confined={outcome.os_confined}\n"
+        f"external_tool_policy={external_tool_policy.value}\n"
+        f"external_tools={capability.external_tools}\n"
+        f"external_tool_sources={list(capability.external_tool_sources)}\n"
+        f"deny_external_tools_argv={list(capability.deny_external_tools_argv)}\n",
         encoding="utf-8",
     )
     err_path = store.friend_err_path(round_no, spec.name)
@@ -363,6 +371,10 @@ def persist_result(
         "write_protected": capability.readonly,
         "declared_scope": spec.scope,
         "os_confined": outcome.os_confined,
+        "external_tools": capability.external_tools,
+        "external_tool_policy": external_tool_policy.value,
+        "external_tool_sources": list(capability.external_tool_sources),
+        "deny_external_tools_argv": list(capability.deny_external_tools_argv),
         # Compatibility keys for consumers of the pre-0.2 run.json shape.
         "readonly": capability.readonly,
         "scope": spec.scope,

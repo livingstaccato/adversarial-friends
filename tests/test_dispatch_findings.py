@@ -6,6 +6,8 @@ import time
 import pytest
 
 from adversarial_friends import http_transport, trust
+from adversarial_friends.authority import ExternalToolPolicy, enforce
+from adversarial_friends.dispatch import _FAKE_CAPABILITY, _UNKNOWN_CAPABILITY
 from adversarial_friends.errors import UsageError
 
 
@@ -117,3 +119,19 @@ def test_an_ordinary_diagnostic_survives_readable():
     tail = _stderr_tail("Error: model 'qwen3' not found; run 'ollama pull qwen3'")
     assert "model 'qwen3' not found" in tail
     assert "ollama pull qwen3" in tail
+
+
+def test_synthetic_capabilities_do_not_claim_enforcement():
+    assert _FAKE_CAPABILITY.external_tools == "not-applicable"
+    assert _UNKNOWN_CAPABILITY.external_tools == "unknown"
+
+
+def test_http_capability_comes_from_the_actual_authority_decision(tmp_path):
+    from adversarial_friends.adapters import load_adapters
+    from adversarial_friends.paths import ADAPTER_DIR
+
+    adapter = load_adapters(ADAPTER_DIR)["ollama"]
+    denied = enforce(adapter, ExternalToolPolicy.DENY)
+    allowed = enforce(adapter, ExternalToolPolicy.ALLOW)
+    assert http_transport.capability_for(adapter, denied).external_tools == "denied"
+    assert http_transport.capability_for(adapter, allowed).external_tools == "explicitly-allowed"

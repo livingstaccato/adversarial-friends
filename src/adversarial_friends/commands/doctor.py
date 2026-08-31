@@ -13,7 +13,8 @@ import tempfile
 from typing import Any
 
 from .. import http_transport, providerconfig
-from ..adapters import Adapter, FriendSpec, build_argv, load_adapters
+from ..adapters import Adapter, Capability, FriendSpec, build_argv, load_adapters
+from ..authority import ExternalToolPolicy, enforce
 from ..claimschema import schema_path
 from ..paths import ADAPTER_DIR
 from ..readiness import FriendReadiness, ReadinessState, assess_all
@@ -65,10 +66,20 @@ def _rows(
     rows = []
     for name, adapter in sorted(registry.items()):
         assessed = readiness[name]
-        if adapter.transport == "http":
-            # Capability comes from the same source real dispatch uses;
-            # readiness was already assessed once before this projection.
-            cap = http_transport.capability_for(adapter)
+        if assessed.state is ReadinessState.DISABLED:
+            # Readiness deliberately decides disabled rows before authority
+            # and availability. Preserve that decision: constructing argv
+            # here would both contradict the state and crash on an
+            # uncontrolled adapter. With no invocation there is no enforced
+            # decision, so report the conservative declaration itself.
+            cap = Capability(
+                False,
+                False,
+                adapter.effort_kind,
+                external_tools=adapter.external_tools,
+                external_tool_sources=adapter.external_tool_sources,
+                deny_external_tools_argv=adapter.deny_external_tools_argv,
+            )
             rows.append(
                 {
                     "name": name,
@@ -78,6 +89,45 @@ def _rows(
                     "schema": cap.schema,
                     "readonly": cap.readonly,
                     "effort": cap.effort,
+                    "external_tools": cap.external_tools,
+                    "where": assessed.where,
+                    "model": assessed.model,
+                    "auth_classifiable": adapter.auth.declared(),
+                }
+            )
+            continue
+        if assessed.state is ReadinessState.POLICY_BLOCKED:
+            cap = Capability(False, False, adapter.effort_kind)
+            rows.append(
+                {
+                    "name": name,
+                    "status": _legacy_status(assessed, adapter),
+                    "state": assessed.state.value,
+                    "reason": assessed.reason,
+                    "schema": cap.schema,
+                    "readonly": cap.readonly,
+                    "effort": cap.effort,
+                    "external_tools": cap.external_tools,
+                    "where": assessed.where,
+                    "model": assessed.model,
+                    "auth_classifiable": adapter.auth.declared(),
+                }
+            )
+            continue
+        if adapter.transport == "http":
+            # Capability comes from the same source real dispatch uses;
+            # readiness was already assessed once before this projection.
+            cap = http_transport.capability_for(adapter, enforce(adapter, ExternalToolPolicy.DENY))
+            rows.append(
+                {
+                    "name": name,
+                    "status": _legacy_status(assessed, adapter),
+                    "state": assessed.state.value,
+                    "reason": assessed.reason,
+                    "schema": cap.schema,
+                    "readonly": cap.readonly,
+                    "effort": cap.effort,
+                    "external_tools": cap.external_tools,
                     "where": assessed.where,
                     "model": assessed.model,
                     "auth_classifiable": adapter.auth.declared(),
@@ -97,7 +147,7 @@ def _rows(
             scope="repo",
             timeout=1,
         )
-        _, _, cap = build_argv(adapter, probe, prompt_file, schema_file)
+        _, _, cap = build_argv(adapter, probe, prompt_file, schema_file, ExternalToolPolicy.DENY)
         rows.append(
             {
                 "name": name,
@@ -107,6 +157,7 @@ def _rows(
                 "schema": cap.schema,
                 "readonly": cap.readonly,
                 "effort": cap.effort,
+                "external_tools": cap.external_tools,
                 "where": assessed.where,
                 "model": assessed.model,
                 "auth_classifiable": adapter.auth.declared(),
@@ -118,7 +169,12 @@ def _rows(
 def cmd_doctor(args: argparse.Namespace) -> int:
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
-    readiness = assess_all(registry, policy, which=shutil.which)
+    readiness = assess_all(
+        registry,
+        policy,
+        which=shutil.which,
+        external_tool_policy=ExternalToolPolicy.DENY,
+    )
     collected: list[str] = []
     if getattr(args, "gc", False):
         _count, collected = _gc(Path(args.out) if getattr(args, "out", None) else default_root())
@@ -139,7 +195,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print(
                 f"{row['name']:10} {row['status']:12} state={row['state']} "
                 f"schema={row['schema']} readonly={row['readonly']} "
-                f"effort={row['effort']} where={row['where']} "
+                f"effort={row['effort']} external_tools={row['external_tools']} "
+                f"where={row['where']} "
                 f"model={row['model']} reason={row['reason']}"
             )
         for name in collected:

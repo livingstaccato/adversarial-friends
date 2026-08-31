@@ -236,10 +236,10 @@ def test_unexpected_exception_in_one_friends_dispatch_does_not_end_the_run(monke
 
     real_build_argv = adapters.build_argv
 
-    def _boom(adapter, spec, prompt_file, schema_file):
+    def _boom(adapter, spec, prompt_file, schema_file, external_tool_policy):
         if spec.cli == "codex":
             raise RuntimeError("simulated unexpected bug in adapter wiring")
-        return real_build_argv(adapter, spec, prompt_file, schema_file)
+        return real_build_argv(adapter, spec, prompt_file, schema_file, external_tool_policy)
 
     monkeypatch.setattr(dispatch, "build_argv", _boom)
     parser = cli.build_parser()

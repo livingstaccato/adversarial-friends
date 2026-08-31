@@ -14,6 +14,24 @@ schema_inline = true
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
+# Authority evidence captured from installed Claude Code 2.1.251 on
+# 2026-08-30. `claude --help` documents: `--safe-mode` disables skills,
+# plugins, hooks, MCP servers and other customizations; `--restricted`
+# ignores user/project/local settings; `--strict-mcp-config` skips inherited
+# MCP servers; `--tools ""` disables built-in tools; `--disable-slash-commands`
+# disables skills; and `--no-chrome` disables the browser integration. The
+# combined option-position invocation ending in `--help` parses successfully.
+external_tools = "deny-argv"
+deny_external_tools_argv = [
+  "--safe-mode",
+  "--restricted",
+  "--strict-mcp-config",
+  "--tools",
+  "",
+  "--disable-slash-commands",
+  "--no-chrome",
+]
+external_tool_sources = ["built-in tools", "skills", "plugins", "MCP servers", "Chrome integration"]
 # --output-format json wraps the answer in claude's own envelope. Captured
 # from claude 2.1.240 on 2026-08-23: a single JSON object with
 # type="result", subtype="success", and the model's answer in `result` as a

@@ -18,6 +18,7 @@ import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec, friend_key
+from ..authority import ExternalToolPolicy
 from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
@@ -142,6 +143,7 @@ def run_critique(
     merge: str = "exact",
     run_id: str = "",
     reporter: Progress | None = None,
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
 
@@ -177,6 +179,7 @@ def run_critique(
         keep=keep,
         reporter=reporter,
         kind="critique",
+        external_tool_policy=external_tool_policy,
     )
     outcome.calls = len(results)
 
@@ -186,7 +189,15 @@ def run_critique(
     for spec, capability, result in results:
         transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
         outcome.friends_meta.append(
-            persist_result(store, round_no, spec, capability, result, transport)
+            persist_result(
+                store,
+                round_no,
+                spec,
+                capability,
+                result,
+                transport,
+                external_tool_policy,
+            )
         )
         if result.failure_reason is not None:
             # §14.2: repair is a pure transformation, so when it fails the

@@ -53,6 +53,15 @@ def test_two_friends_judge_each_other_and_settle(tmp_path):
     assert set(meta["claim_states"].values()) == {"settled-upheld"}
 
 
+def test_default_denial_decision_reaches_critique_and_judging_dispatches(tmp_path):
+    result = _crossexam(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b")
+    assert result.returncode == 0, result.stderr
+    rows = _run_json(tmp_path)["friends"]
+    assert {row["round"] for row in rows} >= {1, 2}
+    assert {row["external_tool_policy"] for row in rows} == {"deny"}
+    assert {row["external_tools"] for row in rows} == {"not-applicable"}
+
+
 def test_verdicts_reach_the_ledger(tmp_path):
     _crossexam(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b")
     kinds = [r["type"] for r in _ledger(tmp_path)]

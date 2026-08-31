@@ -17,6 +17,7 @@ import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec, load_adapters
+from ..authority import ExternalToolPolicy, enforce_extra_args
 from ..paths import ADAPTER_DIR
 from ..progress import Progress
 from ..trust import parse_unsafe_extra_args
@@ -41,6 +42,7 @@ class RunSetup:
     active_pool: list[concurrent.futures.ThreadPoolExecutor | None]
     installed_handlers: dict[int, Any] = field(default_factory=dict)
     reporter: Progress = field(default_factory=Progress)
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY
 
 
 def prepare_run(args: argparse.Namespace) -> RunSetup:
@@ -52,6 +54,11 @@ def prepare_run(args: argparse.Namespace) -> RunSetup:
     not leave either permanently changed.
     """
     registry = load_adapters(ADAPTER_DIR)
+    external_tool_policy = (
+        ExternalToolPolicy.ALLOW
+        if getattr(args, "allow_external_tools", False)
+        else ExternalToolPolicy.DENY
+    )
     # AF_FAKE_FRIEND keeps the end-to-end tests off real CLIs and, critically,
     # off any metered provider. `--friend fake:<mode>` runs
     # `$AF_FAKE_FRIEND <mode>` directly (see dispatch._dispatch); the mode
@@ -63,6 +70,7 @@ def prepare_run(args: argparse.Namespace) -> RunSetup:
     # dispatch, and recorded as a downgrade because a run carrying
     # unvalidated flags has weaker guarantees than its friend table implies.
     extra_args = parse_unsafe_extra_args(args.unsafe_extra_args, args.i_accept_unsandboxed)
+    enforce_extra_args(external_tool_policy, extra_args)
     if extra_args:
         downgrades.append(
             f"--unsafe-extra-args passed {extra_args} to every friend. These "
@@ -70,7 +78,7 @@ def prepare_run(args: argparse.Namespace) -> RunSetup:
             "every friend regardless of what its adapter emitted."
         )
 
-    resolved, specs = roster_for_run(args, registry, fake_cmd, downgrades)
+    resolved, specs = roster_for_run(args, registry, fake_cmd, downgrades, external_tool_policy)
     # §12.2: every friend that will run without OS confinement is named in
     # the report, whether that is because the operator overrode the refusal
     # or because the CLI has no read-only mode and one was available. A
@@ -124,4 +132,5 @@ def prepare_run(args: argparse.Namespace) -> RunSetup:
         active_pool=active_pool,
         installed_handlers=installed_handlers,
         reporter=reporter,
+        external_tool_policy=external_tool_policy,
     )

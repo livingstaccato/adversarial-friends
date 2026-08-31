@@ -64,6 +64,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     active_pool = setup.active_pool
     installed_handlers = setup.installed_handlers
     reporter = setup.reporter
+    external_tool_policy = setup.external_tool_policy
     try:
         repo_root = _resolve_repo_root(artifact)
         if repo_root is None:
@@ -318,6 +319,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         # amendment `incomplete` rather than leaving it for
                         # the next iteration.
                         final_block=(args.mode != "loop" or iteration == max_iterations),
+                        external_tool_policy=external_tool_policy,
                     )
                     resumed = step.resumed
                     all_claims = resumed.claims
@@ -367,6 +369,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     merge=args.merge,
                     run_id=run_id,
                     reporter=reporter,
+                    external_tool_policy=external_tool_policy,
                 )
                 budget.spend(critique.calls)
                 iterations_run = iteration
@@ -431,6 +434,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         prior=carry_over,
                         final_block=(args.mode != "loop" or iteration == max_iterations),
                         reporter=reporter,
+                        external_tool_policy=external_tool_policy,
                     )
                     all_claims = cross.claims
                     carry_over = cross

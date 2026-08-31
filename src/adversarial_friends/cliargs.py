@@ -19,6 +19,9 @@ from .presets import PRESETS
 from .resolutions import DISPOSITIONS
 from .trust import MODEL_RE
 
+RUN_MODES = ("report", "crossexam", "gate", "loop")
+MERGE_CHOICES = ("exact", "orchestrator")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="afriend")
@@ -30,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     # artifact, so requiring one again would invite passing a different
     # file than the run actually reviewed.
     run_p.add_argument("artifact", nargs="?", default=None)
-    run_p.add_argument("--mode", default="report", choices=["report", "crossexam", "gate", "loop"])
+    run_p.add_argument("--mode", default="report", choices=list(RUN_MODES))
     # §10.1: the default depends on the mode (gate defaults to thorough), so
     # it is resolved after parsing rather than baked in here -- None means
     # "the operator did not say".
@@ -65,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     # §4.2. `exact` always reaches a terminal state unaided, which is what
     # makes the documented CLI usable from a plain shell; `orchestrator`
     # halts with exit 10 for judgment the runner cannot make.
-    run_p.add_argument("--merge", default="exact", choices=["exact", "orchestrator"])
+    run_p.add_argument("--merge", default="exact", choices=list(MERGE_CHOICES))
     # §13: an explicitly named roster may live anywhere, including inside the
     # repository -- naming it is the operator's act. Only the trusted
     # user-level path is ever picked up automatically.
@@ -135,6 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
     # OS offers no way to confine it; this accepts that risk explicitly and
     # stamps every affected friend in the report.
     run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
+    run_p.add_argument(
+        "--allow-external-tools",
+        action="store_true",
+        help="explicitly allow provider-managed tools, plugins, apps, and MCP servers",
+    )
     run_p.add_argument("--timeout", type=int, default=900)
     run_p.add_argument("--out", default=None)
     # Progress is ON by default and goes to stderr. A crossexam is silent

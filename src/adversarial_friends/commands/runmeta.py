@@ -4,11 +4,10 @@ Split out of commands/run.py when --resume arrived: cmd_run crossed the
 then-current line cap, and the metadata contract is a separate concern from
 the run loop that produces it.
 
-**A resumed run takes its configuration from the run directory, never from
-the resuming command line.** §4.2 requires that the same response produce
-the same run; a flag that changed between halt and resume would quietly
-break that, and the failure would look like nondeterminism rather than
-operator error.
+**A resumed run restores deterministic configuration from the run directory.**
+§4.2 requires that the same response produce the same run. Security grants
+are the deliberate exception: metadata records them but can never confer
+them, so the resuming command line must repeat each prior grant exactly.
 """
 
 import argparse
@@ -17,21 +16,23 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..adapters import FriendSpec
+from ..adapters import FriendSpec, validate_roster_uniqueness
 from ..ceilings import BUDGET_EXHAUSTED, Budget
+from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..ledger import Claim
+from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
-from ..trust import MODEL_RE
+from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import judges_for, loop_should_terminate
 from .exits import decide_exit
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
 
-# Everything a resumed run must restore rather than re-read from a second
+# Deterministic settings a resumed run restores rather than re-reading from a second
 # command line. §4.2 requires that the same response produce the same run;
 # taking any of these from the resuming invocation would let a flag change
 # between halt and resume and silently alter the outcome.
@@ -45,7 +46,6 @@ _RESUMABLE_ARGS = (
     "host_provider",
     "enable_provider",
     "disable_provider",
-    "allow_unsandboxed_friend",
     "max_rounds",
     "max_calls",
     "max_wall_clock",
@@ -65,11 +65,35 @@ _RESUMABLE_ARGS = (
     # unvalidated flags appearing or vanishing.
     "max_friends",
     "require_friends",
-    "pass_env",
-    "unsafe_extra_args",
-    "i_accept_unsandboxed",
     "keep",
 )
+
+# Invocation-local authority grants are recorded for audit and continuity,
+# but never restored from attacker-editable run.json. A resume must repeat
+# any non-default grant exactly on its own command line.
+_SECURITY_GRANTS: dict[str, tuple[type, object]] = {
+    "allow_external_tools": (bool, False),
+    "allow_unsandboxed_friend": (bool, False),
+    "unsafe_extra_args": (str, None),
+    "i_accept_unsandboxed": (bool, False),
+    "pass_env": (list, []),
+}
+
+_OPTIONAL_STRINGS = {"preset", "host_provider", "model", "effort", "roster"}
+_STRING_SETTINGS = {"mode", "merge"}
+_BOOL_SETTINGS = {"attributed", "include_self", "keep"}
+_LIST_SETTINGS = {"enable_provider", "disable_provider", "lens"}
+_OPTIONAL_INTS = {
+    "max_friends",
+    "max_calls",
+    "require_friends",
+}
+_INT_SETTINGS = {
+    "timeout",
+    "max_rounds",
+    "max_wall_clock",
+    "max_loop_iterations",
+}
 
 
 def _find_run_dir(run_id: str, out: str | None) -> Path:
@@ -99,10 +123,10 @@ def _base_meta(
 ) -> dict[str, Any]:
     """run.json's common fields.
 
-    `invocation` and `roster` exist for --resume: a resumed run rebuilds its
-    whole configuration from here rather than from a second command line,
-    because §4.2 requires the same response to produce the same run and a
-    flag that changed between halt and resume would quietly break that.
+    `invocation` and `roster` exist for --resume: deterministic settings are
+    rebuilt from here because §4.2 requires the same response to produce the
+    same run. Invocation-local security grants are only audited here; resume
+    validates them against an exact, explicit command-line re-assertion.
     """
     return {
         "mode": args.mode,
@@ -122,11 +146,18 @@ def _base_meta(
         "repo_root": str(repo_root) if repo_root else None,
         "snapshot_sha": snapshot_sha,
         "friends": friends_meta,
+        "external_tool_policy": (
+            "allow" if getattr(args, "allow_external_tools", False) else "deny"
+        ),
         "downgrades": downgrades,
         "invocation": {
             "artifact": str(artifact),
             "friend": list(args.friend),
             **{name: getattr(args, name, None) for name in _RESUMABLE_ARGS},
+            **{
+                name: getattr(args, name, default)
+                for name, (_type, default) in _SECURITY_GRANTS.items()
+            },
         },
         "roster": [dataclasses.asdict(s) for s in specs],
         # Names of environment variables withheld from confined friends.
@@ -136,13 +167,91 @@ def _base_meta(
     }
 
 
+def _resume_type_error(name: str, value: object) -> UsageError:
+    return UsageError(
+        f"cannot resume: saved --{name.replace('_', '-')} has invalid type/value {value!r}"
+    )
+
+
+def _validate_saved_setting(name: str, value: object) -> None:
+    if name in _OPTIONAL_STRINGS and value is not None and not isinstance(value, str):
+        raise _resume_type_error(name, value)
+    if name in _STRING_SETTINGS and not isinstance(value, str):
+        raise _resume_type_error(name, value)
+    if name in _BOOL_SETTINGS and not isinstance(value, bool):
+        raise _resume_type_error(name, value)
+    if name in _LIST_SETTINGS and (
+        not isinstance(value, list) or not all(isinstance(item, str) for item in value)
+    ):
+        raise _resume_type_error(name, value)
+    if (
+        name in _OPTIONAL_INTS
+        and value is not None
+        and (isinstance(value, bool) or not isinstance(value, int))
+    ):
+        raise _resume_type_error(name, value)
+    if name in _INT_SETTINGS and (isinstance(value, bool) or not isinstance(value, int)):
+        raise _resume_type_error(name, value)
+    choices: tuple[str, ...] | None = None
+    if name == "mode":
+        choices = RUN_MODES
+    elif name == "merge":
+        choices = MERGE_CHOICES
+    elif name == "preset" and value is not None:
+        choices = PRESETS
+    if choices is not None and value not in choices:
+        raise _resume_type_error(name, value)
+
+
+def _validate_saved_grant(name: str, value: object, expected_type: type) -> None:
+    valid = isinstance(value, expected_type)
+    if expected_type is bool:
+        valid = type(value) is bool
+    elif name == "pass_env":
+        valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
+    elif name == "unsafe_extra_args":
+        valid = value is None or isinstance(value, str)
+    if not valid:
+        raise _resume_type_error(name, value)
+
+
+def _restore_roster(value: object) -> list[FriendSpec]:
+    if not isinstance(value, list):
+        raise UsageError("cannot resume: saved roster must be a list")
+    restored: list[FriendSpec] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise UsageError("cannot resume: each saved roster entry must be an object")
+        candidate = dict(entry)
+        for field_name in ("name", "cli", "lens", "scope"):
+            if not isinstance(candidate.get(field_name), str):
+                raise UsageError(
+                    f"cannot resume: saved roster field {field_name!r} must be a string"
+                )
+        for field_name in ("model", "effort"):
+            if candidate.get(field_name) is not None and not isinstance(
+                candidate.get(field_name), str
+            ):
+                raise UsageError(
+                    f"cannot resume: saved roster field {field_name!r} must be a string or null"
+                )
+        validate_roster_entry(candidate)
+        restored.append(FriendSpec(**candidate))
+    return restored
+
+
 def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     """Rebuild the original invocation's settings from its run directory."""
     run_dir = _find_run_dir(args.resume, args.out)
     meta_path = run_dir / "run.json"
     if not meta_path.is_file():
         raise UsageError(f"cannot resume: {run_dir} has no run.json")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise UsageError(f"cannot resume: {meta_path} is not valid run metadata") from exc
+    if not isinstance(meta, dict):
+        raise UsageError(f"cannot resume: {meta_path} must contain a JSON object")
     saved = meta.get("invocation")
     if not isinstance(saved, dict):
         raise UsageError(
@@ -152,18 +261,37 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored = argparse.Namespace(**vars(args))
     for name in _RESUMABLE_ARGS:
         if name in saved:
+            _validate_saved_setting(name, saved[name])
             setattr(restored, name, saved[name])
-    restored.artifact = saved.get("artifact")
-    restored.friend = saved.get("friend", [])
+    artifact = saved.get("artifact")
+    if not isinstance(artifact, str):
+        raise UsageError("cannot resume: saved artifact must be a path string")
+    friends = saved.get("friend", [])
+    if not isinstance(friends, list) or not all(isinstance(item, str) for item in friends):
+        raise UsageError("cannot resume: saved friend flags must be a list of strings")
+    restored.artifact = artifact
+    restored.friend = friends
+    for name, (expected_type, default) in _SECURITY_GRANTS.items():
+        saved_value = saved.get(name, default)
+        _validate_saved_grant(name, saved_value, expected_type)
+        current_value = getattr(args, name, default)
+        _validate_saved_grant(name, current_value, expected_type)
+        if current_value != saved_value:
+            raise UsageError(
+                f"cannot resume: prior --{name.replace('_', '-')} authority must be "
+                "repeated exactly on the resume command line"
+            )
     # The concrete roster the halted run resolved, not the inputs that
     # produced it. §4.2 requires the same response to produce the same run,
     # and re-resolving cannot promise that: a roster file can be edited and
     # discovery re-reads whatever CLIs are installed now, so a resume could
     # change quorum, or hand a claim's author a new identity under which it
     # judges its own claim.
-    restored._resume_roster = [
-        FriendSpec(**entry) for entry in meta.get("roster", []) if isinstance(entry, dict)
-    ]
+    restored._resume_roster = _restore_roster(meta.get("roster", []))
+    validate_roster_uniqueness(
+        restored._resume_roster,
+        judging=getattr(restored, "mode", "report") != "report",
+    )
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta
@@ -176,7 +304,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     return restored
 
 
-IMPLEMENTED_MODES = frozenset({"report", "crossexam", "gate", "loop"})
+IMPLEMENTED_MODES = frozenset(RUN_MODES)
 # Every mode that judges claims after critiquing them. `report` stops at the
 # critique round; the rest all run cross-examination and differ only in what
 # they do with its result. (The explanation lived in commands/run.py, above
@@ -204,10 +332,9 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
     cannot reconstruct, a mode nothing implements.
     """
     if args.resume:
-        # A resumed run takes its whole configuration from the run directory
-        # rather than from this invocation. §4.2 requires that the same
-        # response produce the same run, and re-reading flags from a second
-        # command line is exactly how that stops being true.
+        # Deterministic configuration comes from the run directory. Security
+        # grants are checked against this invocation inside _restore_args and
+        # are never restored from metadata.
         args = _restore_args(args)
     for name in (
         "timeout",

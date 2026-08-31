@@ -231,7 +231,11 @@ def test_capability_never_claims_readonly():
     flag was emitted and nothing was enforced. Claiming True would assert an
     enforcement that does not exist -- exactly the drift capability
     reporting exists to prevent."""
-    cap = http_transport.capability_for(_adapter("http://127.0.0.1:11434/api/generate"))
+    from adversarial_friends.authority import AuthorityDecision, ExternalToolPolicy
+
+    adapter = _adapter("http://127.0.0.1:11434/api/generate")
+    decision = AuthorityDecision(ExternalToolPolicy.DENY, "denied", (), ("request",))
+    cap = http_transport.capability_for(adapter, decision)
     assert cap.readonly is False
     assert cap.schema is False
 

@@ -21,6 +21,7 @@ from typing import Any
 
 from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec, friend_key
+from ..authority import ExternalToolPolicy
 from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
@@ -105,6 +106,7 @@ def run_rounds(
     prior: CrossexamOutcome | None = None,
     final_block: bool = True,
     reporter: Progress | None = None,
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
 
@@ -260,6 +262,7 @@ def run_rounds(
             keep=keep,
             reporter=reporter,
             kind="judging",
+            external_tool_policy=external_tool_policy,
         )
         budget.spend(len(results))
         outcome.rounds_run = round_no
@@ -317,7 +320,15 @@ def run_rounds(
         for spec, capability, result in results:
             transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
             outcome.friends_meta.append(
-                persist_result(store, round_no, spec, capability, result, transport)
+                persist_result(
+                    store,
+                    round_no,
+                    spec,
+                    capability,
+                    result,
+                    transport,
+                    external_tool_policy,
+                )
             )
             if result.failure_reason is not None:
                 # §7.2's M12: a round in which a required friend fails marks

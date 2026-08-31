@@ -22,6 +22,7 @@ from adversarial_friends.adapters import (
     load_adapters,
     place_extra_args,
 )
+from adversarial_friends.authority import ExternalToolPolicy
 from adversarial_friends.paths import ADAPTER_DIR
 
 EXTRA = ["-c", "model_reasoning_effort=high"]
@@ -43,7 +44,12 @@ def _argv_for(name: str, files):
     spec = FriendSpec(
         name=name, cli=name, lens="ops", model=None, effort=None, scope="repo", timeout=60
     )
-    argv, _stdin, _cap = build_argv(adapter, spec, files[0], files[1])
+    policy = (
+        ExternalToolPolicy.ALLOW
+        if adapter.external_tools == "uncontrolled"
+        else ExternalToolPolicy.DENY
+    )
+    argv, _stdin, _cap = build_argv(adapter, spec, files[0], files[1], policy)
     return adapter, argv
 
 

@@ -304,6 +304,8 @@ def _unconfinable_adapter(binary="sh"):
         model_flag="",
         internal_timeout_flag="",
         effort_kind="none",
+        external_tools="none",
+        external_tool_sources=("test executable",),
     )
 
 

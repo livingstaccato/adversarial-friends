@@ -13,6 +13,7 @@ import threading
 
 from . import childenv, http_transport, sandbox
 from .adapters import Adapter, Capability, FriendSpec, build_argv, place_extra_args
+from .authority import ExternalToolPolicy, enforce, enforce_extra_args
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult
@@ -70,7 +71,9 @@ def argv_size_warning(spec_name: str, adapter: "Adapter", prompt_text: str) -> s
 # never touches adapters.py/build_argv at all, so there is no real
 # Capability to surface. Always doc-scope, no schema enforcement, no
 # verifiable effort -- reported honestly rather than guessed.
-_FAKE_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
+_FAKE_CAPABILITY = Capability(
+    schema=False, readonly=False, effort="none", external_tools="not-applicable"
+)
 
 # A synthetic capability for a friend whose dispatch raised an unexpected
 # exception (see commands.run.cmd_run's _run_one, defined inline in its
@@ -78,7 +81,9 @@ _FAKE_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
 # Capability. Same values as _FAKE_CAPABILITY, but a separate name/docstring:
 # this one means "unknown, because dispatch never got far enough to know,"
 # not "this is the test-only cli."
-_UNKNOWN_CAPABILITY = Capability(schema=False, readonly=False, effort="none")
+_UNKNOWN_CAPABILITY = Capability(
+    schema=False, readonly=False, effort="none", external_tools="unknown"
+)
 
 # Whole-branch re-review, Regression 3: the stderr tail is untrusted text
 # (a friend's own stderr) on a path into report.md's friend table that
@@ -196,6 +201,7 @@ def _dispatch(
     allow_unsandboxed: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -234,6 +240,11 @@ def _dispatch(
     cross-examination round passes the verdict contract, and the choice
     reaches both transports identically.
     """
+    # Arbitrary argv can reverse an adapter's denial flags (for example,
+    # re-enable Codex apps or replace Claude's tool/MCP configuration).
+    # Guard again at the dispatch boundary so library callers cannot bypass
+    # prepare_run's earlier, pre-run-directory refusal.
+    enforce_extra_args(external_tool_policy, extra_args)
     # None means "inherit", which is what every friend gets unless it is
     # being confined. Initialised before the branches because the fake and
     # http paths never reach the exec branch that sets it.
@@ -268,9 +279,10 @@ def _dispatch(
         # SpawnResult shape, so everything downstream stays
         # transport-agnostic.
         adapter = registry[spec.cli]
+        authority = enforce(adapter, external_tool_policy)
         return (
             spec,
-            http_transport.capability_for(adapter),
+            http_transport.capability_for(adapter, authority),
             http_transport.run_request(
                 adapter,
                 spec,
@@ -282,7 +294,9 @@ def _dispatch(
         )
     else:
         adapter = registry[spec.cli]
-        argv, stdin_text, capability = build_argv(adapter, spec, prompt_file, schema_file)
+        argv, stdin_text, capability = build_argv(
+            adapter, spec, prompt_file, schema_file, external_tool_policy
+        )
         check_denied_values(argv)
         envelope = adapter.envelope
         structured_output = adapter.structured_output

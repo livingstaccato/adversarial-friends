@@ -177,6 +177,8 @@ def test_dispatch_redirects_scratch_outside_the_working_directory(tmp_path):
         model_flag="",
         internal_timeout_flag="",
         effort_kind="none",
+        external_tools="none",
+        external_tool_sources=("test executable",),
     )
     spec = adapters.FriendSpec(
         name="unconfinable-ops-0",

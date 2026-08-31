@@ -270,6 +270,7 @@ def test_unready_roster_entries_do_not_consume_capacity_or_trigger_duplicate_pro
             "--include-self",
             "--max-friends",
             "1",
+            "--allow-external-tools",
         ]
     )
 
@@ -486,6 +487,7 @@ def test_a_roster_effort_beats_the_preset(monkeypatch, tmp_path):
             "--preset",
             "thorough",
             "--include-self",
+            "--allow-external-tools",
         ]
     )
 
@@ -520,6 +522,7 @@ def test_capacity_is_applied_before_discarded_friend_preset_diagnostics(monkeypa
             "--max-friends",
             "1",
             "--include-self",
+            "--allow-external-tools",
         ]
     )
     downgrades: list[str] = []

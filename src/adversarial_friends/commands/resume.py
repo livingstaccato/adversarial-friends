@@ -23,6 +23,7 @@ import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec
+from ..authority import ExternalToolPolicy
 from ..ceilings import Budget
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
@@ -169,6 +170,7 @@ def resume_round_one(
     pass_env: tuple[str, ...] = (),
     reporter: Progress | None = None,
     final_block: bool = True,
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> ResumedRun:
     """Apply the orchestrator's merges, then carry on into judging.
 
@@ -310,6 +312,7 @@ def resume_round_one(
         prior=prior,
         reporter=reporter,
         final_block=final_block,
+        external_tool_policy=external_tool_policy,
     )
     resumed.claims = resumed.cross.claims
     resumed.friends_meta.extend(resumed.cross.friends_meta)
@@ -359,6 +362,7 @@ def resume_iteration(
     pass_env: tuple[str, ...] = (),
     reporter: Progress | None = None,
     final_block: bool = True,
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> ResumedStep:
     """Apply the adjudication, judge, and decide whether the loop continues."""
     resumed = resume_round_one(
@@ -383,6 +387,7 @@ def resume_iteration(
         pass_env=pass_env,
         reporter=reporter,
         final_block=final_block,
+        external_tool_policy=external_tool_policy,
     )
     if args.mode != "loop":
         return ResumedStep(resumed=resumed, streak=streak, done=True)

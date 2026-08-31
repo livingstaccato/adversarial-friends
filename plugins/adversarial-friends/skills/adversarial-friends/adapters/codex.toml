@@ -7,6 +7,14 @@ schema_flag = "--output-schema"
 model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "native"
+# Authority evidence captured from installed codex-cli 0.150.1 on 2026-08-30:
+# `codex exec --help` documents `--ignore-user-config` and repeatable
+# `--disable <FEATURE>`; the exact option-position invocation
+# `codex exec --ignore-user-config --disable apps --disable plugins --help`
+# parses successfully. These options are emitted before any prompt.
+external_tools = "deny-argv"
+deny_external_tools_argv = ["--ignore-user-config", "--disable", "apps", "--disable", "plugins"]
+external_tool_sources = ["user config", "apps", "plugins", "MCP servers"]
 # --json emits an NDJSON event stream, not a single object. Captured from
 # codex 0.149.0 on 2026-08-23: thread.started, turn.started, item.completed,
 # turn.completed -- with the model's answer in the item.completed event whose

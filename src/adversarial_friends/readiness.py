@@ -8,6 +8,7 @@ import shutil
 
 from . import http_transport
 from .adapters import Adapter
+from .authority import ExternalToolPolicy, enforce as enforce_authority
 from .errors import UsageError
 from .providerconfig import ProviderPolicy
 
@@ -74,6 +75,7 @@ def assess_all(
     include_self: bool = False,
     host_provider: str | None = None,
     enforce: Callable[[Adapter], object] | None = None,
+    external_tool_policy: ExternalToolPolicy | None = None,
 ) -> dict[str, FriendReadiness]:
     """Assess every provider without spending probes on disabled entries."""
     environ = os.environ if env is None else env
@@ -99,6 +101,22 @@ def assess_all(
                 ReadinessState.DISABLED,
                 f"disabled by {NO_HTTP_DISCOVERY_ENV}",
                 adapter.endpoint,
+                setting.model,
+            )
+            continue
+
+        # Authority is decidable from the repository-controlled adapter
+        # declaration alone. Refuse before testing an executable or endpoint:
+        # a provider the policy forbids must never be contacted as a probe.
+        try:
+            if external_tool_policy is not None:
+                enforce_authority(adapter, external_tool_policy)
+        except UsageError as exc:
+            rows[name] = _row(
+                name,
+                ReadinessState.POLICY_BLOCKED,
+                str(exc),
+                declared_where,
                 setting.model,
             )
             continue

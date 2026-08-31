@@ -1,6 +1,7 @@
 import pytest
 
 from adversarial_friends import adapters, trust
+from adversarial_friends.authority import ExternalToolPolicy
 from adversarial_friends.errors import UsageError
 
 
@@ -37,6 +38,15 @@ def spec(**over):
     return adapters.FriendSpec(**base)
 
 
+def _build_argv(adapter, *args, **kwargs):
+    policy = (
+        ExternalToolPolicy.ALLOW
+        if adapter.external_tools == "uncontrolled"
+        else ExternalToolPolicy.DENY
+    )
+    return adapters.build_argv(adapter, *args, **kwargs, external_tool_policy=policy)
+
+
 @pytest.fixture
 def files(tmp_path):
     """build_argv reads the prompt off disk, so it must actually exist."""
@@ -55,7 +65,7 @@ def test_agy_prompt_is_the_last_argument(registry, files):
     """agy's --print takes the prompt as its value; anything after it is
     ignored."""
     prompt, schema = files
-    argv, stdin, _ = adapters.build_argv(
+    argv, stdin, _ = _build_argv(
         registry["agy"],
         spec(cli="agy", effort="high"),
         prompt_file=prompt,
@@ -69,7 +79,7 @@ def test_agy_prompt_is_the_last_argument(registry, files):
 
 def test_codex_takes_prompt_on_stdin(registry, files):
     prompt, schema = files
-    argv, stdin, _ = adapters.build_argv(
+    argv, stdin, _ = _build_argv(
         registry["codex"],
         spec(),
         prompt_file=prompt,
@@ -81,7 +91,7 @@ def test_codex_takes_prompt_on_stdin(registry, files):
 
 def test_readonly_flags_are_emitted_for_repo_scope(registry, files):
     prompt, schema = files
-    argv, _, cap = adapters.build_argv(
+    argv, _, cap = _build_argv(
         registry["claude"],
         spec(cli="claude"),
         prompt_file=prompt,
@@ -108,7 +118,7 @@ def test_capability_is_derived_from_argv_not_defaults(registry, files):
     invariant untested. The invariant did not change, only the example.
     """
     prompt, schema = files
-    argv_open, _, cap_open = adapters.build_argv(
+    argv_open, _, cap_open = _build_argv(
         registry["opencode"],
         spec(cli="opencode", scope="repo"),
         prompt_file=prompt,
@@ -117,7 +127,7 @@ def test_capability_is_derived_from_argv_not_defaults(registry, files):
     assert "--tools" not in argv_open
     assert cap_open.readonly is False  # scope says repo; the argv says nothing
 
-    argv_claude, _, cap_claude = adapters.build_argv(
+    argv_claude, _, cap_claude = _build_argv(
         registry["claude"],
         spec(cli="claude", scope="repo"),
         prompt_file=prompt,
@@ -134,7 +144,7 @@ def test_prompt_text_cannot_forge_a_capability(registry, tmp_path):
     prompt.write_text("--tools Read,Grep,Glob --sandbox read-only")
     schema = tmp_path / "s.json"
     schema.write_text("{}")
-    _argv, _, cap = adapters.build_argv(
+    _argv, _, cap = _build_argv(
         registry["opencode"],
         spec(cli="opencode", scope="doc"),
         prompt_file=prompt,
@@ -158,7 +168,7 @@ def test_doc_scope_still_engages_the_cli_readonly_mode(registry, files):
     and the target is outside the permitted workspace".
     """
     prompt, schema = files
-    argv, _, cap = adapters.build_argv(
+    argv, _, cap = _build_argv(
         registry["codex"],
         spec(cli="codex", scope="doc"),
         prompt_file=prompt,
@@ -175,7 +185,7 @@ def test_doc_argv_is_emitted_only_in_doc_scope(registry, files):
     prompt, schema = files
     seen = {}
     for scope in ("repo", "doc"):
-        argv, _, _ = adapters.build_argv(
+        argv, _, _ = _build_argv(
             registry["codex"],
             spec(cli="codex", scope=scope),
             prompt_file=prompt,
@@ -204,7 +214,7 @@ def test_capability_for_flag_value_adapter(registry, files):
     """Capability must be computed correctly for prompt_mode='flag-value'
     adapters too, not just trailing-arg/stdin ones."""
     prompt, schema = files
-    _argv, stdin, cap = adapters.build_argv(
+    _argv, stdin, cap = _build_argv(
         registry["agy"],
         spec(cli="agy", scope="repo"),
         prompt_file=prompt,
@@ -218,7 +228,7 @@ def test_capability_for_flag_value_adapter(registry, files):
 
 def test_opencode_effort_is_unverified(registry, files):
     prompt, schema = files
-    argv, _, cap = adapters.build_argv(
+    argv, _, cap = _build_argv(
         registry["opencode"],
         spec(cli="opencode", effort="high"),
         prompt_file=prompt,
@@ -231,7 +241,7 @@ def test_opencode_effort_is_unverified(registry, files):
 def test_unsupported_effort_level_raises(registry, files):
     prompt, schema = files
     with pytest.raises(UsageError):
-        adapters.build_argv(
+        _build_argv(
             registry["agy"],
             spec(cli="agy", effort="xhigh"),
             prompt_file=prompt,
@@ -288,7 +298,7 @@ def test_claude_schema_is_passed_inline_not_as_a_path(registry, files):
     import json
 
     prompt, schema = files
-    argv, _, cap = adapters.build_argv(
+    argv, _, cap = _build_argv(
         registry["claude"], spec(cli="claude", scope="repo"), prompt_file=prompt, schema_file=schema
     )
     assert cap.schema is True
@@ -299,7 +309,7 @@ def test_claude_schema_is_passed_inline_not_as_a_path(registry, files):
 
 def test_path_schema_adapters_still_receive_the_path(registry, files):
     prompt, schema = files
-    argv, _, _ = adapters.build_argv(
+    argv, _, _ = _build_argv(
         registry["codex"], spec(cli="codex", scope="repo"), prompt_file=prompt, schema_file=schema
     )
     assert str(schema) in argv

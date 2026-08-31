@@ -9,6 +9,14 @@ model_flag = "--model"
 internal_timeout_flag = ""
 effort_kind = "unverified"
 structured_output = true
+# Authority evidence captured from installed opencode 1.18.18 on 2026-08-30:
+# `opencode --help` exposes `--pure` only for external plugins. The same help
+# exposes MCP management and agent execution but no invocation-local option
+# proving that inherited MCP servers and tools are disabled, so `--pure` alone
+# is insufficient and this adapter remains fail-closed.
+external_tools = "uncontrolled"
+deny_external_tools_argv = []
+external_tool_sources = ["tools", "MCP servers", "external plugins"]
 
 [effort]
 low = ["--variant", "minimal"]

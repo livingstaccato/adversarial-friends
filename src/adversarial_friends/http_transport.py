@@ -41,6 +41,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from .adapters import Adapter, Capability, FriendSpec
+from .authority import AuthorityDecision
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult, normalize
@@ -117,7 +118,7 @@ def probe(endpoint: str, timeout_s: float = 2.0) -> bool:
         return False
 
 
-def capability_for(adapter: Adapter) -> Capability:
+def capability_for(adapter: Adapter, authority: AuthorityDecision) -> Capability:
     """Capability of an HTTP friend, reported honestly.
 
     `readonly=False` is the interesting one, and it is not an oversight. A
@@ -130,7 +131,14 @@ def capability_for(adapter: Adapter) -> Capability:
     friends comes from doc scope (they are handed only the artifact text),
     not from a capability.
     """
-    return Capability(schema=False, readonly=False, effort=adapter.effort_kind)
+    return Capability(
+        schema=False,
+        readonly=False,
+        effort=adapter.effort_kind,
+        external_tools=authority.status,
+        external_tool_sources=authority.sources,
+        deny_external_tools_argv=authority.argv,
+    )
 
 
 def _request_worker(

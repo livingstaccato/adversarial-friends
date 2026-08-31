@@ -22,6 +22,45 @@ def _run_json(tmp_path):
     return json.loads((_run_dir(tmp_path) / "run.json").read_text())
 
 
+def test_default_external_tool_policy_is_recorded_for_fake_dispatch(tmp_path):
+    result = run_af(tmp_path, _artifact(tmp_path), "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["external_tool_policy"] == "deny"
+    assert {row["external_tools"] for row in meta["friends"]} == {"not-applicable"}
+
+
+def test_allow_external_tools_is_explicit_and_recorded(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--allow-external-tools",
+    )
+    assert result.returncode == 0, result.stderr
+    meta = _run_json(tmp_path)
+    assert meta["external_tool_policy"] == "allow"
+    assert {row["external_tools"] for row in meta["friends"]} == {"not-applicable"}
+
+
+def test_explicit_uncontrolled_friend_is_refused_before_run_directory_creation(tmp_path):
+    result = run_af(tmp_path, _artifact(tmp_path), "--friend", "agy:ops")
+    assert result.returncode == 2
+    assert "cannot deny external tools" in result.stderr
+    assert "--allow-external-tools" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
+def test_explicit_roster_cannot_bypass_external_tool_authority(tmp_path):
+    roster = tmp_path / "roster.toml"
+    roster.write_text('[[friend]]\nname="agy-ops"\ncli="agy"\nlens="ops"\n')
+    result = run_af(tmp_path, _artifact(tmp_path), "--roster", str(roster))
+    assert result.returncode == 2
+    assert "agy cannot deny external tools" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
 # --- --json ----------------------------------------------------------------
 
 
@@ -82,6 +121,64 @@ def test_doctor_preserves_http_discovery_opt_out(monkeypatch, capsys):
     assert ollama["state"] == "disabled"
     assert "AF_NO_HTTP_DISCOVERY" in ollama["reason"]
     assert payload["usable"] == 0
+
+
+@pytest.mark.parametrize("provider", ["agy", "opencode"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_doctor_reports_disabled_uncontrolled_provider_without_enforcing_or_building(
+    monkeypatch, capsys, provider, json_output
+):
+    import argparse
+
+    from adversarial_friends import adapters
+    from adversarial_friends.commands import doctor as doctor_module
+    from adversarial_friends.paths import ADAPTER_DIR
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    adapter = adapters.load_adapters(ADAPTER_DIR)[provider]
+    monkeypatch.setattr(doctor_module, "load_adapters", lambda _path: {provider: adapter})
+    monkeypatch.setattr(
+        doctor_module.providerconfig,
+        "load",
+        lambda _registry: ProviderPolicy({provider: ProviderSetting(enabled=False)}),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "build_argv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled provider reached argv construction")
+        ),
+    )
+    monkeypatch.setattr(
+        doctor_module,
+        "enforce",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled provider reached authority enforcement")
+        ),
+    )
+    monkeypatch.setattr(
+        doctor_module.shutil,
+        "which",
+        lambda _binary: (_ for _ in ()).throw(
+            AssertionError("disabled provider reached executable probe")
+        ),
+    )
+
+    code = doctor_module.cmd_doctor(argparse.Namespace(json=json_output, gc=False, out=None))
+    output = capsys.readouterr().out
+
+    assert code == 3
+    if json_output:
+        row = json.loads(output)["friends"][0]
+        assert row["name"] == provider
+        assert row["state"] == "disabled"
+        assert row["reason"] == "disabled by provider policy"
+        assert row["external_tools"] == "uncontrolled"
+    else:
+        assert provider in output
+        assert "state=disabled" in output
+        assert "reason=disabled by provider policy" in output
+        assert "external_tools=uncontrolled" in output
 
 
 def test_same_provider_cannot_be_enabled_and_disabled_for_one_run(tmp_path):
@@ -524,6 +621,21 @@ def test_unsafe_extra_args_requires_the_acknowledgement(tmp_path):
     assert "--i-accept-unsandboxed" in result.stderr
 
 
+def test_allow_external_tools_does_not_waive_extra_args_acknowledgement(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--unsafe-extra-args",
+        "--verbose",
+        "--allow-external-tools",
+    )
+    assert result.returncode == 2
+    assert "--i-accept-unsandboxed" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
 def test_a_denied_flag_is_refused_even_with_the_acknowledgement(tmp_path):
     """An escape hatch for "I need one more option" is not an escape hatch
     for "run with no guardrails at all"."""
@@ -541,7 +653,22 @@ def test_a_denied_flag_is_refused_even_with_the_acknowledgement(tmp_path):
     assert "disables approval" in result.stderr
 
 
-def test_accepted_extra_args_are_recorded_as_a_downgrade(tmp_path):
+def test_default_denial_refuses_unvalidated_extra_args_before_run_directory(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--unsafe-extra-args",
+        "--tools Read --mcp-config evil.json",
+        "--i-accept-unsandboxed",
+    )
+    assert result.returncode == 2
+    assert "--allow-external-tools" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
+def test_allowed_extra_args_are_recorded_as_a_downgrade(tmp_path):
     """A run carrying unvalidated flags has weaker guarantees than its
     friend table implies, so the report has to say so."""
     result = run_af(
@@ -552,6 +679,7 @@ def test_accepted_extra_args_are_recorded_as_a_downgrade(tmp_path):
         "--unsafe-extra-args",
         "--verbose --colour never",
         "--i-accept-unsandboxed",
+        "--allow-external-tools",
     )
     assert result.returncode == 0, result.stderr
     downgrades = " ".join(_run_json(tmp_path)["downgrades"])

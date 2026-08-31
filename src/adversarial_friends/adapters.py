@@ -10,6 +10,7 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
+from .authority import ExternalToolPolicy, enforce
 from .envelopes import Envelope, parse_envelope
 from .errors import UsageError
 
@@ -135,6 +136,12 @@ class Adapter:
     # artifact is not inside one. Emitted only for doc scope, and never
     # anything that grants access: see the note in codex.toml.
     doc_argv: tuple[str, ...] = ()
+    # Provider-managed integrations are a separate authority boundary from
+    # filesystem confinement. Missing declarations stay unknown for API and
+    # legacy-TOML compatibility; shipped adapters declare one explicitly.
+    external_tools: str = "unknown"  # none | deny-argv | uncontrolled | unknown
+    deny_external_tools_argv: tuple[str, ...] = ()
+    external_tool_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,6 +149,9 @@ class Capability:
     schema: bool
     readonly: bool
     effort: str  # native | unverified | none
+    external_tools: str = "unknown"
+    external_tool_sources: tuple[str, ...] = ()
+    deny_external_tools_argv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,6 +182,32 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
                 f"duplicate adapter name {name!r}: declared in both {sources[name]} and {path}"
             )
         sources[name] = path
+        external_tools = data.get("external_tools", "unknown")
+        deny_argv = data.get("deny_external_tools_argv", [])
+        tool_sources = data.get("external_tool_sources", [])
+        if not isinstance(external_tools, str) or external_tools not in {
+            "unknown",
+            "none",
+            "deny-argv",
+            "uncontrolled",
+        }:
+            raise UsageError(f"{path}: invalid external_tools declaration")
+        if not isinstance(deny_argv, list) or not all(
+            isinstance(value, str) for value in deny_argv
+        ):
+            raise UsageError(f"{path}: deny_external_tools_argv must be a list of strings")
+        if not isinstance(tool_sources, list) or not all(
+            isinstance(value, str) and value for value in tool_sources
+        ):
+            raise UsageError(f"{path}: external_tool_sources must be a list of strings")
+        if external_tools == "deny-argv" and not deny_argv:
+            raise UsageError(
+                f"{path}: external_tools='deny-argv' requires deny_external_tools_argv"
+            )
+        if external_tools != "deny-argv" and deny_argv:
+            raise UsageError(
+                f"{path}: deny_external_tools_argv is only valid with external_tools='deny-argv'"
+            )
         registry[name] = Adapter(
             name=name,
             binary=data.get("binary", ""),
@@ -195,12 +231,19 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             doc_argv=tuple(data.get("doc_argv", [])),
             structured_output=bool(data.get("structured_output", False)),
             envelope=parse_envelope(data.get("envelope")),
+            external_tools=external_tools,
+            deny_external_tools_argv=tuple(deny_argv),
+            external_tool_sources=tuple(tool_sources),
         )
     return registry
 
 
 def build_argv(
-    adapter: Adapter, spec: FriendSpec, prompt_file: Path, schema_file: Path
+    adapter: Adapter,
+    spec: FriendSpec,
+    prompt_file: Path,
+    schema_file: Path,
+    external_tool_policy: ExternalToolPolicy,
 ) -> tuple[list[str], str | None, Capability]:
     """Return (argv, stdin_text, capability).
 
@@ -217,6 +260,7 @@ def build_argv(
     """
     prompt = Path(prompt_file).read_text(encoding="utf-8")
     argv = [adapter.binary, *adapter.base_argv]
+    authority = enforce(adapter, external_tool_policy)
 
     # A friend never needs to write, in EITHER scope: it reads the artifact
     # (plus, at repo scope, the checkout) and returns findings on stdout.
@@ -259,10 +303,17 @@ def build_argv(
         # cannot silently disagree with the runner's kill deadline.
         argv += [adapter.internal_timeout_flag, f"{spec.timeout}s"]
 
+    # Emitted while argv is still entirely options. Prompt placement below
+    # may append an untrusted trailing argument or a prompt flag/value pair.
+    argv += authority.argv
+
     capability = Capability(
         schema=schema_emitted,
         readonly=readonly_emitted,
         effort=adapter.effort_kind,
+        external_tools=authority.status,
+        external_tool_sources=authority.sources,
+        deny_external_tools_argv=authority.argv,
     )
 
     if adapter.prompt_mode == "stdin":
@@ -327,3 +378,27 @@ def friend_key(spec: FriendSpec) -> str:
     if spec.effort:
         key += f"+{spec.effort}"
     return key
+
+
+def validate_roster_uniqueness(specs: list[FriendSpec], *, judging: bool) -> None:
+    """Enforce the path-name and ledger-identity invariants of a final roster."""
+    names: set[str] = set()
+    identities: dict[str, str] = {}
+    for spec in specs:
+        if spec.name in names:
+            raise UsageError(
+                f"duplicate friend name {spec.name!r}: names must be unique because "
+                "they become output paths"
+            )
+        names.add(spec.name)
+        if not judging:
+            continue
+        key = friend_key(spec)
+        if key in identities:
+            raise UsageError(
+                f"friends {identities[key]!r} and {spec.name!r} are the same friend -- "
+                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
+                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
+                "give one a different lens, model, or effort"
+            )
+        identities[key] = spec.name

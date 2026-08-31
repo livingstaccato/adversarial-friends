@@ -224,6 +224,8 @@ def test_dispatch_never_rederives_capability_from_requested_scope():
         model_flag="",
         internal_timeout_flag="",
         effort_kind="none",
+        external_tools="none",
+        external_tool_sources=("test executable",),
     )
     registry = {"norepro": no_readonly_mode}
     spec = adapters.FriendSpec(

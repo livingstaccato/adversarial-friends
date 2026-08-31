@@ -10,6 +10,13 @@ schema_flag = ""
 model_flag = ""
 internal_timeout_flag = ""
 effort_kind = "none"
+# This transport does not invoke `ollama run`. The repository's actual
+# `/api/generate` request body contains only `model`, `prompt`, and
+# `stream=false`; it has no tools field. That request shape—not HTTP as a
+# transport—is the authority boundary declared here.
+external_tools = "none"
+deny_external_tools_argv = []
+external_tool_sources = ["POST /api/generate request body"]
 
 [effort]
 

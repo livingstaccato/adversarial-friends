@@ -10,6 +10,13 @@ model_flag = "--model"
 internal_timeout_flag = "--print-timeout"
 effort_kind = "native"
 structured_output = true
+# Authority evidence captured from installed agy 1.1.22 on 2026-08-30:
+# `agy --help` exposes MCP/plugin management subcommands, plan mode, and a
+# slash-command switch, but no invocation-local option that disables inherited
+# MCP servers, plugins, and tools together. It therefore remains fail-closed.
+external_tools = "uncontrolled"
+deny_external_tools_argv = []
+external_tool_sources = ["tools", "slash commands", "MCP servers", "plugins"]
 
 [effort]
 low = ["--effort", "low"]

@@ -20,7 +20,8 @@ from pathlib import Path
 import shutil
 
 from .. import providerconfig, rosterfile
-from ..adapters import Adapter, FriendSpec, friend_key
+from ..adapters import Adapter, FriendSpec, validate_roster_uniqueness
+from ..authority import ExternalToolPolicy, enforce
 from ..cliargs import _specs_from_flags
 from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
@@ -72,8 +73,15 @@ def resolve_friends(
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     downgrades: list[str],
+    external_tool_policy: ExternalToolPolicy | None = None,
 ) -> ResolvedRoster:
     """Apply §10.1's precedence and return the roster a run will use."""
+    if external_tool_policy is None:
+        external_tool_policy = (
+            ExternalToolPolicy.ALLOW
+            if getattr(args, "allow_external_tools", False)
+            else ExternalToolPolicy.DENY
+        )
     # §10.1's precedence, strongest last: adapter defaults, then --preset,
     # then a roster file, then --friend. Each layer only fills what the one
     # above it left unset, so an operator can keep a roster and still
@@ -132,6 +140,7 @@ def resolve_friends(
                 timeout=args.timeout,
                 provider_policy=provider_policy,
                 host_provider=host_provider,
+                external_tool_policy=external_tool_policy,
             )
             roster_source = str(roster_path)
         else:
@@ -144,6 +153,7 @@ def resolve_friends(
                 timeout=args.timeout,
                 provider_policy=provider_policy,
                 host_provider=host_provider,
+                external_tool_policy=external_tool_policy,
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
@@ -189,39 +199,11 @@ def resolve_friends(
             for s in specs
         ]
 
-    _refuse_duplicate_identities(specs, args.mode)
-    return ResolvedRoster(specs=specs, preset=preset, source=roster_source)
-
-
-def _refuse_duplicate_identities(specs: list[FriendSpec], mode: str) -> None:
-    """Two entries that are the same (cli, lens, model, effort) are one
-    ledger identity (§8.1). Where friends judge, that identity would cast
-    two verdicts: quorum would count both, `latest_per_judge` keep one, and
-    flag order decide which -- so it is refused before anything is spent,
-    rather than downgraded into a run that cannot settle those claims. A
-    `report` run has no judging, and asking the same friend twice there is a
-    legitimate way to sample its variance.
-
-    Called LAST, on the roster the run will actually use. Called before the
-    preset filled efforts and before §10.1 layer 4's `--model`/`--effort`
-    override, it missed every collision those layers create -- `--friend
-    codex:ops:gpt-5 --friend codex:ops --model gpt-5` resolves to two
-    friends with one identity -- and refused rosters whose duplicate entry
-    `--max-friends` would have dropped before the run.
-    """
-    if mode == "report":
-        return
-    seen: dict[str, str] = {}
+    validate_roster_uniqueness(specs, judging=args.mode != "report")
     for spec in specs:
-        key = friend_key(spec)
-        if key in seen:
-            raise UsageError(
-                f"friends {seen[key]!r} and {spec.name!r} are the same friend -- "
-                f"cli {spec.cli!r}, lens {spec.lens!r}, model {spec.model!r}, effort "
-                f"{spec.effort!r} -- and would share one ledger identity ({key}); "
-                "give one a different lens, model, or effort"
-            )
-        seen[key] = spec.name
+        if spec.cli != "fake":
+            enforce(registry[spec.cli], external_tool_policy)
+    return ResolvedRoster(specs=specs, preset=preset, source=roster_source)
 
 
 def roster_for_run(
@@ -229,6 +211,7 @@ def roster_for_run(
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     downgrades: list[str],
+    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
 ) -> tuple[ResolvedRoster, list[FriendSpec]]:
     """The roster this run will actually dispatch, and the refusals that
     come with it.
@@ -250,11 +233,21 @@ def roster_for_run(
             source=resume_meta.get("roster_source"),
         )
     else:
-        resolved = resolve_friends(args, registry, fake_cmd, downgrades)
+        resolved = resolve_friends(args, registry, fake_cmd, downgrades, external_tool_policy)
         specs = resolved.specs
 
+    # The concrete final roster, whether freshly resolved or restored from
+    # run.json, owns output paths and (in judging modes) ledger identities.
+    # Frozen resume data must not bypass either invariant.
+    validate_roster_uniqueness(specs, judging=args.mode != "report")
     for spec in specs:
         validate_friend_name(spec.name)
+        if spec.cli != "fake":
+            adapter = registry.get(spec.cli)
+            if adapter is None and registry:
+                raise UsageError(f"unknown cli in saved roster: {spec.cli!r}")
+            if adapter is not None:
+                enforce(adapter, external_tool_policy)
 
     if len(specs) < 2:
         # §8.3. --friend REPLACES the roster rather than augmenting
