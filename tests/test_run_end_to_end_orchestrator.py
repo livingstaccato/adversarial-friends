@@ -61,7 +61,7 @@ def _respond(tmp_path, merges, round_no=1):
     return data
 
 
-def _resume(tmp_path, env_extra=None):
+def _resume(tmp_path, env_extra=None, extra=()):
     return subprocess.run(
         [
             sys.executable,
@@ -71,6 +71,7 @@ def _resume(tmp_path, env_extra=None):
             _run_dir(tmp_path).name,
             "--out",
             str(tmp_path / "runs"),
+            *extra,
         ],
         capture_output=True,
         text=True,
@@ -229,6 +230,70 @@ def test_an_empty_response_is_a_real_answer(tmp_path):
     result = _resume(tmp_path)
     assert result.returncode == 0, result.stderr
     assert not [r for r in _ledger(tmp_path) if r["type"] == "alias"]
+
+
+def test_resumed_v020_authority_stays_legacy_unknown_while_current_grant_dispatches(tmp_path):
+    halted = _halt(
+        tmp_path,
+        "judge_uphold_a",
+        "judge_uphold_b",
+        mode="crossexam",
+        extra=("--allow-external-tools",),
+    )
+    assert halted.returncode == 10, halted.stderr
+    meta = _run_json(tmp_path)
+    meta.pop("schema_version")
+    meta.pop("lifecycle_state")
+    meta.pop("external_tool_policy")
+    _write_run_json(tmp_path, meta)
+    _respond(tmp_path, [])
+
+    refused = _resume(tmp_path)
+    assert refused.returncode == 2
+    assert "allow-external-tools" in refused.stderr
+
+    resumed = _resume(tmp_path, extra=("--allow-external-tools",))
+    assert resumed.returncode == 0, resumed.stderr
+    terminal = _run_json(tmp_path)
+    assert terminal["external_tool_policy"] == "legacy-unknown"
+    assert any(
+        row["round"] == 2 and row["external_tool_policy"] == "allow" for row in terminal["friends"]
+    )
+    report = (_run_dir(tmp_path) / "report.md").read_text()
+    assert "Status: `legacy-unknown`" in report
+
+
+def test_a_terminal_run_cannot_be_resumed_twice(tmp_path):
+    _halt(tmp_path, "good")
+    _respond(tmp_path, [])
+    first = _resume(tmp_path)
+    assert first.returncode == 0, first.stderr
+    run_json = _run_dir(tmp_path) / "run.json"
+    report = _run_dir(tmp_path) / "report.md"
+    before = (run_json.read_bytes(), report.read_bytes())
+
+    second = _resume(tmp_path)
+
+    assert second.returncode == 2
+    assert "waiting-for-orchestrator" in second.stderr
+    assert (run_json.read_bytes(), report.read_bytes()) == before
+
+
+def test_a_running_checkpoint_is_not_resumable_or_mutated(tmp_path):
+    _halt(tmp_path, "good")
+    _respond(tmp_path, [])
+    meta = _run_json(tmp_path)
+    meta["lifecycle_state"] = "running"
+    _write_run_json(tmp_path, meta)
+    run_json = _run_dir(tmp_path) / "run.json"
+    report = _run_dir(tmp_path) / "report.md"
+    before = (run_json.read_bytes(), report.read_bytes())
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2
+    assert "waiting-for-orchestrator" in resumed.stderr
+    assert (run_json.read_bytes(), report.read_bytes()) == before
 
 
 def test_resuming_without_a_response_says_what_to_do(tmp_path):

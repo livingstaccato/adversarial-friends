@@ -1,7 +1,6 @@
 """run.json's shape, and rebuilding a halted run's configuration from it.
 
-Split from commands/run.py because the metadata contract is separate from the
-run loop that produces it.
+Split from commands/run.py because its metadata contract is a separate concern.
 
 **A resumed run restores deterministic configuration from the run directory.**
 Security grants are the deliberate exception: metadata records them but can never confer
@@ -24,7 +23,7 @@ from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
-from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, json_node_count, terminal_outcome
+from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
 from ..report import render
 from ..reviewstate import ReviewState
@@ -33,6 +32,7 @@ from ..snapshots import SnapshotIdentity, record_snapshot
 from ..themes import MAX_THEME_PROPOSALS, ThemeProposal, bounded_theme_metadata
 from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
+from . import resumevalidation
 from .checkpoint import (
     legacy_successful_friend_ids,
     normalize_friend_rows,
@@ -41,7 +41,6 @@ from .checkpoint import (
     validate_lifecycle_and_snapshot,
 )
 from .exits import decide_exit
-from .resumevalidation import validate_saved_invocation
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
@@ -51,7 +50,7 @@ CURRENT_SCHEMA_VERSION = 2
 
 def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Return a detached current-schema view without inventing history."""
-    meta = copy.deepcopy(dict(raw))
+    meta = resumevalidation.bounded_metadata_copy(raw)
     version = meta.get("schema_version", 1)
     if type(version) is not int or not 1 <= version <= CURRENT_SCHEMA_VERSION:
         raise UsageError(f"unsupported run metadata schema {version!r}")
@@ -164,6 +163,7 @@ def _base_meta(
     started_at: str | None = None,
     theme_proposals: list[ThemeProposal] | None = None,
     produced_new_themes: bool = False,
+    prior_external_tool_policy: object = None,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -188,7 +188,11 @@ def _base_meta(
         "artifact_hash": digest,
         "friends": friends_meta,
         "external_tool_policy": (
-            "allow" if getattr(args, "allow_external_tools", False) else "deny"
+            "legacy-unknown"
+            if prior_external_tool_policy == "legacy-unknown"
+            else "allow"
+            if getattr(args, "allow_external_tools", False)
+            else "deny"
         ),
         "downgrades": downgrades,
         "invocation": {
@@ -336,12 +340,6 @@ def _checkpoint_successes(
 
 
 def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
-    try:
-        json_node_count(meta, "saved run metadata")
-    except ValueError as exc:
-        raise UsageError(
-            f"cannot resume: saved run metadata exceeds the metadata bound: {exc}"
-        ) from exc
     raw_proposals = meta.get("theme_proposals", [])
     if type(raw_proposals) is not list:
         raise UsageError("cannot resume: saved theme_proposals must be a list")
@@ -439,29 +437,24 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         raise UsageError(f"cannot resume: {run_dir} has no run.json")
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, OSError, RecursionError) as exc:
         raise UsageError(f"cannot resume: {meta_path} is not valid run metadata") from exc
     if not isinstance(meta, dict):
         raise UsageError(f"cannot resume: {meta_path} must contain a JSON object")
+    raw_version = meta.get("schema_version", 1)
     meta = migrate_meta(meta)
-    try:
-        json_node_count(meta, "saved run metadata")
-    except ValueError as exc:
-        raise UsageError(
-            f"cannot resume: saved run metadata exceeds the metadata bound: {exc}"
-        ) from exc
+    resumevalidation.validate_metadata_bound(meta)
     saved = meta.get("invocation")
     if not isinstance(saved, dict):
         raise UsageError(
             f"cannot resume: {meta_path} has no valid invocation; it may predate "
             "resume support and does not record how the run was invoked."
         )
-    validate_lifecycle_and_snapshot(meta)
     normalize_repeat_tracker(meta.get("repeat_tracker", {}))
     for name in _RESUMABLE_ARGS:
         if name in saved:
             _validate_saved_setting(name, saved[name])
-    validate_saved_invocation(saved)
+    resumevalidation.validate_saved_invocation(saved)
     artifact = saved["artifact"]
     friends = saved.get("friend", [])
     if not isinstance(friends, list) or not all(isinstance(item, str) for item in friends):
@@ -486,6 +479,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         max_rounds=saved.get("max_rounds", 1),
         require_friends=saved.get("require_friends"),
     )
+    validate_lifecycle_and_snapshot(meta, run_dir=run_dir, legacy=raw_version == 1)
     restored = argparse.Namespace(**vars(args))
     for name in _RESUMABLE_ARGS:
         if name in saved:

@@ -206,6 +206,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 started_at=invocation_started_at,
                 theme_proposals=theme_proposals,
                 produced_new_themes=produced_new_themes,
+                prior_external_tool_policy=(resume_meta or {}).get("external_tool_policy"),
             )
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:

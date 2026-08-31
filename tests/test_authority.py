@@ -261,11 +261,27 @@ def _write_resume_fixture(
 ) -> Path:
     run_dir = tmp_path / "run-test"
     run_dir.mkdir()
+    artifact = str(tmp_path / "spec.md")
+    snapshot = {
+        "repo_root": None,
+        "commit": None,
+        "tree": None,
+        "artifact_path": artifact,
+        "artifact_hash": "sha256:" + "0" * 64,
+        "predecessor": None,
+    }
     meta = {
-        "invocation": {"artifact": str(tmp_path / "spec.md"), "friend": [], **invocation},
+        "schema_version": 2,
+        "lifecycle_state": "waiting-for-orchestrator",
+        "invocation": {"artifact": artifact, "friend": [], **invocation},
         "roster": roster or [],
+        "snapshot": snapshot,
+        "snapshot_history": [snapshot],
     }
     (tmp_path / "spec.md").write_text("# spec\n")
+    round_dir = run_dir / "round-1"
+    round_dir.mkdir()
+    (round_dir / "REQUEST.json").write_text(json.dumps({"question": "merge"}))
     (run_dir / "run.json").write_text(json.dumps(meta))
     return run_dir
 

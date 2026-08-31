@@ -1,9 +1,12 @@
 """Strict normalization for attacker-editable resume checkpoint metadata."""
 
+import json
+from pathlib import Path
 from typing import Any
 
 from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail, failure_summary
 from ..errors import UsageError
+from ..orchestrator import QUESTION_EXTRACT, QUESTION_MERGE, REQUEST_NAME, RESPONSE_NAME
 from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..snapshots import SnapshotIdentity, history_from_meta
 from ..verdicts import CONTESTED, INCOMPLETE, TERMINAL_STATES, UNPROVEN
@@ -23,7 +26,6 @@ _OPTIONAL_STRINGS = frozenset(
 _OPTIONAL_BOOLS = frozenset({"write_protected", "readonly", "os_confined"})
 _OPTIONAL_STRING_LISTS = frozenset({"external_tool_sources", "deny_external_tools_argv"})
 _CLAIM_STATES = TERMINAL_STATES | {CONTESTED, UNPROVEN, INCOMPLETE}
-_LIFECYCLE_STATES = frozenset({"running", "waiting-for-orchestrator", "terminal"})
 
 
 def _friend_error(index: int, detail: str) -> UsageError:
@@ -242,43 +244,32 @@ def normalize_repeat_tracker(value: object) -> dict[str, object]:
     return normalized
 
 
-def _validate_snapshot_record(snapshot: object, context: str) -> dict[str, object]:
-    if type(snapshot) is not dict:
-        raise UsageError(f"cannot resume: saved {context} must be an object")
-    required = {"repo_root", "commit", "tree", "artifact_path", "artifact_hash", "predecessor"}
-    if not required.issubset(snapshot):
-        raise UsageError(f"cannot resume: saved {context} has an invalid shape")
-    for field in ("repo_root", "commit", "tree", "predecessor"):
-        if snapshot[field] is not None and type(snapshot[field]) is not str:
-            raise UsageError(f"cannot resume: saved {context} field {field!r} has an invalid type")
-    for field in ("artifact_path", "artifact_hash"):
-        if type(snapshot[field]) is not str:
-            raise UsageError(f"cannot resume: saved {context} field {field!r} has an invalid type")
-    if (snapshot["repo_root"] is None) != (snapshot["commit"] is None):
-        raise UsageError(
-            f"cannot resume: saved {context} repo_root and commit must appear together"
-        )
-    if snapshot["tree"] is not None and snapshot["commit"] is None:
-        raise UsageError(f"cannot resume: saved {context} tree requires a commit")
-    if bool(snapshot["artifact_path"]) != bool(snapshot["artifact_hash"]):
-        raise UsageError(f"cannot resume: saved {context} artifact identity is incomplete")
-    return snapshot
+def _legacy_halt_is_outstanding(meta: dict[str, Any], run_dir: Path) -> bool:
+    saved = meta.get("invocation")
+    if type(saved) is not dict:
+        return False
+    iteration = meta.get("resume_iteration", meta.get("iterations_run", 1))
+    max_rounds = saved.get("max_rounds", 1)
+    if type(iteration) is not int or iteration < 1 or type(max_rounds) is not int:
+        return False
+    round_dir = run_dir / f"round-{(iteration - 1) * max_rounds + 1}"
+    request_path = round_dir / REQUEST_NAME
+    if not request_path.is_file() or (round_dir / f"{RESPONSE_NAME}.applied").exists():
+        return False
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, RecursionError):
+        return False
+    return type(request) is dict and request.get("question") in {QUESTION_MERGE, QUESTION_EXTRACT}
 
 
-def validate_lifecycle_and_snapshot(meta: dict[str, Any]) -> None:
+def validate_lifecycle_and_snapshot(meta: dict[str, Any], *, run_dir: Path, legacy: bool) -> None:
     lifecycle = meta.get("lifecycle_state")
-    if lifecycle is not None and (type(lifecycle) is not str or lifecycle not in _LIFECYCLE_STATES):
-        raise UsageError("cannot resume: saved lifecycle_state is invalid")
-    snapshot = _validate_snapshot_record(meta.get("snapshot"), "snapshot")
-    history = meta.get("snapshot_history")
-    if type(history) is not list or not history:
-        raise UsageError(
-            "cannot resume: saved snapshot_history must be a non-empty list of objects"
-        )
-    for index, item in enumerate(history):
-        _validate_snapshot_record(item, f"snapshot_history[{index}]")
-    # Sparse pre-resume fixtures predate artifact identity entirely. Real
-    # v0.2 captures have both values and receive the full semantic validator.
-    if snapshot.get("artifact_path") and snapshot.get("artifact_hash"):
-        current = SnapshotIdentity.from_meta(meta)
-        history_from_meta(meta, current)
+    if not legacy and lifecycle != "waiting-for-orchestrator":
+        raise UsageError("cannot resume: saved lifecycle_state must be waiting-for-orchestrator")
+    if legacy and lifecycle not in (None, "waiting-for-orchestrator"):
+        raise UsageError("cannot resume: saved lifecycle_state must be waiting-for-orchestrator")
+    if legacy and not _legacy_halt_is_outstanding(meta, run_dir):
+        raise UsageError("cannot resume: legacy metadata has no outstanding orchestrator halt")
+    current = SnapshotIdentity.from_current_meta(meta)
+    history_from_meta(meta, current)

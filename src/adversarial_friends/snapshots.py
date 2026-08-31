@@ -422,6 +422,17 @@ class SnapshotIdentity:
         assert raw is not None
         return cls._from_dict(raw)
 
+    @classmethod
+    def from_current_meta(cls, meta: object) -> SnapshotIdentity:
+        """Read the authoritative current-schema identity without legacy fallback."""
+        mapped = _string_mapping(meta, "snapshot metadata")
+        if "snapshot" not in mapped:
+            raise UsageError("cannot resume: saved snapshot field is required")
+        raw = _string_mapping(mapped["snapshot"], "snapshot")
+        current = cls._from_dict(raw)
+        _nested_legacy_conflict(raw, mapped, complete=True)
+        return current
+
     def _verify_repo_root(self) -> None:
         assert self.repo_root is not None
         try:
@@ -509,7 +520,12 @@ def history_from_meta(
     for index, entry in enumerate(raw):
         if not isinstance(entry, Mapping):
             raise UsageError(f"cannot resume: saved snapshot_history[{index}] must be an object")
-        history.append(SnapshotIdentity._from_dict(entry))
+        try:
+            history.append(SnapshotIdentity._from_dict(entry))
+        except UsageError as exc:
+            raise UsageError(
+                f"cannot resume: saved snapshot_history[{index}] is invalid: {exc}"
+            ) from exc
     if history[-1].tree is None and dataclasses.replace(history[-1], tree=current.tree) == current:
         # A first migration may have written the nested/history shape before
         # tree verification was introduced. Complete the current entry in

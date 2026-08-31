@@ -152,6 +152,11 @@ def _resume_args(run_dir: Path) -> SimpleNamespace:
 def _run_dir(tmp_path: Path, meta: dict[str, object]) -> Path:
     run_dir = tmp_path / "run-v020"
     run_dir.mkdir()
+    round_dir = run_dir / "round-1"
+    round_dir.mkdir()
+    (round_dir / "REQUEST.json").write_text(
+        json.dumps({"version": 1, "question": "merge"}), encoding="utf-8"
+    )
     (run_dir / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     return run_dir
 
@@ -327,6 +332,109 @@ def test_checkpoint_numeric_semantics_are_rejected_before_namespace(
         runmeta._restore_args(_resume_args(run_dir))
 
 
+@pytest.mark.parametrize("lifecycle", [None, "running", "terminal"])
+def test_current_schema_requires_waiting_lifecycle_before_namespace(
+    monkeypatch, tmp_path, lifecycle
+):
+    from adversarial_friends.commands import runmeta
+
+    meta = migrate_meta(_resume_meta())
+    if lifecycle is None:
+        meta.pop("lifecycle_state", None)
+    else:
+        meta["lifecycle_state"] = lifecycle
+    run_dir = _run_dir(tmp_path, meta)
+
+    def namespace_must_not_be_constructed(**_kwargs):
+        raise AssertionError("Namespace constructed before lifecycle was validated")
+
+    monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
+    with pytest.raises(UsageError, match="waiting-for-orchestrator"):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize("request_data", [None, {}, {"question": "unknown"}])
+def test_legacy_resume_requires_a_valid_outstanding_request_before_namespace(
+    monkeypatch, tmp_path, request_data
+):
+    from adversarial_friends.commands import runmeta
+
+    run_dir = _run_dir(tmp_path, _resume_meta())
+    request_path = run_dir / "round-1" / "REQUEST.json"
+    if request_data is None:
+        request_path.unlink()
+    else:
+        request_path.write_text(json.dumps(request_data), encoding="utf-8")
+
+    def namespace_must_not_be_constructed(**_kwargs):
+        raise AssertionError("Namespace constructed without a pending legacy halt")
+
+    monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
+    with pytest.raises(UsageError, match="outstanding orchestrator halt"):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {
+            "repo_root": None,
+            "commit": None,
+            "tree": None,
+            "artifact_path": "",
+            "artifact_hash": "",
+            "predecessor": None,
+        },
+        {
+            "repo_root": None,
+            "commit": None,
+            "tree": None,
+            "artifact_path": "artifact/spec.md",
+            "artifact_hash": "not-a-sha256",
+            "predecessor": None,
+        },
+    ],
+)
+def test_snapshot_semantics_are_rejected_before_namespace(monkeypatch, tmp_path, snapshot):
+    from adversarial_friends.commands import runmeta
+
+    meta = _resume_meta()
+    meta["snapshot"] = snapshot
+    meta["snapshot_history"] = [snapshot]
+    run_dir = _run_dir(tmp_path, meta)
+
+    def namespace_must_not_be_constructed(**_kwargs):
+        raise AssertionError("Namespace constructed before snapshot semantics were validated")
+
+    monkeypatch.setattr(runmeta.argparse, "Namespace", namespace_must_not_be_constructed)
+    with pytest.raises(UsageError, match="snapshot"):
+        runmeta._restore_args(_resume_args(run_dir))
+
+
+def test_migration_rejects_deep_metadata_before_copying():
+    raw: dict[str, object] = {}
+    cursor = raw
+    for _ in range(500):
+        child: dict[str, object] = {}
+        cursor["child"] = child
+        cursor = child
+
+    with pytest.raises(UsageError, match="metadata bound"):
+        migrate_meta(raw)
+
+    assert "schema_version" not in raw
+
+
+def test_migration_rejects_wide_metadata_without_mutating_input():
+    values = list(range(9_000))
+    raw = {"wide": values}
+
+    with pytest.raises(UsageError, match="metadata bound"):
+        migrate_meta(raw)
+
+    assert raw == {"wide": values}
+
+
 def test_v020_security_grants_must_be_reacknowledged_by_the_current_cli(tmp_path):
     from adversarial_friends.commands.runmeta import _restore_args
 
@@ -346,8 +454,8 @@ def test_sparse_legacy_snapshot_history_is_validated_before_namespace(monkeypatc
             "repo_root": None,
             "commit": None,
             "tree": None,
-            "artifact_path": "",
-            "artifact_hash": "",
+            "artifact_path": "artifact/spec.md",
+            "artifact_hash": "sha256:" + "1" * 64,
             "predecessor": None,
         },
         "snapshot_history": [{"repo_root": []}],

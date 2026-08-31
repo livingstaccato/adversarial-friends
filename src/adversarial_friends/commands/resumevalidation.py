@@ -5,9 +5,12 @@ Resume treats the file as hostile input, so it must establish the same invariant
 before constructing either that namespace or any roster objects.
 """
 
+from collections.abc import Mapping
+import copy
 from typing import Any
 
 from ..errors import UsageError
+from ..outcomes import json_node_count
 from ..trust import MODEL_RE
 
 _POSITIVE_SETTINGS = frozenset(
@@ -22,6 +25,30 @@ _POSITIVE_SETTINGS = frozenset(
     }
 )
 _JUDGING_MODES = frozenset({"crossexam", "gate", "loop"})
+
+
+def bounded_metadata_copy(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Bound hostile metadata before recursive copying can exhaust Python."""
+    try:
+        value = raw if type(raw) is dict else dict(raw)
+    except (TypeError, ValueError) as exc:
+        raise UsageError(f"cannot resume: saved run metadata is not a mapping: {exc}") from exc
+    validate_metadata_bound(value)
+    try:
+        return copy.deepcopy(value)
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise UsageError(
+            f"cannot resume: saved run metadata cannot be copied safely: {exc}"
+        ) from exc
+
+
+def validate_metadata_bound(value: object) -> None:
+    try:
+        json_node_count(value, "saved run metadata")
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise UsageError(
+            f"cannot resume: saved run metadata exceeds the metadata bound: {exc}"
+        ) from exc
 
 
 def _saved_error(name: str, value: object, expected: str) -> UsageError:
