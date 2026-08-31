@@ -15,7 +15,7 @@ contract or a verdict contract is the caller's business.
 from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import tempfile
 import threading
@@ -41,6 +41,21 @@ from .runstore import RunStore
 from .spawn import SpawnResult
 
 RoundResult = tuple[FriendSpec, Capability, SpawnResult]
+
+
+@dataclass(frozen=True)
+class DispatchRoundOutcome:
+    """Auditable results plus a stop that occurred after dispatch began."""
+
+    results: list[RoundResult]
+    auth_abort: str | None = None
+    error: BaseException | None = None
+
+
+@dataclass(frozen=True)
+class _DispatchAttempt:
+    result: RoundResult
+    error: BaseException | None = None
 
 
 @dataclass(frozen=True)
@@ -178,11 +193,11 @@ def dispatch_round(
     reporter: Progress | None = None,
     kind: str = "critique",
     external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
-) -> tuple[list[RoundResult], str | None]:
+) -> DispatchRoundOutcome:
     """Run every friend in `specs` concurrently and return their outcomes.
 
-    The second return value is an auth-abort message, or None. It is
-    returned rather than raised: raising here, before the caller has a
+    An auth-abort message or mid-dispatch error is returned rather than
+    raised: raising here, before the caller has a
     chance to call `persist_result` on anything, used to discard the whole
     round's output -- including from friends that succeeded -- the moment
     ANY friend in the round hit a deterministic auth failure. The caller
@@ -203,10 +218,8 @@ def dispatch_round(
     friend. The run directory itself is never nested inside any of these.
 
     `on_pool` hands the live executor to the caller's signal handler and is
-    called again with None on the way out. A handler that only sets
-    `abort_event` is not enough on its own: the main thread is blocked inside
-    pool.map() waiting on the same hung worker, so the handler must also be
-    able to shut the pool down without waiting.
+    called again with None on the way out. Signal handlers set `abort_event`,
+    which every transport polls so in-flight workers can drain promptly.
 
     `round_no` selects which round directory this round's isolation belongs
     to conceptually, but no file is written here -- see persist_result.
@@ -238,18 +251,20 @@ def dispatch_round(
                     isolation.doc_scope_dir(dest, artifact)
                 cwd_for[spec.name] = dest
 
-            def _run_one(spec: FriendSpec) -> RoundResult:
+            def _run_one(spec: FriendSpec) -> _DispatchAttempt | None:
                 # spawn.run_process already turns most process-launch failures
                 # (missing binary, E2BIG, ENOEXEC, ...) into a SpawnResult
                 # rather than raising. This is the second, broader layer:
-                # ANYTHING else that goes wrong for one friend must not end
-                # the whole round. pool.map collects one return value per
-                # future; an exception escaping here would propagate out of
-                # pool.map entirely, losing every other friend's
-                # (possibly already-succeeded) result along with it. A
-                # deliberate AfError (e.g. check_denied_values refusing a
-                # dangerous flag) is a real stop condition with its own exit
-                # code -- that still propagates.
+                # ANYTHING else that goes wrong for one friend must produce
+                # an auditable attempt instead of losing every other friend's
+                # (possibly already-succeeded) result. A deliberate AfError
+                # is also returned separately as a stop condition.
+                # Futures are submitted together, but submission is not a
+                # dispatch attempt. A stop from an earlier worker may reach
+                # this queued future before it starts; returning no result
+                # lets the caller prune the prompt as genuinely unused.
+                if abort_event.is_set():
+                    return None
                 report.friend_dispatched(spec.name, spec.timeout)
                 try:
                     result = _dispatch(
@@ -266,29 +281,46 @@ def dispatch_round(
                         pass_env,
                         external_tool_policy,
                     )
-                except AfError:
-                    # A deliberate stop, not this friend's outcome. Cleared
-                    # from the in-flight set so the heartbeat stops naming
-                    # it, but not reported as a result -- it did not produce
-                    # one, and the error itself is about to be printed.
-                    report.friend_forgotten(spec.name)
-                    raise
+                except AfError as exc:
+                    # The process may have been refused before spawn, but
+                    # this worker crossed the reliable dispatch boundary:
+                    # its prompt was consumed and adapter policy evaluated.
+                    # Return both an auditable failed row and the deliberate
+                    # stop so callers can persist partial evidence before
+                    # terminalizing the run.
+                    abort_event.set()
+                    result = (
+                        spec,
+                        _UNKNOWN_CAPABILITY,
+                        replace(_exception_outcome([], exc), failure_reason=str(exc)),
+                    )
+                    report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                    return _DispatchAttempt(result, exc)
                 except Exception as exc:
                     report.friend_finished(spec.name, f"failed: {exc.__class__.__name__}")
-                    return spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
+                    return _DispatchAttempt(
+                        (spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc))
+                    )
+                except BaseException as exc:
+                    # KeyboardInterrupt can be delivered while a worker is
+                    # evaluating adapter/setup code. It has the same audit
+                    # requirement as AfError: retain the attempted prompt and
+                    # a friend row, stop peers, and surface the interruption.
+                    abort_event.set()
+                    result = spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
+                    report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                    return _DispatchAttempt(result, exc)
                 report.friend_finished(spec.name, _outcome_word(result[2], contract))
-                return result
+                return _DispatchAttempt(result)
 
             # Only specs that actually got an isolation directory are
             # dispatched -- _run_one would otherwise KeyError looking up
             # cwd_for for a spec whose setup never happened.
             dispatch_specs = [s for s in specs if s.name in cwd_for]
             if not dispatch_specs:
-                return [], None
-            # Bounded: see ceilings.DEFAULT_MAX_CONCURRENCY. `pool.map`
-            # still returns results in `dispatch_specs` order, so a round's
-            # aggregation is unchanged -- only how many friends are in
-            # flight at once.
+                return DispatchRoundOutcome([])
+            # Bounded: see ceilings.DEFAULT_MAX_CONCURRENCY. Futures are read
+            # in `dispatch_specs` order, so aggregation remains stable.
             workers = max(1, min(max_concurrency, len(dispatch_specs)))
             # Announced here rather than on entry: the friends named are the
             # ones that actually got an isolation directory, and a repeat-
@@ -298,33 +330,40 @@ def dispatch_round(
             report.round_started(round_no, kind, [s.name for s in dispatch_specs])
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
             on_pool(pool)
+            futures: list[concurrent.futures.Future[_DispatchAttempt | None]] = []
+            round_error: BaseException | None = None
             try:
-                results = list(pool.map(_run_one, dispatch_specs))
+                futures = [pool.submit(_run_one, spec) for spec in dispatch_specs]
+                for future in futures:
+                    attempt = future.result()
+                    if attempt is None:
+                        continue
+                    results.append(attempt.result)
+                    if round_error is None and attempt.error is not None:
+                        round_error = attempt.error
                 pool.shutdown(wait=True)
-            except BaseException:
-                # A deliberate stop from ONE friend must not wait out every
-                # other friend's full timeout. `pool.map` raises as soon as
-                # a worker does, but `ThreadPoolExecutor.__exit__` then
-                # calls `shutdown(wait=True)` and joins the workers still
-                # running -- so a flag validation error raised in the first
-                # second surfaced only after the remaining friends had each
-                # spent up to `--timeout`. With eight friends on the default
-                # 900s that is fifteen minutes of a CLI that is already
-                # certain to fail.
-                #
-                # `abort_event` is what actually shortens it: the friends
-                # still running poll it and stop, the same way they do for
-                # Ctrl-C. `cancel_futures` drops the ones that never
-                # started, and `wait=False` means this does not block on
-                # either. Correct precisely because an AfError ends the run
-                # -- it reaches cli.py's handler and exits.
-                #
-                # BaseException, not Exception: KeyboardInterrupt arrives
-                # here too, and it is the case that most needs the pool not
-                # to block.
+            except BaseException as exc:
+                # A main-thread interruption can arrive between future
+                # results. Stop queued work and let abort-aware in-flight
+                # transports drain before recovering their audit records.
                 abort_event.set()
-                pool.shutdown(wait=False, cancel_futures=True)
-                raise
+                round_error = round_error or exc
+                pool.shutdown(wait=True, cancel_futures=True)
+                # A main-thread interruption can occur after workers have
+                # already completed. Recover every finished attempt once the
+                # abort has drained in-flight transports; prompt existence is
+                # never used as a guess for whether dispatch happened.
+                recorded = {spec.name for spec, _capability, _outcome in results}
+                for future in futures:
+                    if future.cancelled() or not future.done():
+                        continue
+                    try:
+                        attempt = future.result()
+                    except BaseException:
+                        continue
+                    if attempt is not None and attempt.result[0].name not in recorded:
+                        results.append(attempt.result)
+                        recorded.add(attempt.result[0].name)
             finally:
                 on_pool(None)
                 # In a `finally` because the heartbeat thread must stop even
@@ -359,7 +398,7 @@ def dispatch_round(
             # a false auth classification ends the whole run.
             if auth_abort is None and classify(outcome, registry.get(spec.cli)) == AUTH:
                 auth_abort = auth_abort_message(spec.name, registry.get(spec.cli))
-    return results, auth_abort
+    return DispatchRoundOutcome(results, auth_abort, round_error)
 
 
 def persist_result(

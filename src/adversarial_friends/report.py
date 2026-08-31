@@ -103,6 +103,14 @@ def _escape_cell(value: object) -> str:
     return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
+def _escape_status_cell(value: object) -> str:
+    """Defense in depth for a status rendered without resume validation."""
+    text = _escape_cell(value).replace("`", "&#96;")
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*)://", r"\1: //", text)
+    return re.sub(r"(?i)\b(javascript|vbscript|data):", r"\1 :", text)
+
+
 def _code_span(text: str) -> str:
     """Wrap `text` in backticks so it still renders as inline code even if
     `text` itself contains backticks (e.g. a location like
@@ -368,7 +376,7 @@ def render(
             f"{_escape_cell(write_protected)} | "
             f"{_escape_cell(declared_scope)} | "
             f"{_escape_cell(os_confined)} | "
-            f"{_escape_cell(friend['status'])} |"
+            f"{_escape_status_cell(friend['status'])} |"
         )
     if not run_meta["friends"]:
         lines.append("| _(no friends were spawned)_ |  |  |  |  |  |  |  |")

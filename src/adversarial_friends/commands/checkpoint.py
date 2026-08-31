@@ -32,11 +32,35 @@ def _success_status(status: str) -> bool:
     return status in _SUCCESS_STATUSES or status.startswith("ok (diagnostics: ")
 
 
-def _validate_diagnostics(index: int, row: dict[str, Any], status: str) -> None:
-    if "diagnostics" not in row and "diagnostics_path" not in row:
-        if status.startswith("ok (diagnostics: "):
+def _validate_status(index: int, row: dict[str, Any], status: str) -> None:
+    """Validate status even when an attacker removes its supporting fields.
+
+    Safe legacy rows use the same compact ``ok``/``failed: reason`` grammar;
+    current rows additionally carry an exact diagnostics/path pair. Merely
+    omitting that pair must never disable validation of the remaining text.
+    """
+    has_diagnostics = "diagnostics" in row or "diagnostics_path" in row
+    orphan_suffix = " [orphans suspected]"
+    orphan = status.endswith(orphan_suffix)
+    body = status.removesuffix(orphan_suffix) if orphan else status
+
+    if not has_diagnostics:
+        if body.startswith("ok (diagnostics: "):
             raise _friend_error(index, "status has no bounded diagnostic summary fields")
-        return
+        if body == "ok":
+            return
+        if body.startswith("failed: "):
+            reason = body[len("failed: ") :]
+            if not reason or failure_summary(reason) != reason:
+                raise _friend_error(index, "failure reason is not a bounded sanitized summary")
+            return
+        if body.startswith("skipped: "):
+            reason = body[len("skipped: ") :]
+            if not reason or _stderr_tail(reason) != reason:
+                raise _friend_error(index, "skip reason is not a bounded sanitized summary")
+            return
+        raise _friend_error(index, "status is not a recognized friend result")
+
     diagnostics = row.get("diagnostics")
     path = row.get("diagnostics_path")
     if type(diagnostics) is not str or len(diagnostics) > STDERR_TAIL_CHARS:
@@ -48,13 +72,26 @@ def _validate_diagnostics(index: int, row: dict[str, Any], status: str) -> None:
     expected_path = f"round-{row['round']}/{row['name']}.err"
     if type(path) is not str or path != expected_path:
         raise _friend_error(index, "diagnostics_path does not match the friend capture")
-    if diagnostics and (diagnostics not in status or path not in status):
-        raise _friend_error(index, "status disagrees with its diagnostic summary")
-    if status.startswith("failed: "):
-        body = status.removesuffix(" [orphans suspected]")
-        reason = body[len("failed: ") :].split(" (stderr: ", 1)[0]
+    suffix = orphan_suffix if orphan else ""
+    if body == "ok" or body.startswith("ok (diagnostics: "):
+        expected = "ok"
+        if diagnostics:
+            expected += f" (diagnostics: {diagnostics}; full text in {path})"
+        if status != expected + suffix:
+            raise _friend_error(index, "status disagrees with its diagnostic summary")
+        return
+    if body.startswith("failed: "):
+        reason_and_diagnostics = body[len("failed: ") :]
+        reason = reason_and_diagnostics.split(" (stderr: ", 1)[0]
         if not reason or failure_summary(reason) != reason:
             raise _friend_error(index, "failure reason is not a bounded sanitized summary")
+        expected = f"failed: {reason}"
+        if diagnostics:
+            expected += f" (stderr: {diagnostics}; full text in {path})"
+        if status != expected + suffix:
+            raise _friend_error(index, "status disagrees with its diagnostic summary")
+        return
+    raise _friend_error(index, "diagnostic fields are unsupported for this status")
 
 
 def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[str, Any]]:
@@ -102,7 +139,7 @@ def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[st
             raise _friend_error(index, "has ambiguous write-protection fields")
         if "declared_scope" in row and "scope" in row and row["declared_scope"] != row["scope"]:
             raise _friend_error(index, "has ambiguous scope fields")
-        _validate_diagnostics(index, row, status)
+        _validate_status(index, row, status)
         normalized.append(row)
     return normalized
 

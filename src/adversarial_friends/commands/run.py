@@ -22,6 +22,7 @@ from ..ceilings import (
     within_deadline,
 )
 from ..claimschema import schema_path
+from ..dispatch import failure_summary
 from ..errors import AfError, UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
@@ -257,6 +258,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Set once any round hits a deterministic auth failure; only stops
         # further scheduling -- the round that found it is already persisted.
         auth_abort: str | None = None
+        dispatch_error: str | None = None
         cross = None
         # What the next loop iteration inherits: states, verdicts, notes and
         # discard signatures. None means "judge everything fresh" -- the
@@ -475,6 +477,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                 )
                 halted_failed = critique.any_failed or not critique.any_success
 
+                if critique.dispatch_error is not None:
+                    dispatch_error = (
+                        f"{type(critique.dispatch_error).__name__}: "
+                        f"{failure_summary(str(critique.dispatch_error))}"
+                    )
+                    break
+
                 if critique.auth_abort is not None:
                     # Deterministic (§7.2): stop rather than ask for
                     # orchestrator adjudication or judge with a broken roster.
@@ -534,6 +543,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rounds_reached = max(rounds_reached, cross.rounds_run)
                     friends_meta.extend(cross.friends_meta)
                     downgrades.extend(cross.downgrades)
+                    if cross.dispatch_error is not None:
+                        dispatch_error = (
+                            f"{type(cross.dispatch_error).__name__}: "
+                            f"{failure_summary(str(cross.dispatch_error))}"
+                        )
+                        break
                     if cross.auth_abort is not None:
                         auth_abort = cross.auth_abort
                         break
@@ -644,6 +659,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             loop_exhausted,
             budget.elapsed(now()),
             auth_abort=auth_abort,
+            runtime_error=dispatch_error,
         )
     except Exception:
         # Initialization failures before a durable run.json exists must not

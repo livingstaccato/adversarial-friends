@@ -11,6 +11,7 @@ import pytest
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands import run as run_command, runmeta
+from adversarial_friends.commands.critique import CritiqueOutcome
 from adversarial_friends.errors import UsageError
 from adversarial_friends.failures import RepeatTracker
 from adversarial_friends.outcomes import RunOutcome, terminal_outcome
@@ -97,6 +98,42 @@ def test_unexpected_runtime_error_is_persisted_then_reraised(monkeypatch, tmp_pa
     assert meta["exit_code"] == 1
     assert meta["lifecycle_state"] == "terminal"
     assert "Stop reason: `runtime-error`" in (run_dir / "report.md").read_text(encoding="utf-8")
+
+
+def test_mid_dispatch_stop_terminalizes_after_preserving_partial_friend_rows(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    _fake_environment(monkeypatch)
+
+    def partial_critique(*_args, **_kwargs):
+        return (
+            CritiqueOutcome(
+                friends_meta=[
+                    {
+                        "name": "fake-good-0",
+                        "model": None,
+                        "effort": None,
+                        "round": 1,
+                        "status": "failed: refused unsafe dispatch",
+                    }
+                ],
+                calls=1,
+                any_failed=True,
+                dispatch_error=UsageError("refused unsafe dispatch"),
+            ),
+            [],
+            0,
+        )
+
+    monkeypatch.setattr(run_command, "run_critique", partial_critique)
+
+    assert run_command.cmd_run(_args(tmp_path, artifact)) == 1
+
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["stop_reason"] == "runtime-error"
+    assert meta["lifecycle_state"] == "terminal"
+    assert [row["name"] for row in meta["friends"]] == ["fake-good-0"]
 
 
 def test_terminal_persistence_failure_does_not_hide_the_original_runtime_error(

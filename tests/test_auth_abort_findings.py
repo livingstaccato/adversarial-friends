@@ -145,7 +145,7 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
     store = RunStore(tmp_path / "run", "run-auth")
     store.lock()
 
-    results, auth_abort = rounds_mod.dispatch_round(
+    batch = rounds_mod.dispatch_round(
         [good, broken],
         1,
         prompt_for,
@@ -160,9 +160,12 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
         tracker=tracker,
     )
 
-    assert {spec.name for spec, _cap, _outcome in results} == {"good-friend", "broken-friend"}
-    assert auth_abort is not None
-    assert "broken-friend" in auth_abort
+    assert {spec.name for spec, _cap, _outcome in batch.results} == {
+        "good-friend",
+        "broken-friend",
+    }
+    assert batch.auth_abort is not None
+    assert "broken-friend" in batch.auth_abort
     # Both friends were recorded -- proof the loop did not stop at the
     # first auth hit and skip whatever came after it.
     assert set(tracker.snapshot()["last"]) == {"good-friend", "broken-friend"}
@@ -180,7 +183,7 @@ def test_run_critique_persists_every_friend_before_surfacing_an_auth_abort(monke
     ]
 
     def _fake_dispatch_round(*_args, **_kwargs):
-        return results, AUTH_MESSAGE
+        return rounds_mod.DispatchRoundOutcome(results, AUTH_MESSAGE)
 
     monkeypatch.setattr(critique_mod, "dispatch_round", _fake_dispatch_round)
 
@@ -252,7 +255,7 @@ def test_run_rounds_settles_the_current_round_then_stops_scheduling_more(monkeyp
 
     def _fake_dispatch_round(specs, round_no, *_args, **_kwargs):
         calls.append(round_no)
-        return results, AUTH_MESSAGE
+        return rounds_mod.DispatchRoundOutcome(results, AUTH_MESSAGE)
 
     monkeypatch.setattr(crossexam_mod, "dispatch_round", _fake_dispatch_round)
 

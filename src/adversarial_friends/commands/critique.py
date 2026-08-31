@@ -29,6 +29,7 @@ from ..progress import Progress
 from ..prompt import _build_friend_prompt
 from ..reviewstate import ReviewState
 from ..rounds import (
+    DispatchRoundOutcome,
     RoundResult,
     dispatch_round,
     partition_dispatchable,
@@ -56,6 +57,10 @@ class CritiqueOutcome:
     # result this round produced is still persisted and merged below --
     # only the caller's decision to schedule another round is affected.
     auth_abort: str | None = None
+    # A deliberate stop or interruption after one or more friend workers
+    # crossed the dispatch boundary. Results remain fully auditable; the
+    # outer run uses this to terminalize instead of scheduling more work.
+    dispatch_error: BaseException | None = None
     # How many distinct friends produced a usable answer this round.
     # `any_success` alone cannot distinguish "1 of 50" from "50 of 50" --
     # both report the same True, and a run reporting SUCCESS because one
@@ -179,7 +184,7 @@ def run_critique(
 
     results: list[RoundResult] = []
     try:
-        results, outcome.auth_abort = dispatch_round(
+        batch: DispatchRoundOutcome = dispatch_round(
             dispatchable,
             round_no,
             prompt_for,
@@ -201,6 +206,9 @@ def run_critique(
             kind="critique",
             external_tool_policy=external_tool_policy,
         )
+        results = batch.results
+        outcome.auth_abort = batch.auth_abort
+        outcome.dispatch_error = batch.error
     finally:
         prune_undispatched_prompts(dispatchable, prompt_for, results)
     result_names = {spec.name for spec, _capability, _result in results}

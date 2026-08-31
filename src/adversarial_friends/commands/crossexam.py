@@ -30,6 +30,7 @@ from ..ledger import Claim, Verdict
 from ..progress import Progress
 from ..reviewstate import ReviewState
 from ..rounds import (
+    DispatchRoundOutcome,
     RoundResult,
     dispatch_round,
     partition_dispatchable,
@@ -84,6 +85,7 @@ class CrossexamOutcome:
     # that found it is still settled and its verdicts kept -- only further
     # rounds are skipped.
     auth_abort: str | None = None
+    dispatch_error: BaseException | None = None
 
 
 def run_rounds(
@@ -260,7 +262,7 @@ def run_rounds(
 
         results: list[RoundResult] = []
         try:
-            results, round_auth_abort = dispatch_round(
+            batch: DispatchRoundOutcome = dispatch_round(
                 judge_specs,
                 round_no,
                 prompt_for,
@@ -283,6 +285,9 @@ def run_rounds(
                 kind="judging",
                 external_tool_policy=external_tool_policy,
             )
+            results = batch.results
+            round_auth_abort = batch.auth_abort
+            outcome.dispatch_error = batch.error
         finally:
             prune_undispatched_prompts(judge_specs, prompt_for, results)
         for spec, _capability, _result in results:
@@ -409,6 +414,8 @@ def run_rounds(
         )
         if round_auth_abort is not None:
             outcome.auth_abort = round_auth_abort
+            break
+        if outcome.dispatch_error is not None:
             break
         round_no += 1
 

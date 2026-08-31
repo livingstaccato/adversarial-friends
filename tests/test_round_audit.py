@@ -10,6 +10,7 @@ from adversarial_friends import rounds as rounds_mod
 from adversarial_friends.adapters import Capability, FriendSpec
 from adversarial_friends.authority import ExternalToolPolicy
 from adversarial_friends.ceilings import KILL_GRACE_S, Budget
+from adversarial_friends.commands import critique as critique_mod, crossexam as crossexam_mod
 from adversarial_friends.commands.checkpoint import (
     legacy_successful_friend_ids,
     normalize_friend_rows,
@@ -263,6 +264,184 @@ def test_failed_isolation_setup_leaves_no_prompt_without_result(monkeypatch, tmp
     assert not store.friend_prompt_path(1, spec.name).exists()
 
 
+@pytest.mark.parametrize(
+    "raised",
+    [UsageError("refused unsafe dispatch"), KeyboardInterrupt("interrupted dispatch")],
+    ids=("af-error", "interruption"),
+)
+def test_dispatch_round_returns_completed_and_refused_attempts_when_one_friend_errors(
+    monkeypatch, tmp_path, raised
+):
+    good = _spec("good-ops-0")
+    refused = _spec("refused-ops-0")
+    undispatched = _spec("undispatched-ops-0")
+    specs = [good, refused, undispatched]
+    store = RunStore(tmp_path, "run-partial-dispatch")
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("# artifact\n")
+    prompts = {}
+    for spec in specs:
+        prompt = store.friend_prompt_path(1, spec.name)
+        prompt.write_text(f"prompt for {spec.name}\n")
+        prompts[spec.name] = prompt
+    started = []
+
+    def fake_dispatch(spec, *_args, **_kwargs):
+        started.append(spec.name)
+        if spec is refused:
+            raise raised
+        if spec is undispatched:
+            pytest.fail("queued friend should be cancelled after the refusal")
+        return spec, Capability(False, True, "none"), _success()
+
+    monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
+
+    batch = rounds_mod.dispatch_round(
+        specs,
+        1,
+        prompts,
+        store,
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        None,
+        None,
+        threading.Event(),
+        max_concurrency=1,
+    )
+
+    assert [result[0].name for result in batch.results] == [good.name, refused.name]
+    assert batch.results[0][2].result.succeeded is True
+    assert str(raised) in (batch.results[1][2].failure_reason or "")
+    assert isinstance(batch.error, type(raised))
+    assert batch.auth_abort is None
+    assert started == [good.name, refused.name]
+
+
+def test_critique_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monkeypatch, tmp_path):
+    good = _spec("good-ops-0")
+    refused = _spec("refused-ops-0")
+    undispatched = _spec("undispatched-ops-0")
+    specs = [good, refused, undispatched]
+    store = RunStore(tmp_path, "run-partial-critique")
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("# artifact\n")
+    real_dispatch_round = rounds_mod.dispatch_round
+
+    def serial_dispatch(*args, **kwargs):
+        kwargs["max_concurrency"] = 1
+        return real_dispatch_round(*args, **kwargs)
+
+    def fake_dispatch(spec, *_args, **_kwargs):
+        if spec.name == refused.name:
+            raise UsageError("refused unsafe dispatch")
+        if spec.name == undispatched.name:
+            pytest.fail("queued friend should not be dispatched")
+        return spec, Capability(False, True, "none"), _success()
+
+    monkeypatch.setattr(critique_mod, "dispatch_round", serial_dispatch)
+    monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
+
+    outcome, _claims, _counter = run_critique(
+        specs,
+        1,
+        [],
+        0,
+        artifact.read_text(),
+        store,
+        ReviewState(),
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        None,
+        None,
+        threading.Event(),
+    )
+
+    assert isinstance(outcome.dispatch_error, UsageError)
+    assert [row["name"] for row in outcome.friends_meta] == [good.name, refused.name]
+    assert store.friend_prompt_path(1, good.name).exists()
+    assert store.friend_prompt_path(1, refused.name).exists()
+    assert not store.friend_prompt_path(1, undispatched.name).exists()
+
+
+def test_judging_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monkeypatch, tmp_path):
+    good = _spec("good-ops-0")
+    refused = _spec("refused-ops-0")
+    undispatched = _spec("undispatched-ops-0")
+    specs = [good, refused, undispatched]
+    claim = _claim()
+    store = RunStore(tmp_path, "run-partial-judging")
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("# artifact\n")
+    real_dispatch_round = rounds_mod.dispatch_round
+
+    def serial_dispatch(*args, **kwargs):
+        kwargs["max_concurrency"] = 1
+        return real_dispatch_round(*args, **kwargs)
+
+    verdict = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout="{}",
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult(
+            {
+                "verdicts": [
+                    {
+                        "claim_id": claim.id,
+                        "verdict": "upheld",
+                        "confidence": "high",
+                        "reasoning": "checked",
+                    }
+                ]
+            },
+            [],
+            True,
+        ),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+
+    def fake_dispatch(spec, *_args, **_kwargs):
+        if spec.name == refused.name:
+            raise UsageError("refused unsafe dispatch")
+        if spec.name == undispatched.name:
+            pytest.fail("queued judge should not be dispatched")
+        return spec, Capability(False, True, "none"), verdict
+
+    monkeypatch.setattr(crossexam_mod, "dispatch_round", serial_dispatch)
+    monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
+
+    outcome = run_rounds(
+        specs,
+        [claim],
+        store,
+        ReviewState.replay([claim]),
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        artifact.read_text(),
+        None,
+        None,
+        threading.Event(),
+        Budget(max_calls=10, started=0.0),
+        2,
+        now=lambda: 0.0,
+    )
+
+    assert isinstance(outcome.dispatch_error, UsageError)
+    assert [row["name"] for row in outcome.friends_meta] == [good.name, refused.name]
+    assert store.friend_prompt_path(2, good.name).exists()
+    assert store.friend_prompt_path(2, refused.name).exists()
+    assert not store.friend_prompt_path(2, undispatched.name).exists()
+
+
 def test_judging_persists_repeat_skip_before_prompt_construction(tmp_path):
     spec = _spec("broken-ops-0")
     tracker = RepeatTracker()
@@ -423,6 +602,19 @@ def test_checkpoint_rejects_unsanitized_new_failure_status():
         "round-1/friend-ops-0.err)",
         "diagnostics": "safe",
         "diagnostics_path": "round-1/friend-ops-0.err",
+    }
+
+    with pytest.raises(UsageError, match="failure reason"):
+        normalize_friend_rows([row], {"friend-ops-0"})
+
+
+def test_checkpoint_rejects_hostile_failure_status_when_diagnostic_fields_are_stripped():
+    row = {
+        "name": "friend-ops-0",
+        "model": None,
+        "effort": None,
+        "round": 1,
+        "status": "failed: [click](javascript:bad) https://example.test/" + "x" * 10_000,
     }
 
     with pytest.raises(UsageError, match="failure reason"):

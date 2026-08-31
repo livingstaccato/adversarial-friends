@@ -298,6 +298,27 @@ def test_status_pipe_alone_does_not_break_column_count():
     assert _unescaped_pipe_count(data_line) == _unescaped_pipe_count(header_line)
 
 
+def test_hostile_friend_status_cannot_create_active_links_or_inline_code():
+    m = meta(
+        friends=[
+            {
+                "name": "friend-a",
+                "model": None,
+                "effort": None,
+                "round": 1,
+                "status": "failed: `code` [click](javascript:alert(1)) https://bad.test/",
+            }
+        ]
+    )
+
+    out = render([], [], m)
+
+    friend_line = next(ln for ln in out.splitlines() if ln.startswith("| friend-a"))
+    assert "javascript:" not in friend_line
+    assert "https://" not in friend_line
+    assert "`code`" not in friend_line
+
+
 def test_unknown_severity_does_not_crash_and_is_shown():
     out = render([claim("c-0001@1", severity="apocalyptic")], [], meta())
     assert "c-0001@1" in out and "apocalyptic" in out
