@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path, PurePosixPath
 import re
@@ -14,6 +14,7 @@ from typing import cast
 
 from . import isolation
 from .errors import UsageError
+from .snapshotgit import legacy_invocation_path, resolve_saved_source
 
 COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
 HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -166,16 +167,9 @@ def _validate_source_path(value: str) -> str:
 
 
 def _recover_source_path(identity: SnapshotIdentity, meta: Mapping[str, object]) -> str | None:
-    """Recover pre-binding metadata without trusting the current file bytes.
-
-    v0.2 stored the invocation path only at top level. Existing files are
-    resolved to preserve the old symlink-to-target binding; deleted regular
-    files use their lexical path and are then proved against the saved commit
-    by ``verify``. A missing/retargeted symlink cannot be reconstructed
-    safely and therefore fails at that same blob proof.
-    """
     if identity.repo_root is None:
         return None
+    assert identity.commit is not None
     saved_path = meta.get("artifact_path")
     saved_name = meta.get("artifact")
     raw = (
@@ -189,22 +183,7 @@ def _recover_source_path(identity: SnapshotIdentity, meta: Mapping[str, object])
         raise UsageError(
             "cannot resume: saved repository snapshot has no recoverable source artifact path"
         )
-    repo = identity.repo_root.resolve()
-    candidate = Path(raw)
-    if not candidate.is_absolute():
-        candidate = repo / candidate
-    try:
-        if candidate.exists() or candidate.is_symlink():
-            candidate = candidate.resolve(strict=True)
-        else:
-            candidate = candidate.absolute()
-        relative = candidate.relative_to(repo)
-    except (OSError, ValueError) as exc:
-        raise UsageError(
-            "cannot resume: saved source artifact path is outside or unavailable "
-            f"for the recorded repository: {raw!r}"
-        ) from exc
-    return _validate_source_path(relative.as_posix())
+    return legacy_invocation_path(identity.repo_root, raw)
 
 
 def _required_string(raw: Mapping[str, object], field: str) -> str:
@@ -354,6 +333,7 @@ class SnapshotIdentity:
     artifact_hash: str
     predecessor: str | None = None
     source_path: str | None = None
+    _recover_source: bool = field(default=False, compare=False, repr=False)
 
     @classmethod
     def create(
@@ -482,7 +462,23 @@ class SnapshotIdentity:
     ) -> SnapshotIdentity:
         if identity.repo_root is None or identity.source_path is not None:
             return identity
-        return dataclasses.replace(identity, source_path=_recover_source_path(identity, meta))
+        return dataclasses.replace(
+            identity,
+            source_path=_recover_source_path(identity, meta),
+            _recover_source=True,
+        )
+
+    def _resolved_binding(self) -> SnapshotIdentity:
+        if not self._recover_source:
+            return self
+        assert self.repo_root is not None
+        assert self.commit is not None
+        assert self.source_path is not None
+        return dataclasses.replace(
+            self,
+            source_path=resolve_saved_source(self.repo_root, self.commit, self.source_path),
+            _recover_source=False,
+        )
 
     @classmethod
     def from_meta(cls, meta: object) -> SnapshotIdentity:
@@ -592,18 +588,20 @@ class SnapshotIdentity:
             raise UsageError(
                 "cannot resume: saved repository snapshot has no source artifact binding"
             )
-        _validate_source_path(self.source_path)
+        resolved = self._resolved_binding()
+        assert resolved.source_path is not None
+        _validate_source_path(resolved.source_path)
         commit_hash = (
             "sha256:"
             + hashlib.sha256(
-                _resume_commit_blob(self.repo_root, self.commit, self.source_path)
+                _resume_commit_blob(self.repo_root, self.commit, resolved.source_path)
             ).hexdigest()
         )
         if commit_hash != self.artifact_hash:
             raise UsageError(
                 "cannot resume: saved commit artifact does not match the frozen artifact identity"
             )
-        return dataclasses.replace(self, tree=actual_tree)
+        return dataclasses.replace(resolved, tree=actual_tree)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -645,7 +643,7 @@ def history_from_meta(
             raise UsageError(f"cannot resume: saved snapshot_history[{index}] must be an object")
         try:
             identity = SnapshotIdentity._from_dict(entry)
-            history.append(SnapshotIdentity._recover_binding(identity, meta))
+            history.append(SnapshotIdentity._recover_binding(identity, meta)._resolved_binding())
         except UsageError as exc:
             raise UsageError(
                 f"cannot resume: saved snapshot_history[{index}] is invalid: {exc}"

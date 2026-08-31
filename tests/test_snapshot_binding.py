@@ -10,9 +10,10 @@ import sys
 from e2e_helpers import AF, _env, run_af
 import pytest
 
+from adversarial_friends import isolation
 from adversarial_friends.errors import UsageError
 from adversarial_friends.runstore import RunStore
-from adversarial_friends.snapshots import SnapshotIdentity
+from adversarial_friends.snapshots import SnapshotIdentity, history_from_meta
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -82,6 +83,118 @@ def test_symlinked_source_persists_the_bound_target_path(tmp_path):
     assert SnapshotIdentity._from_dict(identity.to_dict()).verify(frozen) == identity
 
 
+def _legacy_symlink_identity(tmp_path, target: str = "docs/a.md"):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_bytes(b"# saved target A\n")
+    (docs / "b.md").write_bytes(b"# alternate target B\n")
+    source = repo / "spec.md"
+    source.symlink_to(target)
+    frozen = tmp_path / "frozen.md"
+    frozen.write_bytes((docs / "a.md").read_bytes())
+    digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
+    commit = isolation.snapshot_commit(repo)
+    legacy = {
+        "repo_root": str(repo),
+        "snapshot_sha": commit,
+        "artifact_path": str(source),
+        "artifact_hash": digest,
+    }
+    return repo, source, frozen, legacy
+
+
+def test_legacy_symlink_binding_is_recovered_from_saved_commit_not_live_target(tmp_path):
+    repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
+    source.unlink()
+    source.symlink_to(repo / "docs" / "b.md")
+    replacement = (repo / "docs" / "b.md").read_bytes()
+    frozen.write_bytes(replacement)
+    legacy["artifact_hash"] = "sha256:" + hashlib.sha256(replacement).hexdigest()
+
+    with pytest.raises(UsageError, match=r"commit artifact does not match"):
+        SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+
+def test_legacy_symlink_binding_ignores_live_retarget_even_when_bytes_match(tmp_path):
+    repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
+    (repo / "docs" / "b.md").write_bytes((repo / "docs" / "a.md").read_bytes())
+    source.unlink()
+    source.symlink_to(repo / "docs" / "b.md")
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == "docs/a.md"
+
+
+@pytest.mark.parametrize("live_state", ["missing-link", "missing-target"])
+def test_legacy_symlink_binding_does_not_require_live_link_or_target(tmp_path, live_state):
+    repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
+    source.unlink()
+    if live_state == "missing-target":
+        (repo / "docs" / "a.md").unlink()
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == "docs/a.md"
+
+
+@pytest.mark.parametrize(
+    "target, expected",
+    [
+        ("docs/a.md", "docs/a.md"),
+        ("docs/../docs/a.md", "docs/a.md"),
+    ],
+)
+def test_legacy_relative_symlink_targets_follow_saved_git_semantics(tmp_path, target, expected):
+    _repo, _source, frozen, legacy = _legacy_symlink_identity(tmp_path, target)
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == expected
+
+
+@pytest.mark.parametrize("suffix", [("docs", "a.md"), ("docs", "..", "docs", "a.md")])
+def test_legacy_absolute_in_repo_symlink_target_is_recovered_from_saved_git(tmp_path, suffix):
+    repo = tmp_path / "repo"
+    target = str(repo.joinpath(*suffix))
+    _repo, _source, frozen, legacy = _legacy_symlink_identity(tmp_path, target)
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == "docs/a.md"
+
+
+def test_legacy_history_entry_recovers_symlink_binding_from_its_saved_commit(tmp_path):
+    _repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
+    current = SnapshotIdentity.from_meta(legacy).verify(frozen)
+    source.unlink()
+    raw_history = dataclasses.replace(current, source_path=None).to_dict()
+
+    history = history_from_meta({**legacy, "snapshot_history": [raw_history]}, current)
+
+    assert [entry.source_path for entry in history] == ["docs/a.md"]
+
+
+@pytest.mark.parametrize("target", ["../outside.md", "/etc/passwd", "docs/missing.md"])
+def test_legacy_unsafe_or_missing_saved_symlink_target_fails_closed(tmp_path, target):
+    _repo, _source, frozen, legacy = _legacy_symlink_identity(tmp_path, target)
+
+    with pytest.raises(UsageError, match=r"saved.*(?:symlink|artifact).*(?:outside|unavailable)"):
+        SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+
+@pytest.mark.parametrize("artifact_path", ["../spec.md", "nested/../spec.md", "spec.md\0x"])
+def test_legacy_hostile_invocation_path_fails_before_git_lookup(tmp_path, artifact_path):
+    _repo, _source, frozen, legacy = _legacy_symlink_identity(tmp_path)
+    legacy["artifact_path"] = artifact_path
+
+    with pytest.raises(UsageError, match=r"source.*path"):
+        SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+
 @pytest.mark.parametrize(
     "source_path",
     ["/etc/passwd", "../spec.md", ".", "nested/../spec.md", "nested//spec.md", "\0spec.md"],
@@ -116,7 +229,8 @@ def test_coordinated_frozen_and_metadata_tamper_does_not_rewrite_run_json(tmp_pa
     request = run_dir / "round-1" / "REQUEST.json"
     response = json.loads(request.read_text())
     response["merges"] = []
-    (request.parent / "RESPONSE.json").write_text(json.dumps(response))
+    response_path = request.parent / "RESPONSE.json"
+    response_path.write_text(json.dumps(response))
     frozen = next((run_dir / "artifact").iterdir())
     tampered = b"# coordinated replacement\n"
     frozen.write_bytes(tampered)
@@ -128,6 +242,9 @@ def test_coordinated_frozen_and_metadata_tamper_does_not_rewrite_run_json(tmp_pa
     meta["snapshot_history"][-1]["artifact_hash"] = digest
     run_json.write_text(json.dumps(meta, indent=2, sort_keys=True))
     before = run_json.read_bytes()
+    before_response = response_path.read_bytes()
+    report = run_dir / "report.md"
+    before_report = report.read_bytes()
 
     resumed = subprocess.run(
         [
@@ -147,6 +264,8 @@ def test_coordinated_frozen_and_metadata_tamper_does_not_rewrite_run_json(tmp_pa
     assert resumed.returncode == 2, resumed.stderr
     assert "commit artifact does not match" in resumed.stderr
     assert run_json.read_bytes() == before
+    assert response_path.read_bytes() == before_response
+    assert report.read_bytes() == before_report
 
 
 def test_legacy_binding_migration_is_not_persisted_before_later_validation(tmp_path):

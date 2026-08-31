@@ -74,14 +74,15 @@ def test_explicit_http_uses_configured_model_while_bypassing_disabled(monkeypatc
     assert [(spec.cli, spec.model) for spec in resolved.specs] == [("ollama", "qwen3:0.6b")]
 
 
-def test_max_friends_drops_explicit_friend_before_readiness_probe(monkeypatch, tmp_path):
+def test_max_friends_applies_to_ready_explicit_friends_not_unavailable_prefix(
+    monkeypatch, tmp_path
+):
     registry = adapters.load_adapters(ADAPTER_DIR)
-    probes: list[str] = []
-    monkeypatch.setattr(friends_module.shutil, "which", lambda binary: f"/bin/{binary}")
+    checks: list[str] = []
     monkeypatch.setattr(
-        readiness.http_transport,
-        "probe",
-        lambda endpoint: probes.append(endpoint) or False,
+        friends_module.shutil,
+        "which",
+        lambda binary: checks.append(binary) or ("/bin/claude" if binary == "claude" else None),
     )
     args = cli.build_parser().parse_args(
         [
@@ -90,7 +91,7 @@ def test_max_friends_drops_explicit_friend_before_readiness_probe(monkeypatch, t
             "--friend",
             "codex:ops",
             "--friend",
-            "ollama:ops:qwen3:0.6b",
+            "claude:security",
             "--max-friends",
             "1",
         ]
@@ -99,6 +100,42 @@ def test_max_friends_drops_explicit_friend_before_readiness_probe(monkeypatch, t
 
     resolved = friends_module.resolve_friends(args, registry, None, downgrades)
 
-    assert [spec.cli for spec in resolved.specs] == ["codex"]
-    assert probes == []
-    assert any("dropped" in note and "ollama" in note for note in downgrades)
+    assert [spec.cli for spec in resolved.specs] == ["claude"]
+    assert checks.count("codex") == 1
+    assert checks.count("claude") == 1
+    assert any("codex" in note and "not found" in note for note in downgrades)
+
+
+def test_explicit_capacity_preserves_ready_order_and_probes_each_provider_once(
+    monkeypatch, tmp_path
+):
+    registry = adapters.load_adapters(ADAPTER_DIR)
+    checks: list[str] = []
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda binary: checks.append(binary) or f"/bin/{binary}",
+    )
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--friend",
+            "claude:ops",
+            "--friend",
+            "codex:security",
+            "--friend",
+            "claude:testability",
+            "--max-friends",
+            "2",
+        ]
+    )
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert [(spec.cli, spec.lens) for spec in resolved.specs] == [
+        ("claude", "ops"),
+        ("codex", "security"),
+    ]
+    assert checks.count("claude") == 1
+    assert checks.count("codex") == 1

@@ -101,21 +101,23 @@ def test_unknown_cli_in_friend_flag_exits_2_not_3(tmp_path):
     assert "no-such-cli" in result.stderr
 
 
-def test_ollama_without_a_model_fails_with_the_fix_not_an_opaque_error(tmp_path):
+def test_ollama_without_a_model_is_diagnosed_while_ready_explicit_friend_runs(tmp_path):
     """ollama has no default model and its own error for an omitted one
     explains nothing, so the runner refuses before dispatch and names the
     remedy. Supersedes the old "HTTP transport is not implemented" rejection:
     the transport ships now, but a model is still required.
 
-    An explicit roster is operator intent, so a missing required model is a
-    preflight refusal rather than a silently dropped friend in a partial run.
+    Explicit intent bypasses selection policy, not readiness. Unready entries
+    are diagnosed and filtered before capacity while a ready peer still runs.
     """
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
     result = run_af(tmp_path, artifact, "--friend", "ollama:ops", "--friend", "fake:good")
-    assert result.returncode == 3, result.stderr
-    assert "no model is configured" in result.stderr
-    assert not (tmp_path / "runs").exists()
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert [friend["name"] for friend in meta["friends"]] == ["fake-good-1"]
+    assert any("no model is configured" in note for note in meta["downgrades"])
 
 
 def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path):

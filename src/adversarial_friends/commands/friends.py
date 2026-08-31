@@ -159,23 +159,13 @@ def resolve_friends(
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
-    # Capacity applies to the resolved, ready roster before per-friend
-    # diagnostics. A discarded friend never runs, so its preset limitations
-    # must not be reported as limitations of the run that remains.
-    limit = getattr(args, "max_friends", None)
-    specs, dropped_specs = apply_capacity(specs, limit)
-    if dropped_specs:
-        dropped = [spec.name for spec in dropped_specs]
-        downgrades.append(
-            f"--max-friends={limit} dropped {dropped}; this run has fewer "
-            "independent judges than the roster named."
-        )
     if explicit:
         # Naming a friend overrides automatic enabled/host/discovery
         # selection, not whether that friend can actually be dispatched.
-        # Assess only the capacity-limited explicit roster, exactly once,
-        # before RunStore can create a run directory or prompt.
-        explicit_names = {spec.cli for spec in specs if spec.cli != "fake"}
+        # Assess every explicitly named provider exactly once before capacity:
+        # an unavailable prefix must not hide a ready friend later in the
+        # operator's ordered roster.
+        explicit_names = dict.fromkeys(spec.cli for spec in specs if spec.cli != "fake")
         readiness = assess_all(
             {name: registry[name] for name in explicit_names},
             provider_policy,
@@ -202,9 +192,24 @@ def resolve_friends(
                 rejected.append(f"{spec.name} ({spec.cli}): {row.reason}")
                 continue
             checked.append(replace(spec, model=effective_model))
-        if rejected:
+        if rejected and not checked:
             raise NoFriendsError("explicit friend preflight failed: " + "; ".join(rejected))
+        if rejected:
+            downgrades.append(
+                "explicit friend preflight skipped unavailable entries: " + "; ".join(rejected)
+            )
         specs = checked
+    # Capacity applies to the dispatch-ready roster. A discarded or unready
+    # friend never runs, so it cannot consume capacity or contribute preset
+    # limitations to the surviving run.
+    limit = getattr(args, "max_friends", None)
+    specs, dropped_specs = apply_capacity(specs, limit)
+    if dropped_specs:
+        dropped = [spec.name for spec in dropped_specs]
+        downgrades.append(
+            f"--max-friends={limit} dropped {dropped}; this run has fewer "
+            "independent judges than the roster named."
+        )
     # The preset fills effort only where nothing stronger set it, so a roster
     # entry's own `effort` wins -- that is what makes preset weaker than
     # roster in §10.1's order rather than merely different.
