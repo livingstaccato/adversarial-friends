@@ -144,9 +144,9 @@ This is a generic adapter contract. The runner does not know what an â€œagent,â€
 3. writes `target` with the existing descriptor-walk secure I/O primitives,
    rooted at the friend-owned isolated workspace, using `O_NOFOLLOW` for
    every component;
-4. refuses a pre-existing non-regular leaf or any symlink component and
-   creates intermediate directories through the same root-bounded secure
-   primitive;
+4. refuses any pre-existing target leaf, including a regular file, and any
+   symlink component, then creates intermediate directories through the same
+   root-bounded secure primitive;
 5. writes the asset before the provider process starts;
 6. never writes the asset into the caller's checkout or global home;
 7. records source digest, target, and staging status in the friend sidecar;
