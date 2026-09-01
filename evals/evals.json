@@ -3,30 +3,30 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "afriend docs/design.md",
+      "prompt": "afriend README.md",
       "should_trigger": true,
-      "expected_output": "Selects the skill and maps the conversational shorthand to `afriend run docs/design.md` in the default report mode. It reads the resulting report, identifies failures or downgrades, and presents ranked findings.",
+      "expected_output": "Selects the skill and maps the conversational shorthand to `afriend run README.md` in the default report mode. It reads the resulting report, identifies failures or downgrades, and presents ranked findings.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "afriend to docs/design.md with crossexam",
+      "prompt": "afriend to docs/README.md with crossexam",
       "should_trigger": true,
-      "expected_output": "Selects the skill and runs `afriend run docs/design.md --mode crossexam`. In Codex, the Codex host remains advisory and the run needs two independent non-host friends for judging.",
+      "expected_output": "Selects the skill and runs `afriend run docs/README.md --mode crossexam`. In Codex, the Codex host remains advisory and the run needs two independent non-host friends for judging.",
       "files": []
     },
     {
       "id": 3,
-      "prompt": "Use Adversarial Friends on docs/migration-plan.md.",
+      "prompt": "Use Adversarial Friends on README.md.",
       "should_trigger": true,
-      "expected_output": "Selects the named product's skill and runs `afriend run docs/migration-plan.md` in report mode unless the user requests different mode semantics.",
+      "expected_output": "Selects the named product's skill and runs `afriend run README.md` in report mode unless the user requests different mode semantics.",
       "files": []
     },
     {
       "id": 4,
-      "prompt": "$adversarial-friends docs/auth-review.md",
+      "prompt": "$adversarial-friends:adversarial-friends src/adversarial_friends/assets/SKILL.md",
       "should_trigger": true,
-      "expected_output": "Honors direct skill selection and runs `afriend run docs/auth-review.md` in report mode.",
+      "expected_output": "Honors the qualified direct skill selection and runs `afriend run src/adversarial_friends/assets/SKILL.md` in report mode.",
       "files": []
     },
     {
@@ -34,7 +34,9 @@
       "prompt": "afriend this plan",
       "should_trigger": true,
       "expected_output": "Uses an unambiguous current task backing file if one exists. If there is no exact backing file or complete artifact already in the request, asks for a path instead of inventing the plan.",
-      "files": []
+      "files": [
+        "docs/README.md"
+      ]
     },
     {
       "id": 6,

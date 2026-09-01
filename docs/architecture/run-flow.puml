@@ -42,10 +42,12 @@ partition "Resolve the roster" {
     :exit 3 — no usable friends;
     stop
   endif
-  if (fewer than two independent\nnon-host friends?) then (yes)
-    if (""report"" mode?) then (yes)
-      :report: record one-friend or\nhost-only downgrade;<<#FFE0B2>>
-    else (judging)
+  if (""report"" mode?) then (yes)
+    if (exactly one resolved friend?) then (yes)
+      :report: record one-friend downgrade;<<#FFE0B2>>
+    endif
+  else (judging)
+    if (fewer than two independent\nnon-host friends?) then (yes)
       :judging mode: exit 3 before run directory;
       stop
     endif

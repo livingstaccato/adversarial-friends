@@ -267,6 +267,71 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     for phrase in ("review this", "challenge this", "poke holes", "second opinion"):
         assert phrase in negative_prompts, phrase
     assert all("af run" not in case["expected_output"].lower() for case in evals)
+    assert "afriend" not in negative_prompts
+    assert "adversarial friends" not in negative_prompts
+
+
+def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespace():
+    evals = json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
+    positives = [case for case in evals if case["should_trigger"]]
+    manifest = json.loads(
+        (REPO / "plugins" / "adversarial-friends" / ".codex-plugin" / "plugin.json").read_text()
+    )
+    skill_name = re.search(
+        r"^name:\s*([a-z0-9-]+)\s*$",
+        (REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md").read_text(),
+        re.MULTILINE,
+    ).group(1)
+    expected_selector = (manifest["name"], skill_name)
+    selectors = []
+
+    for case in positives:
+        paths = list(case["files"])
+        paths.extend(
+            re.findall(
+                r"(?<![$\w-])(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md\b",
+                case["prompt"],
+            )
+        )
+        assert paths, f"positive eval {case['id']} has no resolvable artifact"
+        for path in paths:
+            assert REPO.joinpath(path).is_file(), f"positive eval {case['id']}: {path}"
+        selectors.extend(re.findall(r"\$([a-z0-9-]+):([a-z0-9-]+)", case["prompt"]))
+        assert not re.search(r"\$adversarial-friends(?:\s|$)", case["prompt"])
+
+    assert selectors == [expected_selector]
+
+
+def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_contract():
+    plugin_root = REPO / "plugins" / "adversarial-friends"
+    codex = json.loads((plugin_root / ".codex-plugin" / "plugin.json").read_text())
+    claude = json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text())
+    marketplace = json.loads((REPO / "plugins" / ".claude-plugin" / "marketplace.json").read_text())
+    entry = next(item for item in marketplace["plugins"] if item["name"] == codex["name"])
+    descriptions = [
+        codex["description"],
+        codex["interface"]["shortDescription"],
+        codex["interface"]["longDescription"],
+        claude["description"],
+        marketplace["description"],
+        entry["description"],
+    ]
+
+    assert claude["name"] == entry["name"] == codex["name"]
+    assert claude["version"] == entry["version"] == codex["version"]
+    for description in descriptions:
+        normalized = " ".join(description.lower().split())
+        assert "codex" in normalized
+        assert "advisory" in normalized
+        assert "other agent clis" not in normalized
+        assert "independent adversarial reviewers" not in normalized
+
+    prompts = codex["interface"]["defaultPrompt"]
+    assert prompts
+    assert all(
+        prompt.startswith("afriend") or prompt.startswith("Use Adversarial Friends")
+        for prompt in prompts
+    )
 
 
 def test_the_advertised_test_count_is_the_real_one():
@@ -397,7 +462,8 @@ def test_shipped_docs_state_the_one_friend_mode_contract_exactly():
         assert "exit 3" in prose
         assert "before a run directory" in prose
 
-    assert "report: record one-friend or\\nhost-only downgrade" in diagram
+    assert "exactly one resolved friend?" in diagram
+    assert "report: record one-friend downgrade" in diagram
     assert "judging mode: exit 3 before run directory" in diagram
     assert "fewer than two independent\\nnon-host friends" in diagram
 
@@ -405,7 +471,8 @@ def test_shipped_docs_state_the_one_friend_mode_contract_exactly():
 def test_rendered_run_flow_shows_the_one_friend_mode_contract():
     visible = _svg_visible_text(REPO / "docs" / "architecture" / "run-flow.svg").lower()
 
-    assert "report: record one-friend or host-only downgrade" in visible
+    assert "exactly one resolved friend?" in visible
+    assert "report: record one-friend downgrade" in visible
     assert "judging mode: exit 3 before run directory" in visible
     assert "fewer than two independent non-host friends" in visible
 

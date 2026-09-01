@@ -1,7 +1,7 @@
 {
   "name": "adversarial-friends",
   "version": "0.2.1",
-  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers for Codex.",
+  "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory.",
   "author": {
     "name": "Tim",
     "url": "https://github.com/livingstaccato"
@@ -17,8 +17,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Adversarial Friends",
-    "shortDescription": "Challenge specs, plans, and reviews with other agent CLIs.",
-    "longDescription": "Adversarial Friends dispatches a spec, plan, or another reviewer's findings to other agent CLIs (claude, codex, agy, opencode) as independent adversarial reviewers, then merges their critiques into one ranked findings report.",
+    "shortDescription": "Adversarial review with agent CLIs; Codex host review is advisory.",
+    "longDescription": "Adversarial Friends dispatches an artifact to agent CLIs and merges their critiques. In Codex, Codex remains the orchestrator and may contribute advisory host self-review; independent admission and judging authority come only from non-host friends.",
     "developerName": "livingstaccato",
     "category": "Developer Tools",
     "capabilities": [
@@ -27,9 +27,9 @@
     ],
     "websiteURL": "https://github.com/livingstaccato/adversarial-friends",
     "defaultPrompt": [
-      "Poke holes in this design doc using other models.",
-      "Get a second opinion on this review's findings.",
-      "Challenge this plan before I commit to it."
+      "afriend README.md",
+      "Use Adversarial Friends on docs/README.md.",
+      "afriend to src/adversarial_friends/assets/SKILL.md with crossexam"
     ]
   }
 }

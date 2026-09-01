@@ -2,14 +2,14 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "adversarial-friends",
   "version": "0.2.1",
-  "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers",
+  "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory",
   "owner": {
     "name": "livingstaccato"
   },
   "plugins": [
     {
       "name": "adversarial-friends",
-      "description": "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers",
+      "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory",
       "version": "0.2.1",
       "source": "./adversarial-friends",
       "category": "development"
