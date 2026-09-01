@@ -3,6 +3,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 
 from e2e_helpers import AF, _env
 import pytest
@@ -13,6 +14,47 @@ from adversarial_friends.runstore import RunStore
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.lstat().st_mode)
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o770])
+@pytest.mark.parametrize("resume", [False, True])
+def test_existing_caller_owned_root_keeps_its_mode(tmp_path, mode, resume):
+    root = tmp_path / "caller-owned"
+    root.mkdir(mode=mode)
+    root.chmod(mode)
+
+    if resume:
+        with pytest.raises(UsageError, match="no such run directory"):
+            RunStore(root, "missing", resume=True)
+    else:
+        RunStore(root, "fresh")
+
+    assert _mode(root) == mode
+
+
+def test_missing_root_and_run_owned_descendants_are_private(tmp_path):
+    root = tmp_path / "missing" / "runs"
+
+    store = RunStore(root, "fresh")
+    store.write_run_json({"state": "private"})
+    round_dir = store.round_dir(1)
+
+    assert _mode(root) == 0o700
+    assert _mode(store.run_dir) == 0o700
+    assert _mode(round_dir) == 0o700
+    assert _mode(store.run_dir / "run.json") == 0o600
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin canonical /tmp alias")
+def test_darwin_tmp_alias_preserves_existing_root_mode():
+    with tempfile.TemporaryDirectory(prefix="af-root-mode-", dir="/tmp") as raw_root:
+        root = Path(raw_root)
+        root.chmod(0o755)
+
+        store = RunStore(root, "fresh")
+
+        assert store.root == root.resolve()
+        assert _mode(root) == 0o755
 
 
 def test_umask_022_run_tree_keeps_directories_private_and_files_secret(tmp_path):

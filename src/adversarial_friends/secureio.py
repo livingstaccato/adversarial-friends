@@ -118,6 +118,38 @@ def secure_mkdir(
     return target
 
 
+def secure_init_root(path: Path) -> Path:
+    """Open or create a storage root without changing caller-owned modes.
+
+    Existing path components are validation boundaries, not run-owned data.
+    Walk them by descriptor so a concurrent symlink swap cannot redirect root
+    creation. Only components created by this call are forced private.
+    """
+    target = Path(path).absolute()
+    anchor = Path(target.anchor)
+    parts = target.parts[1:]
+    descriptor = _open_directory(anchor)
+    try:
+        for part in parts:
+            created = False
+            try:
+                child = _open_directory(part, dir_fd=descriptor)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, DIR_MODE, dir_fd=descriptor)
+                    created = True
+                except FileExistsError:
+                    pass
+                child = _open_directory(part, dir_fd=descriptor)
+            if created:
+                os.fchmod(child, DIR_MODE)
+            os.close(descriptor)
+            descriptor = child
+    finally:
+        os.close(descriptor)
+    return target
+
+
 def secure_write_bytes(path: Path, payload: bytes, *, root: Path | None = None) -> Path:
     target = Path(path)
     anchor = target.parent if root is None else root

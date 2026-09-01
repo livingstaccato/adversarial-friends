@@ -21,6 +21,7 @@ from .secureio import (
     repair_private_tree,
     secure_copy,
     secure_create_bytes,
+    secure_init_root,
     secure_mkdir,
     secure_open_directory,
     secure_open_read,
@@ -60,7 +61,7 @@ class RunStore:
         self.run_id = run_id
         self.run_dir = self.root / run_id
         try:
-            secure_mkdir(self.root, parents=True, exist_ok=True)
+            secure_init_root(self.root)
         except OSError as exc:
             raise UsageError(f"cannot use run root {self.root}: {exc}") from exc
         if resume:
