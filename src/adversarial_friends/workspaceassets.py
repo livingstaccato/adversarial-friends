@@ -9,7 +9,14 @@ from .errors import UsageError
 from .paths import assets_root
 from .secureio import secure_create_bytes, secure_mkdir, secure_read_bytes
 
+# Harnesses are expected to be small text/config payloads. These ceilings keep
+# both staging work and its durable audit comfortably below the existing 32 MiB
+# secure-read ceiling used for per-friend metadata.
+MAX_WORKSPACE_ASSETS = 32
+MAX_WORKSPACE_ASSET_PATH_BYTES = 1024
 MAX_WORKSPACE_ASSET_BYTES = 32 * 1024 * 1024
+MAX_WORKSPACE_ASSET_TOTAL_BYTES = 32 * 1024 * 1024
+MAX_WORKSPACE_ASSET_AUDIT_BYTES = 64 * 1024
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _ASSET_FIELDS = frozenset({"source", "target", "sha256"})
 _AUDIT_FIELDS = frozenset({"source", "target", "expected_sha256", "observed_sha256", "status"})
@@ -18,6 +25,7 @@ _AUDIT_STATUSES = frozenset(
         "staged",
         "failed-digest-mismatch",
         "failed-source-unavailable",
+        "failed-aggregate-too-large",
         "failed-target-exists-or-unsafe",
         "failed-invalid-declaration",
         "not-staged",
@@ -62,11 +70,24 @@ class WorkspaceAssetStagingError(Exception):
         self.audits = audits
 
 
+def _audit_footprint(entries: list[dict[str, str | None]]) -> int:
+    return len(f"workspace_assets={entries!r}\n".encode())
+
+
 def _canonical_relative(value: object, field: str) -> str:
     if type(value) is not str or not value:
         raise UsageError(f"workspace_assets {field} must be a nonempty relative POSIX path")
     if "\\" in value or "\x00" in value or value.startswith("/"):
         raise UsageError(f"workspace_assets {field} must be a canonical relative POSIX path")
+    try:
+        path_bytes = len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise UsageError(f"workspace_assets {field} must be valid UTF-8") from exc
+    if path_bytes > MAX_WORKSPACE_ASSET_PATH_BYTES:
+        raise UsageError(
+            f"workspace_assets {field} exceeds the {MAX_WORKSPACE_ASSET_PATH_BYTES}-byte "
+            "UTF-8 limit"
+        )
     raw_parts = value.split("/")
     if any(part in {"", ".", ".."} for part in raw_parts):
         raise UsageError(f"workspace_assets {field} has an invalid path segment")
@@ -81,7 +102,10 @@ def _validate_declarations(
 ) -> tuple[WorkspaceAsset, ...]:
     if transport == "http" and assets:
         raise UsageError("HTTP adapters may not declare workspace_assets")
+    if len(assets) > MAX_WORKSPACE_ASSETS:
+        raise UsageError(f"workspace_assets count exceeds the {MAX_WORKSPACE_ASSETS}-asset limit")
     seen_targets: set[str] = set()
+    target_parts: list[tuple[str, ...]] = []
     validated: list[WorkspaceAsset] = []
     for asset in assets:
         if not isinstance(asset, WorkspaceAsset):
@@ -92,8 +116,31 @@ def _validate_declarations(
             raise UsageError("workspace_assets sha256 must be exactly 64 lowercase hex characters")
         if target in seen_targets:
             raise UsageError(f"workspace_assets has duplicate target {target!r}")
+        parts = PurePosixPath(target).parts
+        for prior in target_parts:
+            shared = min(len(parts), len(prior))
+            if parts[:shared] == prior[:shared]:
+                raise UsageError(
+                    "workspace_assets targets may not have an ancestor/descendant overlap"
+                )
         seen_targets.add(target)
+        target_parts.append(parts)
         validated.append(WorkspaceAsset(source, target, asset.sha256))
+    largest_outcome = [
+        WorkspaceAssetAudit(
+            asset.source,
+            asset.target,
+            asset.sha256,
+            asset.sha256,
+            "failed-target-exists-or-unsafe",
+        ).as_dict()
+        for asset in validated
+    ]
+    if _audit_footprint(largest_outcome) > MAX_WORKSPACE_ASSET_AUDIT_BYTES:
+        raise UsageError(
+            "workspace_assets audit aggregate bytes exceed the "
+            f"{MAX_WORKSPACE_ASSET_AUDIT_BYTES}-byte limit"
+        )
     return tuple(validated)
 
 
@@ -119,11 +166,18 @@ def validate_workspace_assets(
     """Validate declarations and pinned package bytes without writing."""
     validated = _validate_declarations(assets, transport=transport)
     root = assets_root() if source_root is None else Path(source_root)
+    total_bytes = 0
     for asset in validated:
         payload = _read_source(asset, root)
         observed = hashlib.sha256(payload).hexdigest()
         if observed != asset.sha256:
             raise UsageError(f"workspace_assets source {asset.source!r} digest mismatch")
+        total_bytes += len(payload)
+        if total_bytes > MAX_WORKSPACE_ASSET_TOTAL_BYTES:
+            raise UsageError(
+                "workspace_assets aggregate staged bytes exceed the "
+                f"{MAX_WORKSPACE_ASSET_TOTAL_BYTES}-byte limit"
+            )
     return validated
 
 
@@ -154,6 +208,10 @@ def normalize_workspace_asset_audits(value: object) -> list[dict[str, str | None
     """Validate attacker-editable persisted staging outcomes for replay."""
     if type(value) is not list:
         raise UsageError("workspace_assets audit must be a list")
+    if len(value) > MAX_WORKSPACE_ASSETS:
+        raise UsageError(
+            f"workspace_assets audit count exceeds the {MAX_WORKSPACE_ASSETS}-asset limit"
+        )
     normalized: list[dict[str, str | None]] = []
     for entry in value:
         if type(entry) is not dict or set(entry) != _AUDIT_FIELDS:
@@ -185,6 +243,8 @@ def normalize_workspace_asset_audits(value: object) -> list[dict[str, str | None
             raise UsageError("workspace_assets unstaged audit must not have an observed digest")
         if status == "failed-target-exists-or-unsafe" and observed != expected:
             raise UsageError("workspace_assets target refusal audit digest is inconsistent")
+        if status == "failed-aggregate-too-large" and observed != expected:
+            raise UsageError("workspace_assets aggregate refusal audit digest is inconsistent")
         normalized.append(
             {
                 "source": source,
@@ -193,6 +253,12 @@ def normalize_workspace_asset_audits(value: object) -> list[dict[str, str | None
                 "observed_sha256": observed,
                 "status": status,
             }
+        )
+    footprint = _audit_footprint(normalized)
+    if footprint > MAX_WORKSPACE_ASSET_AUDIT_BYTES:
+        raise UsageError(
+            "workspace_assets audit aggregate bytes exceed the "
+            f"{MAX_WORKSPACE_ASSET_AUDIT_BYTES}-byte limit"
         )
     return normalized
 
@@ -217,20 +283,33 @@ def _safe_audit_path(value: object) -> str:
 def _invalid_declaration_audits(
     assets: tuple[WorkspaceAsset, ...],
 ) -> tuple[WorkspaceAssetAudit, ...]:
-    return tuple(
-        WorkspaceAssetAudit(
-            source=_safe_audit_path(asset.source),
-            target=_safe_audit_path(asset.target),
-            expected_sha256=(
-                asset.sha256
-                if type(asset.sha256) is str and _SHA256_RE.fullmatch(asset.sha256)
-                else None
-            ),
-            observed_sha256=None,
-            status="failed-invalid-declaration",
+    bounded: list[WorkspaceAssetAudit] = []
+    for asset in assets[:MAX_WORKSPACE_ASSETS]:
+        if not isinstance(asset, WorkspaceAsset):
+            candidate = WorkspaceAssetAudit(
+                "invalid", "invalid", None, None, "failed-invalid-declaration"
+            )
+        else:
+            candidate = WorkspaceAssetAudit(
+                source=_safe_audit_path(asset.source),
+                target=_safe_audit_path(asset.target),
+                expected_sha256=(
+                    asset.sha256
+                    if type(asset.sha256) is str and _SHA256_RE.fullmatch(asset.sha256)
+                    else None
+                ),
+                observed_sha256=None,
+                status="failed-invalid-declaration",
+            )
+        proposed = [entry.as_dict() for entry in (*bounded, candidate)]
+        if _audit_footprint(proposed) > MAX_WORKSPACE_ASSET_AUDIT_BYTES:
+            break
+        bounded.append(candidate)
+    if not bounded:
+        bounded.append(
+            WorkspaceAssetAudit("invalid", "invalid", None, None, "failed-invalid-declaration")
         )
-        for asset in assets
-    )
+    return tuple(bounded)
 
 
 def _raise_staging(
@@ -266,15 +345,24 @@ def stage_workspace_assets(
         ) from exc
     root = assets_root() if source_root is None else Path(source_root)
     isolation = Path(isolation_root)
-    audits: list[WorkspaceAssetAudit] = []
+    prepared: list[tuple[WorkspaceAsset, bytes, str]] = []
+    total_bytes = 0
     for index, asset in enumerate(validated):
+        not_staged = [_audit(prior, None, "not-staged") for prior in validated[:index]]
         try:
             payload = _read_source(asset, root)
         except UsageError:
-            _raise_staging(validated, audits, index, "failed-source-unavailable", None)
+            _raise_staging(validated, not_staged, index, "failed-source-unavailable", None)
         observed = hashlib.sha256(payload).hexdigest()
         if observed != asset.sha256:
-            _raise_staging(validated, audits, index, "failed-digest-mismatch", observed)
+            _raise_staging(validated, not_staged, index, "failed-digest-mismatch", observed)
+        total_bytes += len(payload)
+        if total_bytes > MAX_WORKSPACE_ASSET_TOTAL_BYTES:
+            _raise_staging(validated, not_staged, index, "failed-aggregate-too-large", observed)
+        prepared.append((asset, payload, observed))
+
+    audits: list[WorkspaceAssetAudit] = []
+    for index, (asset, payload, observed) in enumerate(prepared):
         relative = PurePosixPath(asset.target)
         target = isolation.joinpath(*relative.parts)
         try:
