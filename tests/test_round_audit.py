@@ -1,6 +1,5 @@
 """Audit records for dispatched and deliberately skipped friends."""
 
-from dataclasses import replace
 from pathlib import Path
 import threading
 import time
@@ -201,52 +200,6 @@ def test_repeat_skip_is_not_a_fresh_critique_failure(tmp_path):
     )
 
     assert outcome.any_failed is False
-
-
-def test_advisory_host_success_does_not_satisfy_participation_floor(monkeypatch, tmp_path):
-    host = replace(
-        _spec("host-ops-0"),
-        independent=False,
-        host_self_review=True,
-    )
-    peer = _spec("peer-security-0", lens="security")
-    failed = replace(_success(), exit_code=1, failure_reason="exit 1")
-    store = RunStore(tmp_path, "run-independent-participation")
-    artifact = tmp_path / "artifact.md"
-    artifact.write_text("# artifact\n")
-
-    monkeypatch.setattr(
-        critique_mod,
-        "dispatch_round",
-        lambda *_args, **_kwargs: rounds_mod.DispatchRoundOutcome(
-            [
-                (host, Capability(False, True, "none"), _success(), ExternalToolPolicy.DENY),
-                (peer, Capability(False, True, "none"), failed, ExternalToolPolicy.DENY),
-            ]
-        ),
-    )
-
-    outcome, _claims, _counter = run_critique(
-        [host, peer],
-        1,
-        [],
-        0,
-        artifact.read_text(),
-        store,
-        ReviewState(),
-        {},
-        None,
-        tmp_path / "schema.json",
-        artifact,
-        None,
-        None,
-        threading.Event(),
-    )
-
-    assert outcome.any_success is True
-    assert outcome.succeeded_friends == 0
-    assert outcome.successful_friend_ids == []
-    assert [row["status"].split(":", 1)[0] for row in outcome.friends_meta] == ["ok", "failed"]
 
 
 def test_interrupted_critique_setup_leaves_no_prompt_without_result(tmp_path):

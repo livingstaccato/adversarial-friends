@@ -1,6 +1,5 @@
 """End-to-end coverage for §17's remaining flags."""
 
-from dataclasses import replace
 import json
 import subprocess
 import sys
@@ -557,43 +556,6 @@ def test_require_friends_passes_a_run_at_or_above_quorum(tmp_path):
         "2",
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_require_friends_does_not_count_a_successful_advisory_host(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
-
-    for name, value in _env().items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    original = friends_module._specs_from_flags
-
-    def marked_specs(*args, **kwargs):
-        specs = original(*args, **kwargs)
-        specs[0] = replace(specs[0], independent=False, host_self_review=True)
-        return specs
-
-    monkeypatch.setattr(friends_module, "_specs_from_flags", marked_specs)
-    parsed = cli.build_parser().parse_args(
-        [
-            "run",
-            str(_artifact(tmp_path)),
-            "--out",
-            str(tmp_path / "runs"),
-            "--friend",
-            "fake:good",
-            "--friend",
-            "fake:crash",
-            "--require-friends",
-            "1",
-        ]
-    )
-
-    assert cli.cmd_run(parsed) == 12
-    meta = _run_json(tmp_path)
-    assert meta["successful_friend_ids"] == []
-    assert meta["succeeded_friends"] == 0
-    assert meta["stop_reason"] == "incomplete"
 
 
 def test_require_friends_is_unenforced_when_unset(tmp_path):

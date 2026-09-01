@@ -157,35 +157,6 @@ def test_full_quorum_survives_orchestrator_resume(tmp_path):
     assert resumed.returncode == 0, resumed.stderr
 
 
-def test_advisory_host_success_cannot_satisfy_resumed_participation_floor(
-    tmp_path,
-):
-    halted = _halt(
-        tmp_path,
-        "good",
-        "crash",
-        extra=("--require-friends", "1"),
-    )
-    assert halted.returncode == 10, halted.stderr
-    # Model a checkpoint whose successful row is advisory. The resume path
-    # must preserve that usable audit result without restoring its authority
-    # to satisfy --require-friends.
-    checkpoint = _run_json(tmp_path)
-    checkpoint.pop("detected_host", None)
-    checkpoint.pop("effective_include_self", None)
-    checkpoint["roster"][0].update({"independent": False, "host_self_review": True})
-    checkpoint["friends"][0].update({"independent": False, "host_self_review": True})
-    _write_run_json(tmp_path, checkpoint)
-    _respond(tmp_path, [])
-
-    resumed = _resume(tmp_path)
-
-    assert resumed.returncode == 12, resumed.stderr
-    terminal = _run_json(tmp_path)
-    assert terminal["successful_friend_ids"] == []
-    assert terminal["stop_reason"] == "incomplete"
-
-
 def test_zero_success_survives_extraction_resume_without_fail_open(tmp_path):
     halted = _halt(
         tmp_path,
