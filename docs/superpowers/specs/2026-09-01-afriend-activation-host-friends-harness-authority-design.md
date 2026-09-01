@@ -54,9 +54,12 @@ grant is the generic fallback for Antigravity and future harnesses.
 
 ## 1. Narrow conversational activation
 
-The canonical skill remains physically located at
-`skills/adversarial-friends`, so existing plugin identifiers remain stable.
-Its frontmatter description becomes command-like:
+The canonical skill remains
+`src/adversarial_friends/assets/SKILL.md`. The plugin copy stays at
+`plugins/adversarial-friends/skills/adversarial-friends/SKILL.md`, so existing
+plugin identifiers remain stable, but it is regenerated from the canonical
+asset rather than edited directly. Its frontmatter description becomes
+command-like:
 
 > Use only when the user starts a request with `afriend`, says `afriend to …`,
 > explicitly names Adversarial Friends, or directly selects this skill.
@@ -111,10 +114,14 @@ The saved invocation records the effective boolean decision and the detected
 host provider. Resume restores the frozen roster and validates the same
 explicit security grants as before; it does not rediscover the host.
 
-Every friend row produced by the detected host carries `host_self_review=true`.
-The Markdown report labels it “host self-review.” It counts as a friend for
-roster size and judging because it is a separate subprocess and ledger actor,
-but documentation explicitly says it is not a separate provider opinion.
+Every friend row produced by the detected host carries `host_self_review=true`
+and `independent=false`. The Markdown report labels it “host self-review.” It
+is a separate subprocess and ledger actor, so it contributes claims and may
+cast advisory verdicts, but it does not satisfy the minimum-independent-friend
+check, judging quorum, or gate clearance. A judging run therefore still needs
+two non-host friends. This prevents a Codex subprocess from certifying the
+Codex orchestrator's own gate while retaining Codex as an additional friend
+whenever a genuinely adversarial judging roster exists.
 
 ## 3. Generic run-local harness staging
 
@@ -132,13 +139,19 @@ This is a generic adapter contract. The runner does not know what an “agent,�
 “plugin,” or provider-specific harness file means. It only:
 
 1. resolves `source` beneath the package's canonical assets directory;
-2. rejects absolute paths, `..`, symlinks, duplicate targets, and digest
-   mismatches;
-3. resolves `target` beneath the friend-owned isolated workspace;
-4. writes the asset before the provider process starts;
-5. never writes the asset into the caller's checkout or global home;
-6. records source digest, target, and staging status in the friend sidecar;
-7. removes it with the rest of the friend isolation directory.
+2. rejects absolute paths, `..`, source symlinks, duplicate targets, and
+   digest mismatches;
+3. writes `target` with the existing descriptor-walk secure I/O primitives,
+   rooted at the friend-owned isolated workspace, using `O_NOFOLLOW` for
+   every component;
+4. refuses a pre-existing non-regular leaf or any symlink component and
+   creates intermediate directories through the same root-bounded secure
+   primitive;
+5. writes the asset before the provider process starts;
+6. never writes the asset into the caller's checkout or global home;
+7. records source digest, target, and staging status in the friend sidecar;
+8. removes it with the rest of the friend isolation directory, without
+   following staged or repository-provided symlinks.
 
 Adapters without `workspace_assets` behave byte-for-byte as before. HTTP
 adapters may not declare workspace assets because they have no provider
@@ -170,27 +183,34 @@ The agent definition:
   that field;
 - instructs the model to return only the requested structured review.
 
-The adapter's existing capability probe verifies the required CLI flags.
-Development verification performs one small live `stream-json` call from a
-staged temporary workspace and checks the initialization event's tool list.
-If the installed Agy version still exposes inherited plugin capabilities, the
-adapter must not falsely report `external_tools=denied`; it remains
-`uncontrolled` and uses the scoped fallback below when the operator opts in.
+The adapter's existing capability probe verifies the required CLI flags, but
+that help-text check is never sufficient evidence for an
+`external_tools=denied` label. Development verification performs one small
+live `stream-json` call from a staged temporary workspace and records the
+initialization event's tool list. In this release, the staged agent is
+best-effort hardening and Agy remains `external_tools=uncontrolled`; it becomes
+runnable through the scoped fallback below and is stamped
+`explicitly-allowed`, not `denied`. A future adapter may earn `denied` only
+with a per-dispatch semantic handshake that observes the effective tool list
+before sending the artifact prompt, or another equally strong invocation-time
+proof. A tested version number plus help markers alone is not sufficient.
 
 ## 4. Provider-scoped authority fallback
 
-`--allow-external-tools` becomes an optional-value, repeatable flag:
+`--allow-external-tools` becomes a required-value, repeatable flag. The safe
+spelling uses `=` so argparse cannot mistake the following option for a value:
 
 ```text
---allow-external-tools agy
---allow-external-tools opencode --allow-external-tools agy
---allow-external-tools                 # legacy/global spelling
---allow-external-tools '*'             # explicit global spelling
+--allow-external-tools=agy
+--allow-external-tools=opencode --allow-external-tools=agy
+--allow-external-tools='*'              # explicit global spelling
 ```
 
-No value preserves the existing global behavior for compatibility. A named
-value allows only that provider. Unknown provider names and contradictory
-forms are usage errors before any probe or dispatch.
+The old valueless spelling is now a usage error with remediation to pass an
+explicit provider or `*`; compatibility cannot justify a fail-open authority
+grant. A named value allows only that provider. Unknown provider names,
+duplicate values, and wildcard-plus-name combinations are usage errors before
+any probe or dispatch.
 
 The runtime replaces its single run-wide enum with an immutable authority
 policy containing `allowed_providers`. `policy.for_provider(name)` produces
@@ -204,6 +224,11 @@ The generic rules are:
 - explicit `--friend` does not bypass the policy;
 - `--unsafe-extra-args` still targets every friend and therefore requires
   the global `*` grant, not a subset;
+- both the early validation and the dispatch-boundary
+  `enforce_extra_args` check receive the entire policy object and require the
+  global `*` grant;
+- readiness evaluates `policy.for_provider(name)` independently, so a grant
+  for Agy cannot skip Codex or Claude's deny-capability probes;
 - doctor evaluates the default deny policy and does not infer invocation
   grants;
 - readiness may report Agy policy-blocked while a normal run that explicitly
@@ -217,6 +242,13 @@ Run metadata adds `external_tool_grants: [string]` and reports
 `external_tool_policy` as `deny`, `scoped-allow`, or `allow`. Migration treats
 the old boolean `allow_external_tools=true` as the global `*` grant only for
 audit; it still cannot authorize a resume without an explicit current flag.
+
+A scoped grant does not waive filesystem confinement. Agy retains its
+provider-side `--sandbox` flag in both the controlled-agent and fallback
+paths. Generic dispatch continues applying the adapter's normal OS-confinement
+decision independently of external-tool authority. CLI help and the report
+name both the external-tool grant and the actual confinement state; no scoped
+wording is allowed to imply filesystem isolation that did not occur.
 
 ## 5. Readiness and audit semantics
 
@@ -258,12 +290,15 @@ Implementation follows red-green-refactor and adds coverage for:
 - parser normalization for named, repeated, wildcard, empty, unknown, and
   contradictory authority grants;
 - Codex default inclusion, non-Codex default exclusion, both explicit flags,
-  and mutual exclusion;
+  mutual exclusion, and exclusion of host self-review from independent
+  minimum/quorum/gate decisions;
 - frozen resume behavior and exact scoped-grant re-assertion;
 - per-provider readiness and argv decisions in mixed rosters;
-- generic workspace-asset parsing, path/digest validation, staging, auditing,
-  cleanup, and HTTP refusal;
+- generic workspace-asset parsing, path/digest validation, descriptor-rooted
+  staging, committed-symlink refusal, auditing, cleanup, and HTTP refusal;
 - Agy argv ordering and staged agent discovery;
+- Agy's best-effort agent remaining `uncontrolled`/`explicitly-allowed`, never
+  being inferred `denied` from help output;
 - a hermetic fake-harness end-to-end test proving the generic staging seam;
 - report labels for host self-review and scoped authority;
 - plugin payload and version synchronization;
@@ -285,7 +320,7 @@ version are recorded in the implementation review.
 - Harness staging failure: refuse the affected friend and report the exact
   target/reason without exposing file contents.
 - Agy controlled agent still exposes tools: keep Agy policy-blocked under
-  default deny; `--allow-external-tools agy` is the explicit generic fallback.
+  default deny; `--allow-external-tools=agy` is the explicit generic fallback.
 - Resume grant mismatch: refuse before opening the run for mutation.
 
 ## Acceptance criteria
@@ -295,16 +330,17 @@ The work is complete when:
 1. A new Codex task can interpret `afriend to <artifact>` without the full
    product name, while generic review language does not select the skill.
 2. A Codex-hosted automatic roster includes Codex unless `--exclude-self` is
-   passed, and the report labels the result as host self-review.
+   passed, the report labels the result as host self-review, and that friend
+   cannot satisfy independent judging or gate quorum.
 3. Existing non-Codex host exclusion remains unchanged by default.
 4. A generic adapter can stage a digest-pinned workspace asset without a
    provider-specific Python branch.
 5. External-tool grants can name one or more providers without allowing the
-   rest, while the valueless legacy flag still grants all.
+   rest, while only an explicit `*` grants all.
 6. Resume and report metadata preserve the exact scoped authority story.
-7. Antigravity either runs with a verified empty-tool controlled agent or is
-   runnable only through the explicit provider-scoped fallback; it is never
-   mislabeled as denied.
+7. Antigravity stages the controlled agent as best-effort hardening and runs
+   only through the explicit provider-scoped fallback in this release; it is
+   never mislabeled as denied.
 8. Canonical and mirrored skill payloads are synchronized and the installed
    Codex plugin is refreshed.
 9. All portable quality gates pass.
