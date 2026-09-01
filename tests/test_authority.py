@@ -94,6 +94,9 @@ def test_authority_policy_rejects_invalid_grant_sets(grants):
 
 def test_allow_is_explicit_and_records_declared_sources(registry):
     adapter = registry["agy"]
+    assert adapter.external_tools == "uncontrolled"
+    with pytest.raises(PolicyError, match="agy cannot deny external tools"):
+        enforce(adapter, ExternalToolPolicy.DENY)
     decision = enforce(adapter, ExternalToolPolicy.ALLOW)
     assert decision.status == "explicitly-allowed"
     assert decision.argv == ()

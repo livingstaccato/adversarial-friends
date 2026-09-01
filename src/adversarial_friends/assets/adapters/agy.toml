@@ -4,7 +4,15 @@ binary = "agy"
 base_argv = ["--output-format", "json"]
 prompt_mode = "flag-value"
 prompt_flag = "--print"
-readonly_argv = ["--mode", "plan"]
+# Installed agy 1.1.22 documents these invocation-local controls in
+# `agy --help`. Keep every option here because --print consumes its next
+# token as the prompt value and therefore must remain last.
+readonly_argv = [
+  "--agent", "afriend-reviewer",
+  "--disable-slash-commands",
+  "--mode", "plan",
+  "--sandbox",
+]
 schema_flag = "--json-schema"
 model_flag = "--model"
 internal_timeout_flag = "--print-timeout"
@@ -17,6 +25,16 @@ structured_output = true
 external_tools = "uncontrolled"
 deny_external_tools_argv = []
 external_tool_sources = ["tools", "slash commands", "MCP servers", "plugins"]
+
+# The installed 1.1.22 customization guide exposes `tools`,
+# `disable-model-invocation`, and the single `inheritCustomizations` switch
+# for Markdown agents. This controlled agent uses those supported fields as
+# defense in depth. They do not prove invocation-local denial of every
+# inherited tool/plugin/MCP source, so external_tools remains uncontrolled.
+[[workspace_assets]]
+source = "harnesses/agy/afriend-reviewer.md"
+target = ".agents/agents/afriend-reviewer/agent.md"
+sha256 = "1e6dac54da06b2cd3da50e8533ce25c0106d7c4cb196150797a95c475ae211e8"
 
 [effort]
 low = ["--effort", "low"]

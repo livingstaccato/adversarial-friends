@@ -75,7 +75,12 @@ def test_agy_prompt_is_the_last_argument(registry, files):
     )
     assert argv[-2] == "--print"
     assert argv[-1] == "CHALLENGE THIS ARTIFACT"
-    assert "--mode" in argv and argv.index("--mode") < argv.index("--print")
+    print_index = argv.index("--print")
+    assert argv_contains_sequence(argv[:print_index], ["--agent", "afriend-reviewer"])
+    assert "--disable-slash-commands" in argv[:print_index]
+    assert argv_contains_sequence(argv[:print_index], ["--mode", "plan"])
+    assert "--sandbox" in argv[:print_index]
+    assert argv.count("--mode") == 1
     assert stdin is None
 
 
