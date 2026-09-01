@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 
 from adversarial_friends.adapters import FriendSpec, load_adapters
-from adversarial_friends.authority import ExternalToolPolicy
+from adversarial_friends.authority import DENY_ALL, AuthorityPolicy
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands import friends as friends_module
 from adversarial_friends.commands.friends import validate_resume_capabilities
@@ -66,7 +66,7 @@ def test_frozen_resume_skips_fresh_resolution_but_reprobes_capability(monkeypatc
 
     assert specs == [frozen]
     assert resolved.specs == [frozen]
-    assert capability_checks == [([frozen], {}, ExternalToolPolicy.DENY)]
+    assert capability_checks == [([frozen], {}, DENY_ALL)]
 
 
 @pytest.mark.parametrize(
@@ -150,14 +150,14 @@ def test_readiness_blocks_rejected_deny_flags_and_caches_process_snapshot(tmp_pa
         ProviderPolicy({}),
         env={},
         which=lambda _binary: str(shim),
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=DENY_ALL,
     )
     second = assess_all(
         {"codex": adapter},
         ProviderPolicy({}),
         env={},
         which=lambda _binary: str(shim),
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=DENY_ALL,
     )
 
     assert first["codex"].state is ReadinessState.POLICY_BLOCKED
@@ -176,7 +176,7 @@ def test_disabled_and_host_excluded_automatic_providers_are_not_capability_probe
         {"codex": adapter},
         disabled_policy,
         which=lambda _binary: "/bin/codex",
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=DENY_ALL,
         capability_probe=lambda *_args: probes.append("disabled"),
     )
     hosted = assess_all(
@@ -184,7 +184,7 @@ def test_disabled_and_host_excluded_automatic_providers_are_not_capability_probe
         ProviderPolicy({}),
         env={"CODEX_SESSION_ID": "present"},
         which=lambda _binary: "/bin/codex",
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=DENY_ALL,
         capability_probe=lambda *_args: probes.append("host"),
     )
 
@@ -205,7 +205,7 @@ def test_explicit_provider_override_still_requires_capability_verification(regis
         disabled_policy,
         env={"CODEX_SESSION_ID": "present"},
         which=lambda _binary: "/bin/codex",
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=DENY_ALL,
         selection_policy=False,
         capability_probe=lambda *_args: (
             probes.append("codex") or DenyProbeResult(False, "unsupported explicit provider")
@@ -225,7 +225,7 @@ def test_resume_reprobes_frozen_provider_without_discovery_policy(registry, tmp_
         validate_resume_capabilities(
             [FriendSpec("codex-ops-0", "codex", "ops", None, None, "doc", 30)],
             {"codex": adapter},
-            ExternalToolPolicy.DENY,
+            AuthorityPolicy.deny_all(),
             which=lambda _binary: str(shim),
             capability_probe=lambda candidate, executable: (
                 probes.append(f"{candidate.name}:{executable}")

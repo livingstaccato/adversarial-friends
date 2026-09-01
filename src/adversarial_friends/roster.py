@@ -12,7 +12,7 @@ import shutil
 from typing import Any
 
 from .adapters import Adapter, FriendSpec
-from .authority import ExternalToolPolicy, enforce as enforce_authority
+from .authority import AuthorityPolicy, enforce as enforce_authority
 from .errors import NoFriendsError, UsageError
 from .providerconfig import ProviderPolicy
 from .readiness import (
@@ -83,7 +83,7 @@ def resolve(
     max_friends: int | None = None,
     host_provider: str | None = None,
     enforce: Callable[[Adapter], object] | None = None,
-    external_tool_policy: ExternalToolPolicy | None = None,
+    authority_policy: AuthorityPolicy | None = None,
 ) -> list[FriendSpec]:
     # NOTE for whoever wires a --roster file flag through `overrides`:
     # `if overrides:` (not `if overrides is not None:`) means an explicit,
@@ -140,9 +140,9 @@ def resolve(
     # Decide that from declarations before readiness performs any executable
     # or endpoint probes, and surface PolicyError directly rather than
     # degrading a security refusal into a generic "no friends" outcome.
-    if override_specs is not None and external_tool_policy is not None:
+    if override_specs is not None and authority_policy is not None:
         for spec in override_specs:
-            enforce_authority(registry[spec.cli], external_tool_policy)
+            enforce_authority(registry[spec.cli], authority_policy.for_provider(spec.cli))
 
     readiness = assess_all(
         registry,
@@ -153,7 +153,7 @@ def resolve(
         include_self=include_self,
         host_provider=host_provider,
         enforce=enforce,
-        external_tool_policy=external_tool_policy,
+        authority_policy=authority_policy,
     )
     if override_specs is not None:
         specs = []

@@ -220,6 +220,13 @@ def _external_authority_lines(run_meta: dict[str, Any]) -> list[str]:
             "Provider-managed tools and connectors were explicitly allowed for this run; "
             "the provider may have inherited integrations not inventoried here."
         )
+    elif policy == "scoped-allow":
+        status = "scoped-allow"
+        grants = run_meta.get("external_tool_grants", [])
+        detail = (
+            "Provider-managed tools and connectors were allowed only for the recorded "
+            f"providers: {', '.join(str(name) for name in grants) or 'none'}."
+        )
     else:
         status = "legacy-unknown"
         detail = "This legacy capture does not record provider-managed tool authority."

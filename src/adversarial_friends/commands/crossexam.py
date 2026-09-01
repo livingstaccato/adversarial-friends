@@ -21,7 +21,7 @@ from typing import Any
 
 from .. import verdicts as vd
 from ..adapters import Adapter, FriendSpec, friend_key
-from ..authority import ExternalToolPolicy
+from ..authority import DENY_ALL, AuthorityPolicy
 from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
 from ..errors import UsageError
@@ -144,7 +144,7 @@ def run_rounds(
     prior: CrossexamOutcome | None = None,
     final_block: bool = True,
     reporter: Progress | None = None,
-    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    authority_policy: AuthorityPolicy = DENY_ALL,
     announced_skips: set[str] | None = None,
 ) -> CrossexamOutcome:
     """Judge `claims` over rounds `first_round`..`max_rounds`.
@@ -439,7 +439,7 @@ def run_rounds(
                 keep=keep,
                 reporter=reporter,
                 kind="judging",
-                external_tool_policy=external_tool_policy,
+                authority_policy=authority_policy,
             )
             results = batch.results
             round_auth_abort = batch.auth_abort
@@ -506,7 +506,7 @@ def run_rounds(
                 capability,
                 result,
                 transport,
-                external_tool_policy,
+                authority_policy.for_provider(spec.cli),
             )
             outcome.friends_meta.append(row)
             if result.failure_reason is not None:

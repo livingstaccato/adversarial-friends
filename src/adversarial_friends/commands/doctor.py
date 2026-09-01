@@ -14,7 +14,7 @@ from typing import Any
 
 from .. import http_transport, providerconfig
 from ..adapters import Adapter, Capability, FriendSpec, build_argv, load_adapters
-from ..authority import ExternalToolPolicy, enforce
+from ..authority import AuthorityPolicy, enforce
 from ..claimschema import schema_path
 from ..paths import ADAPTER_DIR
 from ..readiness import FriendReadiness, ReadinessState, assess_all
@@ -59,6 +59,7 @@ def _rows(
     registry: dict[str, Adapter],
     readiness: dict[str, FriendReadiness],
     tmp: Path,
+    authority_policy: AuthorityPolicy,
 ) -> list[dict[str, Any]]:
     prompt_file = tmp / "prompt.txt"
     prompt_file.write_text("", encoding="utf-8")
@@ -117,7 +118,9 @@ def _rows(
         if adapter.transport == "http":
             # Capability comes from the same source real dispatch uses;
             # readiness was already assessed once before this projection.
-            cap = http_transport.capability_for(adapter, enforce(adapter, ExternalToolPolicy.DENY))
+            cap = http_transport.capability_for(
+                adapter, enforce(adapter, authority_policy.for_provider(name))
+            )
             rows.append(
                 {
                     "name": name,
@@ -147,7 +150,9 @@ def _rows(
             scope="repo",
             timeout=1,
         )
-        _, _, cap = build_argv(adapter, probe, prompt_file, schema_file, ExternalToolPolicy.DENY)
+        _, _, cap = build_argv(
+            adapter, probe, prompt_file, schema_file, authority_policy.for_provider(name)
+        )
         rows.append(
             {
                 "name": name,
@@ -169,17 +174,18 @@ def _rows(
 def cmd_doctor(args: argparse.Namespace) -> int:
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
+    authority_policy = AuthorityPolicy.deny_all()
     readiness = assess_all(
         registry,
         policy,
         which=shutil.which,
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=authority_policy,
     )
     collected: list[str] = []
     if getattr(args, "gc", False):
         _count, collected = _gc(Path(args.out) if getattr(args, "out", None) else default_root())
     with tempfile.TemporaryDirectory(prefix="af-doctor-") as tmp_str:
-        rows = _rows(registry, readiness, Path(tmp_str))
+        rows = _rows(registry, readiness, Path(tmp_str), authority_policy)
     usable = sum(row.ready for row in readiness.values())
 
     if getattr(args, "json", False):

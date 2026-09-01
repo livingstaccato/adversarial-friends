@@ -19,7 +19,7 @@ import sys
 
 from .. import providerconfig
 from ..adapters import load_adapters
-from ..authority import ExternalToolPolicy
+from ..authority import AuthorityPolicy
 from ..errors import NoFriendsError, UsageError
 from ..paths import ADAPTER_DIR
 from ..prompt import available_lenses
@@ -37,11 +37,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
+    authority_policy = AuthorityPolicy.deny_all()
     readiness = assess_all(
         registry,
         policy,
         which=shutil.which,
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=authority_policy,
     )
     eligible = {ReadinessState.READY, ReadinessState.REACHABLE_UNCONFIGURED}
     selected = [name for name, row in readiness.items() if row.state in eligible]

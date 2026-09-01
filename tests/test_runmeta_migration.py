@@ -20,7 +20,7 @@ def load_fixture(name: str) -> dict[str, object]:
 def test_v020_terminal_meta_is_readable_and_marks_unknowns():
     migrated = migrate_meta(load_fixture("run_meta_v020_terminal.json"))
 
-    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION == 2
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION == 3
     assert migrated["external_tool_policy"] == "legacy-unknown"
     assert migrated["started_at"] is None
     assert migrated["finished_at"] is None
@@ -41,13 +41,13 @@ def test_v020_halt_preserves_budget_tracker_and_snapshot():
     assert migrated["external_tool_policy"] == "legacy-unknown"
 
 
-@pytest.mark.parametrize("version", [True, False, "2", 0, -1, 3])
+@pytest.mark.parametrize("version", [True, False, "2", 0, -1, 4])
 def test_invalid_or_unsupported_schema_versions_are_refused(version):
     with pytest.raises(UsageError, match=rf"unsupported run metadata schema {version!r}"):
         migrate_meta({"schema_version": version})
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 def test_migration_always_returns_a_deep_copy(version):
     raw = {
         "schema_version": version,
@@ -134,6 +134,26 @@ def test_a_legacy_authority_grant_remains_audit_data():
     assert migrated["invocation"]["unsafe_extra_args"] == "--legacy-option"
     assert migrated["invocation"]["pass_env"] == ["LEGACY_TOKEN"]
     assert migrated["external_tool_policy"] == "legacy-unknown"
+    assert migrated["external_tool_grants"] == []
+
+
+def test_legacy_external_tool_allow_migrates_to_global_audit_grant():
+    raw = load_fixture("run_meta_v020_halted.json")
+    raw["invocation"]["allow_external_tools"] = True
+
+    migrated = migrate_meta(raw)
+
+    assert migrated["external_tool_grants"] == ["*"]
+    assert migrated["invocation"]["allow_external_tools"] == ["*"]
+
+
+def test_legacy_denial_migrates_to_an_empty_audit_grant_set():
+    raw = load_fixture("run_meta_v020_terminal.json")
+    raw["invocation"]["allow_external_tools"] = False
+
+    migrated = migrate_meta(raw)
+
+    assert migrated["external_tool_grants"] == []
 
 
 def _resume_args(run_dir: Path) -> SimpleNamespace:
@@ -142,7 +162,7 @@ def _resume_args(run_dir: Path) -> SimpleNamespace:
         out=None,
         artifact=None,
         friend=[],
-        allow_external_tools=False,
+        allow_external_tools=[],
         allow_unsandboxed_friend=False,
         unsafe_extra_args=None,
         i_accept_unsandboxed=False,

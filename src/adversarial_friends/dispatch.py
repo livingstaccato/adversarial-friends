@@ -13,7 +13,7 @@ import threading
 
 from . import childenv, http_transport, sandbox
 from .adapters import Adapter, Capability, FriendSpec, build_argv, place_extra_args
-from .authority import ExternalToolPolicy, enforce, enforce_extra_args
+from .authority import DENY_ALL, AuthorityPolicy, enforce, enforce_extra_args
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult
@@ -227,7 +227,7 @@ def _dispatch(
     allow_unsandboxed: bool = False,
     extra_args: list[str] | None = None,
     pass_env: tuple[str, ...] = (),
-    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    authority_policy: AuthorityPolicy = DENY_ALL,
 ) -> _DispatchResult:
     """Build argv for one friend and run it. Returns (spec, capability, outcome).
 
@@ -270,7 +270,7 @@ def _dispatch(
     # re-enable Codex apps or replace Claude's tool/MCP configuration).
     # Guard again at the dispatch boundary so library callers cannot bypass
     # prepare_run's earlier, pre-run-directory refusal.
-    enforce_extra_args(external_tool_policy, extra_args)
+    enforce_extra_args(authority_policy, extra_args)
     # None means "inherit", which is what every friend gets unless it is
     # being confined. Initialised before the branches because the fake and
     # http paths never reach the exec branch that sets it.
@@ -305,7 +305,8 @@ def _dispatch(
         # SpawnResult shape, so everything downstream stays
         # transport-agnostic.
         adapter = registry[spec.cli]
-        authority = enforce(adapter, external_tool_policy)
+        provider_policy = authority_policy.for_provider(spec.cli)
+        authority = enforce(adapter, provider_policy)
         return (
             spec,
             http_transport.capability_for(adapter, authority),
@@ -320,8 +321,9 @@ def _dispatch(
         )
     else:
         adapter = registry[spec.cli]
+        provider_policy = authority_policy.for_provider(spec.cli)
         argv, stdin_text, capability = build_argv(
-            adapter, spec, prompt_file, schema_file, external_tool_policy
+            adapter, spec, prompt_file, schema_file, provider_policy
         )
         check_denied_values(argv)
         envelope = adapter.envelope

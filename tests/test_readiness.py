@@ -3,9 +3,11 @@ from pathlib import Path
 import pytest
 
 from adversarial_friends import adapters
+from adversarial_friends.authority import AuthorityPolicy
 from adversarial_friends.errors import UsageError
 from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 from adversarial_friends.readiness import (
+    DenyProbeResult,
     FriendReadiness,
     ReadinessState,
     assess_all,
@@ -236,3 +238,24 @@ def test_assessment_mapping_is_sorted_by_provider(registry):
         probe=lambda _: False,
     )
     assert list(rows) == sorted(registry)
+
+
+def test_scoped_grant_does_not_skip_other_providers_deny_capability_probes(registry):
+    capability_checks: list[str] = []
+    policy = AuthorityPolicy.from_grants(["agy"], registry)
+
+    rows = assess_all(
+        {name: registry[name] for name in ("agy", "codex")},
+        ProviderPolicy({}),
+        env={"AF_NO_HTTP_DISCOVERY": "1"},
+        which=lambda name: f"/bin/{name}",
+        include_self=True,
+        authority_policy=policy,
+        capability_probe=lambda adapter, _path: (
+            capability_checks.append(adapter.name) or DenyProbeResult(True, "verified")
+        ),
+    )
+
+    assert rows["agy"].state is ReadinessState.READY
+    assert rows["codex"].state is ReadinessState.READY
+    assert capability_checks == ["codex"]

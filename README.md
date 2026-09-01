@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1826-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1841-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -170,7 +170,7 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 | 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
 | 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot. A CLI with no read-only mode is confined by the OS instead (`sandbox-exec` / `bwrap`) — or refused |
-| 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools` explicitly opts in for this run |
+| 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools=PROVIDER` explicitly opts that provider in for this run |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
 | 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
 | 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |
@@ -303,7 +303,8 @@ afriend run --resume <run-id>                     # round 1 is not re-run
 Resume verifies the original frozen artifact hash and saved Git snapshot
 before dispatch; it never substitutes current files. Security grants are
 also never restored from `run.json`: options such as
-`--allow-external-tools` must be repeated exactly. For 0.2.0 metadata, the
+`--allow-external-tools=PROVIDER` grants (or the global `=*` grant) must be
+repeated as the same normalized set. For 0.2.0 metadata, the
 report says external authority is `legacy-unknown` instead of inventing a
 historical guarantee.
 

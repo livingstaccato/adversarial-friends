@@ -229,6 +229,7 @@ def test_read_exposed_names_are_stably_deduplicated():
     ("policy", "expected"),
     [
         ("deny", "denied"),
+        ("scoped-allow", "scoped-allow"),
         ("allow", "explicitly-allowed"),
         (None, "legacy-unknown"),
     ],

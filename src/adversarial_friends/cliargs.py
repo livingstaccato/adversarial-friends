@@ -140,8 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
     run_p.add_argument(
         "--allow-external-tools",
-        action="store_true",
-        help="explicitly allow provider-managed tools, plugins, apps, and MCP servers",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="allow provider-managed tools for PROVIDER (repeatable; '*' allows all)",
     )
     run_p.add_argument("--timeout", type=int, default=900)
     run_p.add_argument("--out", default=None)

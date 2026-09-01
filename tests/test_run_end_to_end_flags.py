@@ -27,6 +27,7 @@ def test_default_external_tool_policy_is_recorded_for_fake_dispatch(tmp_path):
     assert result.returncode == 0, result.stderr
     meta = _run_json(tmp_path)
     assert meta["external_tool_policy"] == "deny"
+    assert meta["external_tool_grants"] == []
     assert {row["external_tools"] for row in meta["friends"]} == {"not-applicable"}
 
 
@@ -36,11 +37,12 @@ def test_allow_external_tools_is_explicit_and_recorded(tmp_path):
         _artifact(tmp_path),
         "--friend",
         "fake:good",
-        "--allow-external-tools",
+        "--allow-external-tools=agy",
     )
     assert result.returncode == 0, result.stderr
     meta = _run_json(tmp_path)
-    assert meta["external_tool_policy"] == "allow"
+    assert meta["external_tool_policy"] == "scoped-allow"
+    assert meta["external_tool_grants"] == ["agy"]
     assert {row["external_tools"] for row in meta["friends"]} == {"not-applicable"}
 
 
@@ -601,7 +603,7 @@ def test_allow_external_tools_does_not_waive_extra_args_acknowledgement(tmp_path
         "fake:good",
         "--unsafe-extra-args",
         "--verbose",
-        "--allow-external-tools",
+        "--allow-external-tools=*",
     )
     assert result.returncode == 2
     assert "--i-accept-unsandboxed" in result.stderr
@@ -640,6 +642,21 @@ def test_default_denial_refuses_unvalidated_extra_args_before_run_directory(tmp_
     assert not (tmp_path / "runs").exists()
 
 
+def test_scoped_allow_refuses_unvalidated_extra_args_before_run_directory(tmp_path):
+    result = run_af(
+        tmp_path,
+        _artifact(tmp_path),
+        "--friend",
+        "fake:good",
+        "--unsafe-extra-args=--verbose",
+        "--i-accept-unsandboxed",
+        "--allow-external-tools=agy",
+    )
+    assert result.returncode == 2
+    assert "global '*'" in result.stderr
+    assert not (tmp_path / "runs").exists()
+
+
 def test_allowed_extra_args_are_recorded_as_a_downgrade(tmp_path):
     """A run carrying unvalidated flags has weaker guarantees than its
     friend table implies, so the report has to say so."""
@@ -651,7 +668,7 @@ def test_allowed_extra_args_are_recorded_as_a_downgrade(tmp_path):
         "--unsafe-extra-args",
         "--verbose --colour never",
         "--i-accept-unsandboxed",
-        "--allow-external-tools",
+        "--allow-external-tools=*",
     )
     assert result.returncode == 0, result.stderr
     downgrades = " ".join(_run_json(tmp_path)["downgrades"])

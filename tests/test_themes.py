@@ -5,6 +5,7 @@ import math
 
 import pytest
 
+from adversarial_friends.authority import DENY_ALL
 from adversarial_friends.commands.runmeta import _base_meta, _checkpoint_themes
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Claim
@@ -266,6 +267,7 @@ def test_fresh_metadata_truncates_oversized_self_produced_theme_proposals(monkey
         [],
         snapshot,
         [snapshot],
+        DENY_ALL,
         theme_proposals=proposals,
     )
 

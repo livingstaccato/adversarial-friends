@@ -208,7 +208,7 @@ def test_enoexec_friend_does_not_prevent_a_second_friend_from_being_reported(tmp
         "fake:good",
         # This test targets dispatch-time ENOEXEC isolation, so grant tool
         # authority explicitly instead of stopping at deny-argv preflight.
-        "--allow-external-tools",
+        "--allow-external-tools=codex",
         env_extra={"PATH": combined_path},
     )
     assert result.returncode == 0, result.stderr
@@ -265,7 +265,7 @@ def test_unexpected_exception_in_one_friends_dispatch_does_not_end_the_run(monke
             "--friend",
             "fake:good",
             # Reach the monkeypatched dispatch path under the broken shim.
-            "--allow-external-tools",
+            "--allow-external-tools=codex",
         ]
     )
     returncode = cli.cmd_run(parsed)
@@ -307,7 +307,7 @@ def test_oversized_prompt_for_a_non_stdin_adapter_records_an_e2big_downgrade(tmp
         "--friend",
         "fake:good",
         # This test targets the dispatch-time argv-size downgrade.
-        "--allow-external-tools",
+        "--allow-external-tools=claude",
         env_extra={"PATH": f"{binary_dir}{os.pathsep}{_safe_path_dir()}"},
     )
     assert result.returncode == 0, result.stderr

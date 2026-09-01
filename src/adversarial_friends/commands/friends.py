@@ -22,7 +22,7 @@ import shutil
 
 from .. import providerconfig, rosterfile
 from ..adapters import Adapter, FriendSpec, validate_roster_uniqueness
-from ..authority import ExternalToolPolicy, enforce
+from ..authority import DENY_ALL, AuthorityPolicy, enforce
 from ..cliargs import _specs_from_flags
 from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
@@ -42,7 +42,7 @@ class ResolvedRoster:
 def validate_resume_capabilities(
     specs: list[FriendSpec],
     registry: dict[str, Adapter],
-    external_tool_policy: ExternalToolPolicy,
+    authority_policy: AuthorityPolicy,
     *,
     which: Callable[[str], str | None] = shutil.which,
     capability_probe: Callable[[Adapter, str], DenyProbeResult] | None = None,
@@ -69,7 +69,7 @@ def validate_resume_capabilities(
         env=os.environ,
         which=which,
         include_self=True,
-        external_tool_policy=external_tool_policy,
+        authority_policy=authority_policy,
         selection_policy=False,
         capability_probe=capability_probe,
     )
@@ -120,14 +120,12 @@ def resolve_friends(
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     downgrades: list[str],
-    external_tool_policy: ExternalToolPolicy | None = None,
+    authority_policy: AuthorityPolicy | None = None,
 ) -> ResolvedRoster:
     """Apply §10.1's precedence and return the roster a run will use."""
-    if external_tool_policy is None:
-        external_tool_policy = (
-            ExternalToolPolicy.ALLOW
-            if getattr(args, "allow_external_tools", False)
-            else ExternalToolPolicy.DENY
+    if authority_policy is None:
+        authority_policy = AuthorityPolicy.from_grants(
+            getattr(args, "allow_external_tools", []), registry
         )
     # §10.1's precedence, strongest last: adapter defaults, then --preset,
     # then a roster file, then --friend. Each layer only fills what the one
@@ -188,7 +186,7 @@ def resolve_friends(
                 timeout=args.timeout,
                 provider_policy=provider_policy,
                 host_provider=host_provider,
-                external_tool_policy=external_tool_policy,
+                authority_policy=authority_policy,
             )
             roster_source = str(roster_path)
         else:
@@ -201,7 +199,7 @@ def resolve_friends(
                 timeout=args.timeout,
                 provider_policy=provider_policy,
                 host_provider=host_provider,
-                external_tool_policy=external_tool_policy,
+                authority_policy=authority_policy,
             )
     if not specs:
         raise NoFriendsError(f"no usable friends for mode {args.mode!r}")
@@ -218,7 +216,7 @@ def resolve_friends(
             env=os.environ,
             which=shutil.which,
             include_self=True,
-            external_tool_policy=external_tool_policy,
+            authority_policy=authority_policy,
             selection_policy=False,
         )
         checked: list[FriendSpec] = []
@@ -290,7 +288,7 @@ def resolve_friends(
     validate_roster_uniqueness(specs, judging=args.mode != "report")
     for spec in specs:
         if spec.cli != "fake":
-            enforce(registry[spec.cli], external_tool_policy)
+            enforce(registry[spec.cli], authority_policy.for_provider(spec.cli))
     return ResolvedRoster(specs=specs, preset=preset, source=roster_source)
 
 
@@ -299,7 +297,7 @@ def roster_for_run(
     registry: dict[str, Adapter],
     fake_cmd: list[str] | None,
     downgrades: list[str],
-    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    authority_policy: AuthorityPolicy = DENY_ALL,
 ) -> tuple[ResolvedRoster, list[FriendSpec]]:
     """The roster this run will actually dispatch, and the refusals that
     come with it.
@@ -320,9 +318,9 @@ def roster_for_run(
             preset=args.preset or default_preset(args.mode),
             source=resume_meta.get("roster_source"),
         )
-        validate_resume_capabilities(specs, registry, external_tool_policy)
+        validate_resume_capabilities(specs, registry, authority_policy)
     else:
-        resolved = resolve_friends(args, registry, fake_cmd, downgrades, external_tool_policy)
+        resolved = resolve_friends(args, registry, fake_cmd, downgrades, authority_policy)
         specs = resolved.specs
 
     # The concrete final roster, whether freshly resolved or restored from
@@ -336,7 +334,7 @@ def roster_for_run(
             if adapter is None and registry:
                 raise UsageError(f"unknown cli in saved roster: {spec.cli!r}")
             if adapter is not None:
-                enforce(adapter, external_tool_policy)
+                enforce(adapter, authority_policy.for_provider(spec.cli))
 
     if len(specs) < 2:
         # §8.3. --friend REPLACES the roster rather than augmenting

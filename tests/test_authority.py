@@ -7,6 +7,7 @@ import pytest
 
 from adversarial_friends.adapters import Adapter, FriendSpec, build_argv, load_adapters
 from adversarial_friends.authority import (
+    AuthorityPolicy,
     ExternalToolPolicy,
     PolicyError,
     enforce,
@@ -46,6 +47,49 @@ def _spec(name: str) -> FriendSpec:
         scope="doc",
         timeout=30,
     )
+
+
+def test_authority_policy_defaults_to_deny_all():
+    policy = AuthorityPolicy.from_grants([], {"codex", "agy"})
+
+    assert policy.allowed_providers == ()
+    assert policy.allows_all is False
+    assert policy.audit_summary == "deny"
+    assert policy.for_provider("codex") is ExternalToolPolicy.DENY
+
+
+def test_authority_policy_normalizes_scoped_grants_deterministically():
+    policy = AuthorityPolicy.from_grants(["codex", "agy"], {"codex", "agy", "claude"})
+
+    assert policy.allowed_providers == ("agy", "codex")
+    assert policy.allows_all is False
+    assert policy.audit_summary == "scoped-allow"
+    assert policy.for_provider("agy") is ExternalToolPolicy.ALLOW
+    assert policy.for_provider("codex") is ExternalToolPolicy.ALLOW
+    assert policy.for_provider("claude") is ExternalToolPolicy.DENY
+
+
+def test_authority_policy_global_grant_allows_every_provider():
+    policy = AuthorityPolicy.from_grants(["*"], {"codex", "agy"})
+
+    assert policy.allowed_providers == ("*",)
+    assert policy.allows_all is True
+    assert policy.audit_summary == "allow"
+    assert policy.for_provider("future-provider") is ExternalToolPolicy.ALLOW
+
+
+@pytest.mark.parametrize(
+    "grants",
+    [
+        ["unknown"],
+        ["agy", "agy"],
+        ["*", "agy"],
+        ["*", "*"],
+    ],
+)
+def test_authority_policy_rejects_invalid_grant_sets(grants):
+    with pytest.raises(UsageError, match="allow-external-tools"):
+        AuthorityPolicy.from_grants(grants, {"agy", "codex"})
 
 
 def test_allow_is_explicit_and_records_declared_sources(registry):
@@ -148,7 +192,7 @@ def test_policy_blocking_happens_before_executable_or_http_probes(registry):
         ProviderPolicy({}),
         which=lambda binary: probes.append(binary) or "/bin/fake",
         probe=lambda endpoint: probes.append(endpoint) or True,
-        external_tool_policy=ExternalToolPolicy.DENY,
+        authority_policy=AuthorityPolicy.deny_all(),
     )
     assert rows["ollama"].state is ReadinessState.POLICY_BLOCKED
     assert "cannot deny external tools" in rows["ollama"].reason
@@ -186,7 +230,7 @@ def test_denial_refuses_unvalidated_argv_that_can_reverse_authority(
             prompt,
             schema,
             extra_args=extra_args,
-            external_tool_policy=ExternalToolPolicy.DENY,
+            authority_policy=AuthorityPolicy.deny_all(),
         )
 
 
@@ -222,7 +266,7 @@ def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
         prompt,
         schema,
         extra_args=["--enable", "apps"],
-        external_tool_policy=ExternalToolPolicy.ALLOW,
+        authority_policy=AuthorityPolicy.from_grants(["*"], registry),
     )
     assert captured[-2:] == ["--enable", "apps"]
     assert capability.external_tools == "explicitly-allowed"
@@ -230,7 +274,7 @@ def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
 
 
 SECURITY_GRANTS = {
-    "allow_external_tools": True,
+    "allow_external_tools": ["agy"],
     "allow_unsandboxed_friend": True,
     "unsafe_extra_args": "--profile trusted",
     "i_accept_unsandboxed": True,
@@ -244,7 +288,7 @@ def _resume_args(run_dir: Path, **overrides):
         out=None,
         artifact=None,
         friend=[],
-        allow_external_tools=False,
+        allow_external_tools=[],
         allow_unsandboxed_friend=False,
         unsafe_extra_args=None,
         i_accept_unsandboxed=False,
@@ -621,7 +665,7 @@ def test_false_and_empty_saved_grants_do_not_require_reassertion(tmp_path):
     run_dir = _write_resume_fixture(
         tmp_path,
         {
-            "allow_external_tools": False,
+            "allow_external_tools": [],
             "allow_unsandboxed_friend": False,
             "unsafe_extra_args": None,
             "i_accept_unsandboxed": False,
@@ -629,7 +673,7 @@ def test_false_and_empty_saved_grants_do_not_require_reassertion(tmp_path):
         },
     )
     restored = _restore_args(_resume_args(run_dir))
-    assert restored.allow_external_tools is False
+    assert restored.allow_external_tools == []
 
 
 @pytest.mark.parametrize(

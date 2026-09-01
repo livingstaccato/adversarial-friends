@@ -12,7 +12,7 @@ import threading
 
 from . import http_transport
 from .adapters import Adapter
-from .authority import ExternalToolPolicy, enforce as enforce_authority
+from .authority import AuthorityPolicy, ExternalToolPolicy, enforce as enforce_authority
 from .errors import UsageError
 from .procio import _pump_output
 from .providerconfig import ProviderPolicy
@@ -194,7 +194,7 @@ def assess_all(
     include_self: bool = False,
     host_provider: str | None = None,
     enforce: Callable[[Adapter], object] | None = None,
-    external_tool_policy: ExternalToolPolicy | None = None,
+    authority_policy: AuthorityPolicy | None = None,
     selection_policy: bool = True,
     capability_probe: Callable[[Adapter, str], DenyProbeResult] | None = None,
 ) -> dict[str, FriendReadiness]:
@@ -247,8 +247,8 @@ def assess_all(
         # declaration alone. Refuse before testing an executable or endpoint:
         # a provider the policy forbids must never be contacted as a probe.
         try:
-            if external_tool_policy is not None:
-                enforce_authority(adapter, external_tool_policy)
+            if authority_policy is not None:
+                enforce_authority(adapter, authority_policy.for_provider(name))
         except UsageError as exc:
             rows[name] = _row(
                 name,
@@ -286,7 +286,8 @@ def assess_all(
             where = executable
 
         if (
-            external_tool_policy is ExternalToolPolicy.DENY
+            authority_policy is not None
+            and authority_policy.for_provider(name) is ExternalToolPolicy.DENY
             and adapter.external_tools == "deny-argv"
         ):
             probe_deny = probe_deny_argv if capability_probe is None else capability_probe

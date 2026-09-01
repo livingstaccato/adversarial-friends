@@ -18,7 +18,7 @@ import threading
 from typing import Any
 
 from ..adapters import Adapter, FriendSpec, friend_key
-from ..authority import ExternalToolPolicy
+from ..authority import DENY_ALL, AuthorityPolicy
 from ..dispatch import argv_size_warning
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
@@ -167,7 +167,7 @@ def run_critique(
     merge: str = "exact",
     run_id: str = "",
     reporter: Progress | None = None,
-    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    authority_policy: AuthorityPolicy = DENY_ALL,
     announced_skips: set[str] | None = None,
 ) -> tuple[CritiqueOutcome, list[Claim], int]:
     """Dispatch one critique round and merge its claims into `known_claims`.
@@ -211,7 +211,7 @@ def run_critique(
             keep=keep,
             reporter=reporter,
             kind="critique",
-            external_tool_policy=external_tool_policy,
+            authority_policy=authority_policy,
         )
         results = batch.results
         outcome.auth_abort = batch.auth_abort
@@ -237,7 +237,7 @@ def run_critique(
                 capability,
                 result,
                 transport,
-                external_tool_policy,
+                authority_policy.for_provider(spec.cli),
             )
         )
         if result.failure_reason is not None:

@@ -25,7 +25,7 @@ from typing import Any
 
 from . import isolation
 from .adapters import Adapter, Capability, FriendSpec
-from .authority import ExternalToolPolicy
+from .authority import DENY_ALL, AuthorityPolicy, ExternalToolPolicy
 from .ceilings import DEFAULT_MAX_CONCURRENCY
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
@@ -199,7 +199,7 @@ def dispatch_round(
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     reporter: Progress | None = None,
     kind: str = "critique",
-    external_tool_policy: ExternalToolPolicy = ExternalToolPolicy.DENY,
+    authority_policy: AuthorityPolicy = DENY_ALL,
 ) -> DispatchRoundOutcome:
     """Run every friend in `specs` concurrently and return their outcomes.
 
@@ -286,7 +286,7 @@ def dispatch_round(
                         allow_unsandboxed,
                         extra_args,
                         pass_env,
-                        external_tool_policy,
+                        authority_policy,
                     )
                 except AfError as exc:
                     # The process may have been refused before spawn, but

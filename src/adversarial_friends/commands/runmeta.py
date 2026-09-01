@@ -8,8 +8,6 @@ them, so the resuming command line must repeat each prior grant exactly.
 """
 
 import argparse
-from collections.abc import Mapping
-import copy
 import dataclasses
 from datetime import UTC, datetime
 import json
@@ -18,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..adapters import FriendSpec, validate_roster_entry_uniqueness
+from ..authority import AuthorityPolicy
 from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
@@ -42,41 +41,13 @@ from .checkpoint import (
     validate_lifecycle_and_snapshot,
 )
 from .exits import decide_exit
+from .runmeta_migration import (
+    CURRENT_SCHEMA_VERSION as CURRENT_SCHEMA_VERSION,
+    migrate_meta as migrate_meta,
+)
 
 if TYPE_CHECKING:
     from .crossexam import CrossexamOutcome
-
-CURRENT_SCHEMA_VERSION = 2
-
-
-def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a detached current-schema view without inventing history."""
-    meta = resumevalidation.bounded_metadata_copy(raw)
-    version = meta.get("schema_version", 1)
-    if type(version) is not int or not 1 <= version <= CURRENT_SCHEMA_VERSION:
-        raise UsageError(f"unsupported run metadata schema {version!r}")
-    if version == CURRENT_SCHEMA_VERSION:
-        return meta
-    meta["schema_version"] = CURRENT_SCHEMA_VERSION
-    for field in ("started_at", "finished_at", "duration_s", "exit_code", "stop_reason"):
-        meta.setdefault(field, None)
-    meta.setdefault("external_tool_policy", "legacy-unknown")
-    meta.setdefault("attempted_calls", meta.get("spent_calls", 0))
-    meta.setdefault("spent_calls", 0)
-    meta.setdefault("repeat_tracker", {"last": {}, "count": {}, "disabled": {}})
-    if "snapshot" not in meta:
-        meta["snapshot"] = {
-            "repo_root": meta.get("repo_root"),
-            "commit": meta.get("snapshot_sha"),
-            "tree": None,
-            "artifact_path": meta.get("artifact_path", meta.get("artifact", "")),
-            "artifact_hash": meta.get("artifact_hash", ""),
-            "predecessor": None,
-            "source_path": None,
-        }
-    meta.setdefault("snapshot_history", [copy.deepcopy(meta["snapshot"])])
-    return meta
-
 
 _RESUMABLE_ARGS = (
     "mode",
@@ -114,7 +85,7 @@ _RESUMABLE_ARGS = (
 # but never restored from attacker-editable run.json. A resume must repeat
 # any non-default grant exactly on its own command line.
 _SECURITY_GRANTS: dict[str, tuple[type, object]] = {
-    "allow_external_tools": (bool, False),
+    "allow_external_tools": (list, []),
     "allow_unsandboxed_friend": (bool, False),
     "unsafe_extra_args": (str, None),
     "i_accept_unsandboxed": (bool, False),
@@ -159,6 +130,7 @@ def _base_meta(
     specs: list[FriendSpec],
     snapshot: SnapshotIdentity,
     snapshot_history: list[SnapshotIdentity],
+    authority_policy: AuthorityPolicy,
     preset: str = "inherit",
     roster_source: str | None = None,
     env_withheld: list[str] | None = None,
@@ -192,17 +164,20 @@ def _base_meta(
         "external_tool_policy": (
             "legacy-unknown"
             if prior_external_tool_policy == "legacy-unknown"
-            else "allow"
-            if getattr(args, "allow_external_tools", False)
-            else "deny"
+            else authority_policy.audit_summary
         ),
+        "external_tool_grants": list(authority_policy.allowed_providers),
         "downgrades": downgrades,
         "invocation": {
             "artifact": str(artifact),
             "friend": list(args.friend),
             **{name: getattr(args, name, None) for name in _RESUMABLE_ARGS},
             **{
-                name: getattr(args, name, default)
+                name: (
+                    list(authority_policy.allowed_providers)
+                    if name == "allow_external_tools"
+                    else getattr(args, name, default)
+                )
                 for name, (_type, default) in _SECURITY_GRANTS.items()
             },
         },
@@ -266,8 +241,23 @@ def _validate_saved_grant(name: str, value: object, expected_type: type) -> None
         valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
     elif name == "unsafe_extra_args":
         valid = value is None or isinstance(value, str)
+    elif name == "allow_external_tools":
+        valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
     if not valid:
         raise _resume_type_error(name, value)
+
+
+def _normalize_saved_grants(value: object) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise UsageError("cannot resume: external tool grants must be a list of strings")
+    grants = list(value)
+    if len(grants) != len(set(grants)):
+        raise UsageError("cannot resume: saved --allow-external-tools contains duplicates")
+    if "*" in grants and grants != ["*"]:
+        raise UsageError(
+            "cannot resume: saved --allow-external-tools global '*' grant must be used alone"
+        )
+    return sorted(grants)
 
 
 def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
@@ -468,11 +458,18 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         _validate_saved_grant(name, saved_value, expected_type)
         current_value = getattr(args, name, default)
         _validate_saved_grant(name, current_value, expected_type)
+        if name == "allow_external_tools":
+            saved_value = _normalize_saved_grants(saved_value)
+            current_value = _normalize_saved_grants(current_value)
         if current_value != saved_value:
             raise UsageError(
                 f"cannot resume: prior --{name.replace('_', '-')} authority must be "
                 "repeated exactly on the resume command line"
             )
+    saved_external_grants = _normalize_saved_grants(saved.get("allow_external_tools", []))
+    audit_external_grants = _normalize_saved_grants(meta.get("external_tool_grants", []))
+    if audit_external_grants != saved_external_grants:
+        raise UsageError("cannot resume: external_tool_grants disagrees with the saved invocation")
     roster_entries = _validated_roster_entries(meta.get("roster", []))
     validate_roster_entry_uniqueness(
         roster_entries, judging=saved.get("mode", "report") != "report"

@@ -107,7 +107,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     active_pool = setup.active_pool
     installed_handlers = setup.installed_handlers
     reporter = setup.reporter
-    external_tool_policy = setup.external_tool_policy
+    authority_policy = setup.authority_policy
     store: RunStore | None = None
     try:
         if resume_meta is not None:
@@ -206,6 +206,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 specs,
                 snapshot,
                 snapshot_history,
+                authority_policy,
                 preset=resolved.preset,
                 roster_source=resolved.source,
                 env_withheld=env_withheld,
@@ -415,7 +416,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         # amendment `incomplete` rather than leaving it for
                         # the next iteration.
                         final_block=(args.mode != "loop" or iteration == max_iterations),
-                        external_tool_policy=external_tool_policy,
+                        authority_policy=authority_policy,
                         announced_skips=announced_skips,
                     )
                     resumed = step.resumed
@@ -479,7 +480,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     merge=args.merge,
                     run_id=run_id,
                     reporter=reporter,
-                    external_tool_policy=external_tool_policy,
+                    authority_policy=authority_policy,
                     announced_skips=announced_skips,
                 )
                 budget.spend(critique.calls)
@@ -561,7 +562,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         prior=carry_over,
                         final_block=(args.mode != "loop" or iteration == max_iterations),
                         reporter=reporter,
-                        external_tool_policy=external_tool_policy,
+                        authority_policy=authority_policy,
                         announced_skips=announced_skips,
                     )
                     all_claims = cross.claims

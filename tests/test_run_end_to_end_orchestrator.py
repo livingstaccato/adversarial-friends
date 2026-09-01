@@ -110,7 +110,7 @@ def test_a_halted_run_is_still_readable(tmp_path):
     _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
     meta = _run_json(tmp_path)
     assert meta["invocation"]["mode"] == "report"
-    assert meta["schema_version"] == 2
+    assert meta["schema_version"] == 3
     assert meta["lifecycle_state"] == "waiting-for-orchestrator"
     assert "finished_at" not in meta
     assert "exit_code" not in meta
@@ -238,7 +238,7 @@ def test_resumed_v020_authority_stays_legacy_unknown_while_current_grant_dispatc
         "judge_uphold_a",
         "judge_uphold_b",
         mode="crossexam",
-        extra=("--allow-external-tools",),
+        extra=("--allow-external-tools=*",),
     )
     assert halted.returncode == 10, halted.stderr
     meta = _run_json(tmp_path)
@@ -252,7 +252,7 @@ def test_resumed_v020_authority_stays_legacy_unknown_while_current_grant_dispatc
     assert refused.returncode == 2
     assert "allow-external-tools" in refused.stderr
 
-    resumed = _resume(tmp_path, extra=("--allow-external-tools",))
+    resumed = _resume(tmp_path, extra=("--allow-external-tools=*",))
     assert resumed.returncode == 0, resumed.stderr
     terminal = _run_json(tmp_path)
     assert terminal["external_tool_policy"] == "legacy-unknown"
