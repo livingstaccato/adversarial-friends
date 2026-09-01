@@ -50,7 +50,13 @@ class RunStore:
     _lock_handle: "IO[str] | None" = None
 
     def __init__(self, root: Path, run_id: str, resume: bool = False) -> None:
-        self.root = Path(root)
+        # Pin the trusted root to one canonical spelling before constructing
+        # any children.  Darwin exposes /tmp and /var through /private; mixing
+        # the lexical spelling with contain_path()'s resolved spelling made
+        # ordinary tempfile roots look like escapes.  Resolving once also
+        # means a later swap of the caller's symlink cannot retarget this
+        # store: every anchored operation starts from the pinned target.
+        self.root = Path(root).resolve()
         self.run_id = run_id
         self.run_dir = self.root / run_id
         try:
@@ -124,6 +130,13 @@ class RunStore:
     def round_dir(self, round_no: int) -> Path:
         path = self.run_dir / f"round-{round_no}"
         secure_mkdir(path, parents=True, exist_ok=True, root=self.root)
+        return path
+
+    def existing_round_dir(self, round_no: int) -> Path:
+        """Return an existing round without creating or chmodding it."""
+        path = self.run_dir / f"round-{round_no}"
+        descriptor = secure_open_directory(path, root=self.root)
+        os.close(descriptor)
         return path
 
     def friend_prompt_path(self, round_no: int, friend_name: str) -> Path:
@@ -266,6 +279,10 @@ class RunStore:
     def write_sensitive(self, path: Path, text: str) -> Path:
         """Write a known run-owned text artifact with mode 0600."""
         return secure_write_text(contain_path(self.run_dir, path), text, root=self.root)
+
+    def write_sensitive_atomic(self, path: Path, text: str) -> Path:
+        """Atomically replace a known run-owned private text artifact."""
+        return self._write_atomic(contain_path(self.run_dir, path), text)
 
     def _owned_path(self, path: Path) -> Path:
         """Lexically bind a path to this run without following symlinks."""

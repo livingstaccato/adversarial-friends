@@ -499,7 +499,7 @@ def persist_result(
             captures[label] = "sha256:" + hashlib.sha256(payload).hexdigest()
         else:
             captures[label] = None
-    store.write_sensitive(
+    store.write_sensitive_atomic(
         store.friend_audit_path(round_no, spec.name),
         json.dumps(
             {"version": 1, "round": round_no, "name": spec.name, "row": row, "captures": captures},
@@ -537,13 +537,19 @@ def recover_result_audit(store: RunStore, round_no: int, spec: FriendSpec) -> di
 
     payload = store.read_owned_bytes(path, max_bytes=MAX_JSON_FILE_BYTES)
     data = decode_json_object(payload, path=path, label="persisted friend audit")
-    if set(data) != {"version", "round", "name", "row", "captures"}:
+    expected_keys = {"version", "round", "name", "row", "captures"}
+    if data.get("version") == 2:
+        expected_keys.add("judging")
+    if set(data) != expected_keys:
         raise UsageError("persisted friend audit has an invalid shape")
-    if data["version"] != 1 or data["round"] != round_no or data["name"] != spec.name:
+    if data["version"] not in {1, 2} or data["round"] != round_no or data["name"] != spec.name:
         raise UsageError("persisted friend audit has the wrong identity")
     rows = normalize_friend_rows([data["row"]], {spec.name})
     captures = data["captures"]
-    if type(captures) is not dict or set(captures) != {"prompt", "raw", "meta", "err"}:
+    capture_names = {"prompt", "raw", "meta", "err"}
+    if data["version"] == 2:
+        capture_names.add("parsed")
+    if type(captures) is not dict or set(captures) != capture_names:
         raise UsageError("persisted friend audit has invalid capture bindings")
     paths = {
         "prompt": store.friend_prompt_path(round_no, spec.name),
@@ -551,6 +557,8 @@ def recover_result_audit(store: RunStore, round_no: int, spec: FriendSpec) -> di
         "meta": store.friend_paths(round_no, spec.name)[2],
         "err": store.friend_err_path(round_no, spec.name),
     }
+    if data["version"] == 2:
+        paths["parsed"] = store.friend_paths(round_no, spec.name)[1]
     for label, capture_path in paths.items():
         expected = captures[label]
         if expected is None:

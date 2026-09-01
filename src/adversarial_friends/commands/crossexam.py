@@ -26,6 +26,7 @@ from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
 from ..errors import UsageError
 from ..failures import RepeatTracker
+from ..judgebatch import RecoveredJudgeBatch, persist_judging_batch, recover_judging_batch
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
 from ..progress import Progress
@@ -246,37 +247,43 @@ def run_rounds(
             for identity, verdict in durable_verdicts.items()
             if identity[2] == round_no and identity[0] in contested_ids
         }
-        recovered_judges = {
-            judge
-            for claim_id, judge, _recovered_round in recovered_for_round
-            if claim_id in contested_ids
-        }
-        recovered_judges.intersection_update(friend_key(spec) for spec in active)
-        if recovered_judges:
-            audited = {(row.get("name"), row.get("round")) for row in outcome.friends_meta}
-            for spec in active:
-                if friend_key(spec) not in recovered_judges:
-                    continue
-                audit_identity = (spec.name, round_no)
-                if audit_identity not in audited:
-                    outcome.friends_meta.append(recover_result_audit(store, round_no, spec))
-                    audited.add(audit_identity)
-            # The saved checkpoint predates this judging work. Charge each
-            # durable judge exactly once so retry cannot regain call budget.
-            budget.spend(len(recovered_judges))
+        captured_batches: dict[str, RecoveredJudgeBatch] = {}
+        recovered_missing: dict[str, set[str]] = {}
         for spec in active:
             judge = friend_key(spec)
+            full_slice = _slice_for(spec, contested)
+            if not full_slice:
+                continue
+            prior_cast = _prior_verdicts_by_claim(
+                outcome.verdicts, set(contested_ids), exclude_judge=judge
+            )
+            full_prompt, full_note = build_judge_prompt(
+                spec, artifact_text, full_slice, prior_cast, attributed
+            )
+            captured = recover_judging_batch(
+                store,
+                round_no,
+                spec,
+                [claim.id for claim in full_slice],
+                full_prompt,
+                legacy_complete=all(
+                    (claim.id, judge, round_no) in durable_verdicts for claim in full_slice
+                ),
+            )
+            if captured is not None:
+                captured_batches[spec.name] = captured
+                if full_note:
+                    prompt_downgrades_for.setdefault(spec.name, []).append(full_note)
+                continue
             slice_ = [
-                claim
-                for claim in _slice_for(spec, contested)
-                if (claim.id, judge, round_no) not in durable_verdicts
+                claim for claim in full_slice if (claim.id, judge, round_no) not in durable_verdicts
             ]
             if not slice_:
                 continue
             # Built per judge, not per round: each one must be told what the
             # OTHERS concluded, never what it concluded itself.
             prior_cast = _prior_verdicts_by_claim(
-                outcome.verdicts, set(contested_ids), exclude_judge=friend_key(spec)
+                outcome.verdicts, set(contested_ids), exclude_judge=judge
             )
             prompt_text, note = build_judge_prompt(
                 spec, artifact_text, slice_, prior_cast, attributed
@@ -295,6 +302,56 @@ def run_rounds(
             pending_for[spec.name] = slice_
             prompt_for[spec.name] = path
             prompt_text_for[spec.name] = prompt_text
+
+        # Complete sidecars are the transaction boundary: restore every
+        # verdict they captured before considering redispatch, including the
+        # suffix missing after a crash in the middle of ledger appends.
+        for spec in active:
+            captured = captured_batches.get(spec.name)
+            if captured is None:
+                continue
+            for verdict in captured.verdicts:
+                identity = _verdict_identity(verdict)
+                durable = durable_verdicts.get(identity)
+                if durable is not None and durable != verdict:
+                    raise UsageError("cannot recover judging: captured batch conflicts with ledger")
+                if durable is None:
+                    store.ledger.append(verdict)
+                    review.apply(verdict)
+                    durable_verdicts[identity] = verdict
+                recovered_for_round[identity] = verdict
+            for claim_id in captured.omitted_claim_ids:
+                recovered_missing.setdefault(claim_id, set()).add(friend_key(spec))
+                outcome.downgrades.append(
+                    f"round {round_no}: {spec.name} returned no verdict on {claim_id}; "
+                    "the captured batch records that claim as not judged."
+                )
+
+        recovered_judges = {
+            judge
+            for claim_id, judge, _recovered_round in recovered_for_round
+            if claim_id in contested_ids
+        }
+        recovered_judges.update(
+            friend_key(spec) for spec in active if spec.name in captured_batches
+        )
+        recovered_judges.intersection_update(friend_key(spec) for spec in active)
+        if recovered_judges:
+            audited = {(row.get("name"), row.get("round")) for row in outcome.friends_meta}
+            for spec in active:
+                if friend_key(spec) not in recovered_judges:
+                    continue
+                audit_identity = (spec.name, round_no)
+                if audit_identity not in audited:
+                    captured = captured_batches.get(spec.name)
+                    row = (
+                        captured.row
+                        if captured is not None
+                        else recover_result_audit(store, round_no, spec)
+                    )
+                    outcome.friends_meta.append(row)
+                    audited.add(audit_identity)
+            budget.spend(len(recovered_judges))
 
         # Durable votes from this round become visible only after every
         # missing judge's prompt has been reconstructed. Dispatch was a
@@ -322,7 +379,15 @@ def run_rounds(
             # that no judge existed. state_for returns `unproven` for a claim
             # with no judges, which is the honest answer.
             _settle_round(
-                outcome, contested, active, store, review, round_no, max_rounds, {}, final_block
+                outcome,
+                contested,
+                active,
+                store,
+                review,
+                round_no,
+                max_rounds,
+                recovered_missing,
+                final_block,
             )
             if had_independent_work:
                 outcome.rounds_run = round_no
@@ -344,8 +409,12 @@ def run_rounds(
         if not judge_specs:
             budget.exhaust(f"--max-wall-clock leaves no usable time for round {round_no}")
             break
-        for spec in judge_specs:
-            store.write_sensitive(prompt_for[spec.name], prompt_text_for[spec.name])
+        try:
+            for spec in judge_specs:
+                store.write_sensitive(prompt_for[spec.name], prompt_text_for[spec.name])
+        except BaseException:
+            prune_undispatched_prompts(judge_specs, prompt_for, [], store)
+            raise
 
         results: list[RoundResult] = []
         try:
@@ -397,7 +466,9 @@ def run_rounds(
         # below-quorum claim in the run `incomplete` and reset its discard
         # signature -- raised by the judges of a real crossexam, reviewing
         # the previous version of this file.
-        missing: dict[str, set[str]] = {}
+        missing: dict[str, set[str]] = {
+            claim_id: set(judges) for claim_id, judges in recovered_missing.items()
+        }
         for spec in withheld:
             _never_reported(missing, spec, pending_for[spec.name])
         if not results and withheld and not abort_event.is_set():
@@ -428,17 +499,16 @@ def run_rounds(
         any_failed = bool(withheld)
         for spec, capability, result in results:
             transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
-            outcome.friends_meta.append(
-                persist_result(
-                    store,
-                    round_no,
-                    spec,
-                    capability,
-                    result,
-                    transport,
-                    external_tool_policy,
-                )
+            row = persist_result(
+                store,
+                round_no,
+                spec,
+                capability,
+                result,
+                transport,
+                external_tool_policy,
             )
+            outcome.friends_meta.append(row)
             if result.failure_reason is not None:
                 # §7.2's M12: a round in which a required friend fails marks
                 # the RUN incomplete, regardless of per-claim states.
@@ -453,7 +523,8 @@ def run_rounds(
             cast = [vd.downgrade_unverifiable(v) for v in cast]
             # A judge may only rule on what it was actually shown. Anything
             # else is a verdict on a claim it never saw -- or on its own.
-            shown = {c.id for c in pending_for[spec.name]}
+            shown_order = [c.id for c in pending_for[spec.name]]
+            shown = set(shown_order)
             # A judge is told to return one verdict per claim in its slice.
             # One that silently returns fewer still passes validation, and
             # the claims it skipped would look merely `unproven` -- which
@@ -472,6 +543,7 @@ def run_rounds(
                     f"and returned no verdict on {sorted(omitted)}; those claims "
                     "were not judged by it."
                 )
+            accepted: list[Verdict] = []
             for verdict in cast:
                 if verdict.claim_id not in shown:
                     outcome.downgrades.append(
@@ -479,7 +551,17 @@ def run_rounds(
                         f"{verdict.claim_id!r}, which was not in its slice; discarded."
                     )
                     continue
-                round_verdicts.append(verdict)
+                accepted.append(verdict)
+            persist_judging_batch(
+                store,
+                round_no,
+                spec,
+                row,
+                shown_order,
+                [claim_id for claim_id in shown_order if claim_id in omitted],
+                accepted,
+            )
+            round_verdicts.extend(accepted)
         if any_failed:
             outcome.incomplete = True
 

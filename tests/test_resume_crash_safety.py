@@ -356,7 +356,7 @@ def test_a_clean_merge_retry_reports_no_earlier_attempt(tmp_path):
     assert not any("already applied by an earlier" in d for d in resumed.downgrades)
 
 
-def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monkeypatch):
+def test_response_application_checkpoint_is_durable_before_materialization(tmp_path, monkeypatch):
     store = _store(tmp_path, "run-checkpoint-before-rename")
     store.ledger.append(_claim(1, "defect A"))
     store.ledger.append(_claim(2, "defect A reworded"))
@@ -368,24 +368,25 @@ def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monk
     }
     response_path = orchestrator.response_path(round_dir)
     response_path.write_text(json.dumps(response), encoding="utf-8")
-    expected_hash = "sha256:" + hashlib.sha256(response_path.read_bytes()).hexdigest()
+    expected_payload = response_path.read_bytes()
+    expected_hash = "sha256:" + hashlib.sha256(expected_payload).hexdigest()
     request_hash = (
         "sha256:" + hashlib.sha256(orchestrator.request_path(round_dir).read_bytes()).hexdigest()
     )
 
-    original_replace = store.replace_owned
+    original_create = store.create_owned_bytes
 
-    def fail_response_rename(source, target):
+    def fail_applied_create(target, payload):
         if Path(target).name == "RESPONSE.json.applied":
-            raise RuntimeError("injected rename failure")
-        return original_replace(source, target)
+            raise RuntimeError("injected materialization failure")
+        return original_create(target, payload)
 
-    monkeypatch.setattr(store, "replace_owned", fail_response_rename)
-    with pytest.raises(RuntimeError, match="injected rename failure"):
+    monkeypatch.setattr(store, "create_owned_bytes", fail_applied_create)
+    with pytest.raises(RuntimeError, match="injected materialization failure"):
         _call_resume_round_one(store, 2)
 
     checkpoint = json.loads((store.run_dir / "run.json").read_text(encoding="utf-8"))
-    assert checkpoint["lifecycle_state"] == "response-applied"
+    assert checkpoint["lifecycle_state"] == "response-applying"
     assert checkpoint["applied_response"] == {
         "version": 1,
         "round": 2,
@@ -394,8 +395,14 @@ def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monk
         "sha256": expected_hash,
         "records": 1,
     }
-    assert response_path.with_suffix(".json.applying").exists()
+    assert response_path.exists()
+    assert not response_path.with_suffix(".json.applying").exists()
     assert not response_path.with_suffix(".json.applied").exists()
+
+    monkeypatch.setattr(store, "create_owned_bytes", original_create)
+    _call_resume_round_one(store, 2)
+    assert response_path.with_suffix(".json.applied").read_bytes() == expected_payload
+    assert not response_path.exists()
 
 
 def test_response_application_and_digest_use_one_captured_snapshot(tmp_path, monkeypatch):

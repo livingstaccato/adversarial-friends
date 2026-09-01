@@ -1,3 +1,4 @@
+import json
 import threading
 
 import pytest
@@ -9,6 +10,7 @@ from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands import crossexam as crossexam_mod
 from adversarial_friends.commands.crossexam import run_rounds
 from adversarial_friends.errors import UsageError
+from adversarial_friends.judgebatch import persist_judging_batch, recover_judging_batch
 from adversarial_friends.ledger import Claim, Verdict
 from adversarial_friends.normalize import NormalizeResult
 from adversarial_friends.reviewstate import ReviewState
@@ -141,6 +143,114 @@ def test_judging_retry_reuses_durable_verdicts_and_dispatches_only_missing_work(
     assert [row for row in outcome.friends_meta if row["name"] == first.name] == [durable_row]
 
 
+@pytest.mark.parametrize("crash_on_append", [1, 2])
+def test_judging_retry_replays_a_complete_captured_batch_without_redispatch(
+    monkeypatch, tmp_path, crash_on_append
+):
+    spec = _spec("first-ops-0", "first")
+    claims = [_claim(), Claim(**{**_claim().__dict__, "id": "c-0002@1"})]
+    store = RunStore(tmp_path, f"run-complete-batch-{crash_on_append}")
+    for claim in claims:
+        store.ledger.append(claim)
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("artifact")
+    payload = {
+        "verdicts": [
+            {
+                "claim_id": claim.id,
+                "verdict": "upheld",
+                "confidence": "high",
+                "evidence_assessment": "confirmed",
+                "reasoning": f"checked {claim.id}",
+                "counter_evidence": None,
+                "amended_claim": None,
+            }
+            for claim in claims
+        ]
+    }
+    result = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout="captured",
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult(payload, [], True),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+    monkeypatch.setattr(
+        crossexam_mod,
+        "dispatch_round",
+        lambda *_args, **_kwargs: rounds_mod.DispatchRoundOutcome(
+            [(spec, Capability(False, True, "none"), result)]
+        ),
+    )
+    original_append = store.ledger.append
+    verdict_appends = 0
+
+    def crash_during_batch(record):
+        nonlocal verdict_appends
+        if isinstance(record, Verdict):
+            verdict_appends += 1
+            if verdict_appends == crash_on_append:
+                raise RuntimeError("injected verdict append crash")
+        original_append(record)
+
+    monkeypatch.setattr(store.ledger, "append", crash_during_batch)
+    with pytest.raises(RuntimeError, match="injected verdict append crash"):
+        run_rounds(
+            [spec],
+            claims,
+            store,
+            ReviewState.replay(store.ledger.records()),
+            {},
+            None,
+            tmp_path / "schema.json",
+            artifact,
+            "artifact",
+            None,
+            None,
+            threading.Event(),
+            Budget(max_calls=10, started=0.0),
+            2,
+            now=lambda: 0.0,
+        )
+
+    audit = store.friend_audit_path(2, spec.name)
+    assert __import__("json").loads(audit.read_text())["version"] == 2
+    monkeypatch.setattr(store.ledger, "append", original_append)
+    monkeypatch.setattr(
+        crossexam_mod,
+        "dispatch_round",
+        lambda *_args, **_kwargs: pytest.fail("captured batch was redispatched"),
+    )
+    budget = Budget(max_calls=10, started=0.0)
+    outcome = run_rounds(
+        [spec],
+        claims,
+        store,
+        ReviewState.replay(store.ledger.records()),
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        "artifact",
+        None,
+        None,
+        threading.Event(),
+        budget,
+        2,
+        now=lambda: 0.0,
+    )
+
+    assert [
+        verdict.claim_id for verdict in store.ledger.records() if isinstance(verdict, Verdict)
+    ] == [claim.id for claim in claims]
+    assert budget.calls == 1
+    assert [row["name"] for row in outcome.friends_meta] == [spec.name]
+
+
 def test_judging_retry_reuses_a_successor_persisted_before_the_crash(monkeypatch, tmp_path):
     first = _spec("first-ops-0", "first")
     second = _spec("second-ops-0", "second")
@@ -247,6 +357,100 @@ def test_recovered_verdict_refuses_a_tampered_audit_capture(tmp_path):
             2,
             now=lambda: 0.0,
         )
+
+
+def test_incomplete_legacy_judging_audit_fails_closed_instead_of_redispatching(
+    monkeypatch, tmp_path
+):
+    spec = _spec("first-ops-0", "first")
+    claim = _claim()
+    store = RunStore(tmp_path, "run-incomplete-legacy-audit")
+    store.ledger.append(claim)
+    store.write_sensitive(store.friend_prompt_path(2, spec.name), "legacy prompt")
+    result = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout="captured but not committed",
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult({}, [], True),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+    persist_result(
+        store,
+        2,
+        spec,
+        Capability(False, True, "none"),
+        result,
+        "fake",
+        ExternalToolPolicy.DENY,
+    )
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("artifact")
+    monkeypatch.setattr(
+        crossexam_mod,
+        "dispatch_round",
+        lambda *_args, **_kwargs: pytest.fail("incomplete prior call was redispatched"),
+    )
+
+    with pytest.raises(UsageError, match="incomplete legacy judging audit"):
+        run_rounds(
+            [spec],
+            [claim],
+            store,
+            ReviewState.replay(store.ledger.records()),
+            {},
+            None,
+            tmp_path / "schema.json",
+            artifact,
+            "artifact",
+            None,
+            None,
+            threading.Event(),
+            Budget(max_calls=10, started=0.0),
+            2,
+            now=lambda: 0.0,
+        )
+
+
+def test_judging_sidecar_verdict_tamper_disagrees_with_bound_parsed_batch(tmp_path):
+    spec = _spec("first-ops-0", "first")
+    claim = _claim()
+    verdict = Verdict(
+        claim.id, "fake/first", 2, "upheld", "high", "confirmed", "original", None, None
+    )
+    store = RunStore(tmp_path, "run-sidecar-verdict-tamper")
+    store.write_sensitive(store.friend_prompt_path(2, spec.name), "prompt")
+    result = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout="raw",
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult({}, [], True),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+    row = persist_result(
+        store,
+        2,
+        spec,
+        Capability(False, True, "none"),
+        result,
+        "fake",
+        ExternalToolPolicy.DENY,
+    )
+    persist_judging_batch(store, 2, spec, row, [claim.id], [], [verdict])
+    audit = store.friend_audit_path(2, spec.name)
+    data = json.loads(audit.read_text())
+    data["judging"]["verdicts"][0]["reasoning"] = "tampered"
+    audit.write_text(json.dumps(data))
+
+    with pytest.raises(UsageError, match="parsed batch"):
+        recover_judging_batch(store, 2, spec, [claim.id], "prompt")
 
 
 def test_judging_replay_does_not_let_future_votes_rewrite_an_earlier_successor(

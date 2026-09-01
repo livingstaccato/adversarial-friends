@@ -136,9 +136,16 @@ def _mark_response_consumed(store: RunStore, round_dir: Path, prepared: "Prepare
     """
     applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
     applied = round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}"
-    if store.owned_regular_exists(applying):
-        store.replace_owned(applying, applied)
+    # Never promote the mutable staging pathname.  The applied evidence is
+    # created from the exact bounded byte snapshot that passed semantic
+    # validation; a concurrent replacement of `.applying` therefore cannot
+    # change either the audit artifact or its checkpoint digest.
+    if not store.owned_regular_exists(applied):
+        store.create_owned_bytes(applied, prepared.payload)
         store.fsync_owned_directory(round_dir)
+    applied_payload = _read_owned_json_bytes(store, applied, "applied orchestrator response")
+    if applied_payload != prepared.payload:
+        raise UsageError("cannot resume: retained applied response changed after validation")
     live = round_dir / "RESPONSE.json"
     if store.owned_regular_exists(live):
         live_payload = _read_owned_json_bytes(store, live, "orchestrator response")
@@ -147,6 +154,11 @@ def _mark_response_consumed(store: RunStore, round_dir: Path, prepared: "Prepare
                 "cannot resume: live response changed after validation; retained for audit"
             )
         store.unlink_owned(live)
+        store.fsync_owned_directory(round_dir)
+    # `.applying` is only a legacy crash artifact now.  It is never a source
+    # for the retained copy, so even a post-validation swap is safe to remove.
+    if store.owned_regular_exists(applying):
+        store.unlink_owned(applying)
         store.fsync_owned_directory(round_dir)
 
 
@@ -222,13 +234,13 @@ def _prepare_response(
         request_digest=request_digest,
     )
     if checkpoint is None:
-        if applied_exists or applying_exists:
+        if (applied_exists or applying_exists) and not live_exists:
             raise UsageError(
                 "cannot resume: retained applying/applied response has no matching durable checkpoint"
             )
         selected = live
     else:
-        selected = applied if applied_exists else applying
+        selected = applied if applied_exists else applying if applying_exists else live
     if not store.owned_regular_exists(selected):
         if checkpoint is None:
             raise UsageError(
@@ -257,15 +269,13 @@ def _prepare_response(
 
 def _materialize_response(store: RunStore, round_dir: Path, prepared: PreparedResponse) -> None:
     """Durably freeze the exact validated bytes before checkpoint mutation."""
-    applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
-    if prepared.path == applying:
-        return
-    if store.owned_regular_exists(applying):
-        existing = _read_owned_json_bytes(store, applying, "orchestrator response")
+    applied = round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}"
+    if store.owned_regular_exists(applied):
+        existing = _read_owned_json_bytes(store, applied, "orchestrator response")
         if existing != prepared.payload:
             raise UsageError("cannot resume: prepared response disagrees with validated bytes")
         return
-    store.create_owned_bytes(applying, prepared.payload)
+    store.create_owned_bytes(applied, prepared.payload)
     store.fsync_owned_directory(round_dir)
 
 
@@ -459,7 +469,12 @@ def resume_round_one(
     claims = review.claims
     historical = [*review.claims_by_id.values(), *review.aliases]
     counter = next_claim_number(historical)
-    round_dir = store.round_dir(base_round)
+    try:
+        round_dir = store.existing_round_dir(base_round)
+    except OSError as exc:
+        raise UsageError(
+            f"cannot resume: round {base_round} is not safely readable: {exc}"
+        ) from exc
 
     # The same handshake serves two questions (§4.2, §14.2), so the answer is
     # read according to what was actually asked rather than assumed.
@@ -489,7 +504,6 @@ def resume_round_one(
         if applied_checkpoint is not None and applied_checkpoint["records"] != len(extracted):
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
         if applied_checkpoint is None:
-            _materialize_response(store, round_dir, prepared)
             _checkpoint_response_preparation(
                 args,
                 store,
@@ -499,6 +513,7 @@ def resume_round_one(
                 response_digest=prepared.digest,
                 records=len(extracted),
             )
+            _materialize_response(store, round_dir, prepared)
         skipped = extracted[:already_extracted]
         for finding in extracted[already_extracted:]:
             counter += 1
@@ -546,7 +561,6 @@ def resume_round_one(
         if applied_checkpoint is not None and applied_checkpoint["records"] != expected_records:
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
         if applied_checkpoint is None:
-            _materialize_response(store, round_dir, prepared)
             _checkpoint_response_preparation(
                 args,
                 store,
@@ -556,6 +570,7 @@ def resume_round_one(
                 response_digest=prepared.digest,
                 records=expected_records,
             )
+            _materialize_response(store, round_dir, prepared)
         remaining_decisions = decisions[len(previous_merges) :]
         claims, adjudicated = apply_merges(claims, remaining_decisions, base_round)
         for alias in adjudicated:

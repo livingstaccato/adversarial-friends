@@ -91,6 +91,12 @@ _BLOCK_LEADER_RE = re.compile(
 _BIDI_CONTROL_RE = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _URI_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
 _ACTIVE_URI_RE = re.compile(r"(?i)\b(javascript|vbscript|data):")
+_BARE_WWW_RE = re.compile(r"(?i)\bwww\.")
+_EMAIL_RE = re.compile(
+    r"(?i)(?<![A-Z0-9.!#$%&'*+/=?^_`{|}~-])"
+    r"([A-Z0-9.!#$%&'*+/=?^_`{|}~-]+)@"
+    r"(?=[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9-]+)+\b)"
+)
 
 
 def _sanitize_display(value: object, *, single_line: bool = False) -> str:
@@ -105,7 +111,9 @@ def _sanitize_display(value: object, *, single_line: bool = False) -> str:
 
 def _defang_links(text: str) -> str:
     text = _URI_RE.sub(lambda match: f"{match.group(1)}: //", text)
-    return _ACTIVE_URI_RE.sub(lambda match: f"{match.group(1)}: ", text)
+    text = _ACTIVE_URI_RE.sub(lambda match: f"{match.group(1)}: ", text)
+    text = _BARE_WWW_RE.sub("www .", text)
+    return _EMAIL_RE.sub(lambda match: f"{match.group(1)} @", text)
 
 
 def _escape_cell(value: object) -> str:

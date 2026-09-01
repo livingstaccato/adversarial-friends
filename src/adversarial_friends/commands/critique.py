@@ -96,26 +96,33 @@ def build_prompts(
     prompt_for: dict[str, Path] = {}
     advisory_for: dict[str, bool] = {}
     downgrades: list[str] = []
-    for spec in specs:
-        prompt_text, advisory, lens_downgrade = _build_friend_prompt(spec, artifact_text)
-        if lens_downgrade:
-            downgrades.append(lens_downgrade)
-        # claude, opencode, and agy all place the WHOLE prompt in one argv
-        # element (prompt_mode "trailing-arg"/"flag-value"); Linux commonly
-        # caps a single argument near 128KB (the limit varies by OS -- this
-        # runner is not always run on Linux), so a large artifact can make
-        # Popen() fail with E2BIG ("Argument list too long"). This is
-        # detected, not solved -- switching prompt modes is a design change.
-        # Recording the risk up front means an E2BIG failure is already
-        # explained by the time it is read, not a surprise raw exit code.
-        if spec.cli != "fake":
-            warning = argv_size_warning(spec.name, registry[spec.cli], prompt_text)
-            if warning is not None:
-                downgrades.append(warning)
-        prompt_path = store.friend_prompt_path(round_no, spec.name)
-        store.write_sensitive(prompt_path, prompt_text)
-        prompt_for[spec.name] = prompt_path
-        advisory_for[spec.name] = advisory
+    try:
+        for spec in specs:
+            prompt_text, advisory, lens_downgrade = _build_friend_prompt(spec, artifact_text)
+            if lens_downgrade:
+                downgrades.append(lens_downgrade)
+            # claude, opencode, and agy all place the WHOLE prompt in one argv
+            # element (prompt_mode "trailing-arg"/"flag-value"); Linux commonly
+            # caps a single argument near 128KB (the limit varies by OS -- this
+            # runner is not always run on Linux), so a large artifact can make
+            # Popen() fail with E2BIG ("Argument list too long"). This is
+            # detected, not solved -- switching prompt modes is a design change.
+            # Recording the risk up front means an E2BIG failure is already
+            # explained by the time it is read, not a surprise raw exit code.
+            if spec.cli != "fake":
+                warning = argv_size_warning(spec.name, registry[spec.cli], prompt_text)
+                if warning is not None:
+                    downgrades.append(warning)
+            prompt_path = store.friend_prompt_path(round_no, spec.name)
+            # Record the pathname before writing so a partial write that
+            # raises is cleaned along with every earlier staged prompt.
+            prompt_for[spec.name] = prompt_path
+            store.write_sensitive(prompt_path, prompt_text)
+            advisory_for[spec.name] = advisory
+    except BaseException:
+        for path in prompt_for.values():
+            store.unlink_owned(path, missing_ok=True)
+        raise
     return prompt_for, advisory_for, downgrades
 
 
