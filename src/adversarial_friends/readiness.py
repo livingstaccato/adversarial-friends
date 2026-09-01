@@ -16,6 +16,7 @@ from .authority import AuthorityPolicy, ExternalToolPolicy, enforce as enforce_a
 from .errors import UsageError
 from .procio import _pump_output
 from .providerconfig import ProviderPolicy
+from .workspaceassets import validate_workspace_assets
 
 HOST_ENV_MARKERS: dict[str, str] = {
     "CLAUDECODE": "claude",
@@ -263,6 +264,10 @@ def assess_all(
         # declaration alone. Refuse before testing an executable or endpoint:
         # a provider the policy forbids must never be contacted as a probe.
         try:
+            validate_workspace_assets(
+                adapter.workspace_assets,
+                transport=adapter.transport,
+            )
             if authority_policy is not None:
                 enforce_authority(adapter, authority_policy.for_provider(name))
         except UsageError as exc:

@@ -276,6 +276,32 @@ def _gate_lines(run_meta: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _workspace_asset_lines(run_meta: dict[str, Any]) -> list[str]:
+    rows: list[tuple[object, dict[str, Any]]] = []
+    for friend in run_meta.get("friends", []):
+        for asset in friend.get("workspace_assets", []):
+            if isinstance(asset, dict):
+                rows.append((friend.get("name", "unknown"), asset))
+    if not rows:
+        return []
+    lines = [
+        "## Workspace assets",
+        "",
+        "| friend | source | target | expected SHA-256 | observed SHA-256 | status |",
+        "|---|---|---|---|---|---|",
+    ]
+    for friend, asset in rows:
+        lines.append(
+            f"| {_escape_cell(friend)} | {_escape_cell(asset.get('source', 'unknown'))} | "
+            f"{_escape_cell(asset.get('target', 'unknown'))} | "
+            f"{_escape_cell(asset.get('expected_sha256') or 'unavailable')} | "
+            f"{_escape_cell(asset.get('observed_sha256') or 'unavailable')} | "
+            f"{_escape_cell(asset.get('status', 'unknown'))} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _render_verdict_sections(
     claims: list[Claim],
     verdicts: list[Verdict],
@@ -493,6 +519,8 @@ def render(
             ]
         )
     lines.append("")
+
+    lines.extend(_workspace_asset_lines(run_meta))
 
     if run_meta.get("downgrades"):
         lines.append("## Downgrades")

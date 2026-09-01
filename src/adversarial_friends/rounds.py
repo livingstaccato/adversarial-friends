@@ -41,6 +41,11 @@ from .failures import AUTH, RepeatTracker, auth_abort_message, classify
 from .progress import Progress, disabled
 from .runstore import RunStore
 from .spawn import SpawnResult
+from .workspaceassets import (
+    WorkspaceAssetAudit,
+    WorkspaceAssetStagingError,
+    stage_workspace_assets,
+)
 
 RoundResult = tuple[FriendSpec, Capability, SpawnResult, ExternalToolPolicy | None]
 
@@ -277,6 +282,19 @@ def dispatch_round(
                 report.friend_dispatched(spec.name, spec.timeout)
                 result: RoundResult
                 try:
+                    asset_audit: tuple[WorkspaceAssetAudit, ...] = ()
+                    if spec.cli != "fake" and registry[spec.cli].workspace_assets:
+                        try:
+                            asset_audit = stage_workspace_assets(
+                                registry[spec.cli].workspace_assets,
+                                cwd_for[spec.name],
+                            )
+                        except WorkspaceAssetStagingError as exc:
+                            capability = replace(_UNKNOWN_CAPABILITY, workspace_assets=exc.audits)
+                            outcome = replace(_exception_outcome([], exc), failure_reason=str(exc))
+                            result = spec, capability, outcome, None
+                            report.friend_finished(spec.name, _outcome_word(outcome, contract))
+                            return _DispatchAttempt(result)
                     result = _dispatch(
                         spec,
                         cwd_for[spec.name],
@@ -291,6 +309,13 @@ def dispatch_round(
                         pass_env,
                         authority_policy,
                     )
+                    if asset_audit:
+                        result = (
+                            result[0],
+                            replace(result[1], workspace_assets=asset_audit),
+                            result[2],
+                            result[3],
+                        )
                 except AfError as exc:
                     # The process may have been refused before spawn, but
                     # this worker crossed the reliable dispatch boundary and
@@ -303,7 +328,7 @@ def dispatch_round(
                     abort_event.set()
                     result = (
                         spec,
-                        _UNKNOWN_CAPABILITY,
+                        replace(_UNKNOWN_CAPABILITY, workspace_assets=asset_audit),
                         replace(_exception_outcome([], exc), failure_reason=str(exc)),
                         None,
                     )
@@ -312,7 +337,12 @@ def dispatch_round(
                 except Exception as exc:
                     report.friend_finished(spec.name, f"failed: {exc.__class__.__name__}")
                     return _DispatchAttempt(
-                        (spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc), None)
+                        (
+                            spec,
+                            replace(_UNKNOWN_CAPABILITY, workspace_assets=asset_audit),
+                            _exception_outcome([], exc),
+                            None,
+                        )
                     )
                 except BaseException as exc:
                     # KeyboardInterrupt can be delivered while a worker is
@@ -320,7 +350,12 @@ def dispatch_round(
                     # requirement as AfError: retain the attempted prompt and
                     # a friend row, stop peers, and surface the interruption.
                     abort_event.set()
-                    result = spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc), None
+                    result = (
+                        spec,
+                        replace(_UNKNOWN_CAPABILITY, workspace_assets=asset_audit),
+                        _exception_outcome([], exc),
+                        None,
+                    )
                     report.friend_finished(spec.name, _outcome_word(result[2], contract))
                     return _DispatchAttempt(result, exc)
                 report.friend_finished(spec.name, _outcome_word(result[2], contract))
@@ -443,8 +478,7 @@ def persist_result(
     raw_path, _json_path, meta_path = store.friend_paths(round_no, spec.name)
     store.write_sensitive(raw_path, outcome.stdout)
     policy_value = external_tool_policy.value if external_tool_policy is not None else "unknown"
-    store.write_sensitive(
-        meta_path,
+    meta_text = (
         f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
         f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
         f"orphans_suspected={outcome.orphans_suspected}\n"
@@ -459,8 +493,13 @@ def persist_result(
         f"external_tool_policy={policy_value}\n"
         f"external_tools={capability.external_tools}\n"
         f"external_tool_sources={list(capability.external_tool_sources)}\n"
-        f"deny_external_tools_argv={list(capability.deny_external_tools_argv)}\n",
+        f"deny_external_tools_argv={list(capability.deny_external_tools_argv)}\n"
     )
+    if capability.workspace_assets:
+        meta_text += (
+            f"workspace_assets={[asset.as_dict() for asset in capability.workspace_assets]}\n"
+        )
+    store.write_sensitive(meta_path, meta_text)
     err_path = store.friend_err_path(round_no, spec.name)
     store.write_sensitive(err_path, outcome.stderr)
 
@@ -499,6 +538,8 @@ def persist_result(
         "diagnostics": diagnostics,
         "diagnostics_path": diagnostics_path,
     }
+    if capability.workspace_assets:
+        row["workspace_assets"] = [asset.as_dict() for asset in capability.workspace_assets]
     captures: dict[str, str | None] = {}
     capture_paths = {
         "prompt": store.friend_prompt_path(round_no, spec.name),

@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import adapters
+from adversarial_friends import adapters, workspaceassets
+from adversarial_friends.adapters import Adapter
 from adversarial_friends.authority import AuthorityPolicy
 from adversarial_friends.errors import UsageError
 from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
@@ -13,6 +14,7 @@ from adversarial_friends.readiness import (
     assess_all,
     detect_host,
 )
+from adversarial_friends.workspaceassets import WorkspaceAsset
 
 ADAPTER_DIR = (
     Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets" / "adapters"
@@ -259,3 +261,35 @@ def test_scoped_grant_does_not_skip_other_providers_deny_capability_probes(regis
     assert rows["agy"].state is ReadinessState.READY
     assert rows["codex"].state is ReadinessState.READY
     assert capability_checks == ["codex"]
+
+
+def test_readiness_revalidates_asset_digest_before_executable_contact(monkeypatch, tmp_path):
+    source_root = tmp_path / "package-assets"
+    source_root.mkdir()
+    (source_root / "payload").write_bytes(b"changed")
+    adapter = Adapter(
+        name="friend",
+        binary="friend",
+        base_argv=[],
+        prompt_mode="stdin",
+        prompt_flag="",
+        readonly_argv=[],
+        schema_flag="",
+        model_flag="",
+        internal_timeout_flag="",
+        effort_kind="none",
+        workspace_assets=(WorkspaceAsset("payload", ".friend/payload", "0" * 64),),
+    )
+    executable_probes = []
+    monkeypatch.setattr(workspaceassets, "assets_root", lambda: source_root)
+
+    rows = assess_all(
+        {"friend": adapter},
+        ProviderPolicy({}),
+        env={},
+        which=lambda name: executable_probes.append(name) or f"/bin/{name}",
+    )
+
+    assert rows["friend"].state is ReadinessState.POLICY_BLOCKED
+    assert "digest mismatch" in rows["friend"].reason
+    assert executable_probes == []

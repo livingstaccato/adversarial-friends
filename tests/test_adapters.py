@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 
 from adversarial_friends import adapters, trust
@@ -284,6 +286,42 @@ def test_duplicate_adapter_name_raises(tmp_path):
     (tmp_path / "b.toml").write_text('name = "dup"\nbinary = "y"\n')
     with pytest.raises(UsageError):
         adapters.load_adapters(tmp_path)
+
+
+def test_adapter_loads_validated_workspace_assets(monkeypatch, tmp_path):
+    from adversarial_friends import workspaceassets
+
+    payload = b"controlled harness\n"
+    source_root = tmp_path / "package-assets"
+    (source_root / "harnesses").mkdir(parents=True)
+    (source_root / "harnesses" / "controlled.md").write_bytes(payload)
+    adapter_dir = tmp_path / "adapters"
+    adapter_dir.mkdir()
+    digest = hashlib.sha256(payload).hexdigest()
+    (adapter_dir / "friend.toml").write_text(
+        'name = "friend"\n'
+        'binary = "friend"\n'
+        "[[workspace_assets]]\n"
+        'source = "harnesses/controlled.md"\n'
+        'target = ".friend/controlled.md"\n'
+        f'sha256 = "{digest}"\n'
+    )
+    monkeypatch.setattr(workspaceassets, "assets_root", lambda: source_root)
+
+    loaded = adapters.load_adapters(adapter_dir)["friend"]
+
+    assert len(loaded.workspace_assets) == 1
+    assert loaded.workspace_assets[0].source == "harnesses/controlled.md"
+    assert loaded.workspace_assets[0].target == ".friend/controlled.md"
+    assert loaded.workspace_assets[0].sha256 == digest
+
+
+def test_adapter_without_workspace_assets_remains_empty(tmp_path):
+    (tmp_path / "plain.toml").write_text('name = "plain"\nbinary = "plain"\n')
+
+    loaded = adapters.load_adapters(tmp_path)["plain"]
+
+    assert loaded.workspace_assets == ()
 
 
 def test_claude_schema_is_passed_inline_not_as_a_path(registry, files):

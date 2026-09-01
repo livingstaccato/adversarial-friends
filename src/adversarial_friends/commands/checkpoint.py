@@ -12,6 +12,7 @@ from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..secureio import secure_read_bytes, secure_regular_exists
 from ..snapshots import SnapshotIdentity, history_from_meta
 from ..verdicts import CONTESTED, INCOMPLETE, TERMINAL_STATES, UNPROVEN
+from ..workspaceassets import normalize_workspace_asset_audits
 
 _SUCCESS_STATUSES = frozenset({"ok", "ok [orphans suspected]"})
 _OPTIONAL_STRINGS = frozenset(
@@ -163,6 +164,11 @@ def normalize_friend_rows(
             item = row.get(field, [])
             if type(item) is not list or any(type(entry) is not str for entry in item):
                 raise _friend_error(index, f"{field} must be a list of strings")
+        if "workspace_assets" in row:
+            try:
+                row["workspace_assets"] = normalize_workspace_asset_audits(row["workspace_assets"])
+            except UsageError as exc:
+                raise _friend_error(index, str(exc)) from exc
         if (
             "write_protected" in row
             and "readonly" in row

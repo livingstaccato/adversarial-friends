@@ -13,6 +13,7 @@ from typing import Any
 from .authority import ExternalToolPolicy, enforce
 from .envelopes import Envelope, parse_envelope
 from .errors import UsageError
+from .workspaceassets import WorkspaceAsset, WorkspaceAssetAudit, parse_workspace_assets
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ class Adapter:
     # flags, plus bounded markers expected in its help/version output.
     deny_external_tools_probe_argv: tuple[str, ...] = ()
     deny_external_tools_probe_markers: tuple[str, ...] = ()
+    workspace_assets: tuple[WorkspaceAsset, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,7 @@ class Capability:
     external_tools: str = "unknown"
     external_tool_sources: tuple[str, ...] = ()
     deny_external_tools_argv: tuple[str, ...] = ()
+    workspace_assets: tuple[WorkspaceAssetAudit, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -219,6 +222,10 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
         tool_sources = data.get("external_tool_sources", [])
         probe_argv = data.get("deny_external_tools_probe_argv", [])
         probe_markers = data.get("deny_external_tools_probe_markers", [])
+        transport = data.get("transport", "exec")
+        workspace_assets = parse_workspace_assets(
+            data.get("workspace_assets", []), transport=transport
+        )
         if not isinstance(external_tools, str) or external_tools not in {
             "unknown",
             "none",
@@ -273,7 +280,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             internal_timeout_flag=data.get("internal_timeout_flag", ""),
             effort_kind=data.get("effort_kind", "none"),
             effort={k: list(v) for k, v in data.get("effort", {}).items()},
-            transport=data.get("transport", "exec"),
+            transport=transport,
             endpoint=data.get("endpoint", ""),
             sandbox_read=tuple(data.get("sandbox", {}).get("read", [])),
             sandbox_write=tuple(data.get("sandbox", {}).get("write", [])),
@@ -288,6 +295,7 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             external_tool_sources=tuple(tool_sources),
             deny_external_tools_probe_argv=tuple(probe_argv),
             deny_external_tools_probe_markers=tuple(probe_markers),
+            workspace_assets=workspace_assets,
         )
     return registry
 
