@@ -40,7 +40,14 @@ partition "Resolve the roster" {
     :exit 3 — no usable friends;
     stop
   endif
-  :if only one friend, record\n"cannot cross-examine" downgrade;<<#FFE0B2>>
+  if (fewer than two friends?) then (yes)
+    if (""report"" mode?) then (yes)
+      :report: record one-friend downgrade;<<#FFE0B2>>
+    else (judging)
+      :judging mode: exit 3 before run directory;
+      stop
+    endif
+  endif
 }
 
 partition "Prepare" {

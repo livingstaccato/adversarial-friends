@@ -106,6 +106,35 @@ def _legacy_symlink_identity(tmp_path, target: str = "docs/a.md"):
     return repo, source, frozen, legacy
 
 
+def _legacy_component_symlink_identity(
+    tmp_path: Path,
+    links: dict[str, str],
+    invocation_path: str,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_bytes(b"# saved target A\n")
+    (docs / "b.md").write_bytes(b"# alternate target B\n")
+    for path, target in links.items():
+        link = repo / path
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+    frozen = tmp_path / "frozen.md"
+    frozen.write_bytes((docs / "a.md").read_bytes())
+    digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
+    commit = isolation.snapshot_commit(repo)
+    legacy = {
+        "repo_root": str(repo),
+        "snapshot_sha": commit,
+        "artifact_path": str(repo / invocation_path),
+        "artifact_hash": digest,
+    }
+    return repo, frozen, legacy
+
+
 def test_legacy_symlink_binding_is_recovered_from_saved_commit_not_live_target(tmp_path):
     repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
     source.unlink()
@@ -167,6 +196,93 @@ def test_legacy_absolute_in_repo_symlink_target_is_recovered_from_saved_git(tmp_
     assert verified.source_path == "docs/a.md"
 
 
+@pytest.mark.parametrize(
+    ("links", "invocation_path"),
+    [
+        ({"spec.md": "docs/a.md"}, "spec.md"),
+        ({"--spec.md": "docs/a.md"}, "--spec.md"),
+        ({":(glob)*": "docs/a.md"}, ":(glob)*"),
+        ({"linkdir": "docs"}, "linkdir/a.md"),
+        ({"outer": "middle", "middle": "docs"}, "outer/a.md"),
+        ({"links/linkdir": "../docs"}, "links/linkdir/a.md"),
+        ({"links/linkdir": "../docs/../docs"}, "links/linkdir/a.md"),
+    ],
+)
+def test_legacy_binding_walks_final_intermediate_and_chained_saved_symlinks(
+    tmp_path, links, invocation_path
+):
+    repo, frozen, legacy = _legacy_component_symlink_identity(tmp_path, links, invocation_path)
+    # Recovery must use only the immutable commit. The corresponding live
+    # paths may disappear entirely after the run was recorded.
+    for path in sorted(links, key=lambda value: value.count("/"), reverse=True):
+        (repo / path).unlink()
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == "docs/a.md"
+
+
+def test_legacy_binding_walks_an_absolute_intermediate_target_inside_the_repo(tmp_path):
+    repo = tmp_path / "repo"
+    links = {"linkdir": str(repo / "docs" / ".." / "docs")}
+    _repo, frozen, legacy = _legacy_component_symlink_identity(tmp_path, links, "linkdir/a.md")
+
+    verified = SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+    assert verified.source_path == "docs/a.md"
+
+
+def test_legacy_history_entry_recovers_an_intermediate_symlink_binding(tmp_path):
+    _repo, frozen, legacy = _legacy_component_symlink_identity(
+        tmp_path, {"linkdir": "docs"}, "linkdir/a.md"
+    )
+    current = SnapshotIdentity.from_meta(legacy).verify(frozen)
+    raw_history = dataclasses.replace(current, source_path=None).to_dict()
+
+    history = history_from_meta({**legacy, "snapshot_history": [raw_history]}, current)
+
+    assert [entry.source_path for entry in history] == ["docs/a.md"]
+
+
+@pytest.mark.parametrize(
+    ("links", "invocation_path", "error"),
+    [
+        ({"linkdir": "../outside"}, "linkdir/a.md", "outside"),
+        ({"linkdir": "/etc"}, "linkdir/passwd", "outside"),
+        ({"linkdir": "missing"}, "linkdir/a.md", "unavailable"),
+        ({"linkdir": "docs/a.md"}, "linkdir/child.md", "not a directory"),
+        ({"a": "b", "b": "a"}, "a/spec.md", "cycle"),
+    ],
+)
+def test_legacy_component_walk_fails_closed_for_unsafe_or_invalid_trees(
+    tmp_path, links, invocation_path, error
+):
+    _repo, frozen, legacy = _legacy_component_symlink_identity(tmp_path, links, invocation_path)
+
+    with pytest.raises(UsageError, match=rf"saved.*{error}"):
+        SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+
+def test_legacy_component_walk_enforces_the_symlink_depth_cap(tmp_path):
+    links = {f"link-{index}": f"link-{index + 1}" for index in range(65)}
+    links["link-65"] = "docs"
+    _repo, frozen, legacy = _legacy_component_symlink_identity(tmp_path, links, "link-0/a.md")
+
+    with pytest.raises(UsageError, match=r"saved.*symlink depth limit"):
+        SnapshotIdentity.from_meta(legacy).verify(frozen)
+
+
+def test_tree_binding_is_checked_before_legacy_component_diagnostics(tmp_path):
+    _repo, frozen, legacy = _legacy_component_symlink_identity(
+        tmp_path, {"linkdir": "missing"}, "linkdir/a.md"
+    )
+    recovered = SnapshotIdentity.from_meta(legacy)
+    hostile = dataclasses.replace(recovered, tree="f" * 40)
+
+    with pytest.raises(UsageError, match=r"tree does not match commit"):
+        hostile.verify(frozen)
+
+
 def test_legacy_history_entry_recovers_symlink_binding_from_its_saved_commit(tmp_path):
     _repo, source, frozen, legacy = _legacy_symlink_identity(tmp_path)
     current = SnapshotIdentity.from_meta(legacy).verify(frozen)
@@ -208,15 +324,20 @@ def test_hostile_saved_source_binding_is_refused(source_path, tmp_path):
         SnapshotIdentity.from_meta({"snapshot": raw})
 
 
-def test_coordinated_frozen_and_metadata_tamper_does_not_rewrite_run_json(tmp_path):
+def test_intermediate_legacy_binding_tamper_does_not_rewrite_resume_state(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    artifact = repo / "spec.md"
+    docs = repo / "docs"
+    docs.mkdir()
+    artifact = docs / "spec.md"
     artifact.write_text("# repository contract\n")
+    linkdir = repo / "linkdir"
+    linkdir.symlink_to("docs")
+    invoked = linkdir / "spec.md"
     halted = run_af(
         tmp_path,
-        artifact,
+        invoked,
         "--friend",
         "fake:judge_uphold_a",
         "--friend",
@@ -238,8 +359,11 @@ def test_coordinated_frozen_and_metadata_tamper_does_not_rewrite_run_json(tmp_pa
     run_json = run_dir / "run.json"
     meta = json.loads(run_json.read_text())
     meta["artifact_hash"] = digest
+    meta["artifact_path"] = str(invoked)
     meta["snapshot"]["artifact_hash"] = digest
+    meta["snapshot"]["source_path"] = None
     meta["snapshot_history"][-1]["artifact_hash"] = digest
+    meta["snapshot_history"][-1]["source_path"] = None
     run_json.write_text(json.dumps(meta, indent=2, sort_keys=True))
     before = run_json.read_bytes()
     before_response = response_path.read_bytes()

@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1720-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1739-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -144,9 +144,11 @@ afriend run spec.md --friend ollama:security:qwen3:0.6b
 ```
 
 > ⚠️ `--friend` **replaces** discovery rather than adding to it. One
-> `--friend` flag means a one-friend run — which cannot cross-examine
-> anything. The tool records that as a downgrade in `run.json` and
-> `report.md` rather than letting it look like a full review.
+> `--friend` flag means a one-friend roster. A `report` with one friend is
+> allowed as a recorded downgrade in `run.json` and `report.md` rather than
+> being presented as a full review. `crossexam`, `gate`, and `loop` require
+> at least two friends; with fewer, they refuse with exit 3 before a run
+> directory is created.
 
 A run takes minutes, not seconds — a friend is a whole agent CLI reading a
 document. Progress goes to **stderr**: a line per friend as it finishes, and
@@ -338,7 +340,7 @@ is Antigravity — which is `agy`.
 | `0` | the run reached terminal states with nothing blocked |
 | `1` | a `gate` still has claims needing a resolution, or every dispatched friend failed |
 | `2` | usage error — bad flag, unknown CLI, missing artifact |
-| `3` | no usable friends found at all |
+| `3` | no usable friends found, or a judging mode resolved fewer than two friends; refused before a run directory |
 | `10` | `--merge orchestrator` is waiting for you to adjudicate merges |
 | `11` | a ceiling was hit — including natural `--max-loop-iterations` exhaustion without convergence; the run was truncated, not decided |
 | `12` | `--require-friends N` was set and fewer than `N` friends answered |

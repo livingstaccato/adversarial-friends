@@ -360,6 +360,38 @@ def test_contract_first_provider_and_authority_guidance_is_shipped():
     assert re.search(r"\bexits? 11\b", joined)
 
 
+def test_shipped_docs_state_the_one_friend_mode_contract_exactly():
+    readme = " ".join(REPO.joinpath("README.md").read_text().lower().split())
+    skill = " ".join(
+        REPO.joinpath("src/adversarial_friends/assets/SKILL.md").read_text().lower().split()
+    )
+    modes = " ".join(
+        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
+        .read_text()
+        .lower()
+        .split()
+    )
+    diagram = " ".join(REPO.joinpath("docs/architecture/run-flow.puml").read_text().lower().split())
+
+    for prose in (readme, skill, modes):
+        assert "report" in prose
+        assert "one friend" in prose
+        assert "recorded downgrade" in prose
+        assert all(mode in prose for mode in ("crossexam", "gate", "loop"))
+        assert "exit 3" in prose
+        assert "before a run directory" in prose
+
+    assert "report: record one-friend downgrade" in diagram
+    assert "judging mode: exit 3 before run directory" in diagram
+
+
+def test_rendered_run_flow_shows_the_one_friend_mode_contract():
+    visible = _svg_visible_text(REPO / "docs" / "architecture" / "run-flow.svg").lower()
+
+    assert "report: record one-friend downgrade" in visible
+    assert "judging mode: exit 3 before run directory" in visible
+
+
 def test_modes_explains_resume_authority_exception_and_doctor_readiness():
     modes = " ".join(
         REPO.joinpath("src/adversarial_friends/assets/references/modes.md")

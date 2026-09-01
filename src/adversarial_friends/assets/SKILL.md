@@ -128,8 +128,9 @@ Exit codes: `0` the run reached terminal states with nothing blocked; `1` a
 failed, or a `crossexam` left claims undecided or lost a required friend
 mid-round; `2` a usage or config error — a missing artifact, an
 unrecognized `--friend` value, `--max-rounds 1` with a judging mode; `3` no
-usable friend could be found at all (install a second agent CLI, or pass
-`--include-self` to let the host CLI review its own artifact); `10`
+usable friend could be found, or a judging mode resolved fewer than two
+friends (install another agent CLI, or pass `--include-self` to let the host
+CLI review its own artifact); `10`
 `--merge orchestrator` is waiting for you to adjudicate merges (see
 `references/modes.md`); `11` a judging mode stopped at a ceiling, having
 neither converged nor cleared anything; `12` `--require-friends N` was set
@@ -251,10 +252,11 @@ discovered set plus a nudge toward `security`. To emphasize a lens on part
 of an otherwise-normal run, list every friend you want the run to have, one
 `--friend cli:lens` per friend — e.g. `--friend codex:ops --friend
 agy:security --friend opencode:scope` — never a single `--friend` layered on
-top of discovery. A `--friend`-built (or discovered) roster with fewer than
-two friends cannot cross-examine anything; `afriend run` records this as a
-downgrade in `run.json` and `report.md` rather than letting a single-reviewer
-run look like the real thing.
+top of discovery. A `report` with one friend is allowed as a recorded
+downgrade in `run.json` and `report.md`; present it as a single review, not a
+cross-examination. `crossexam`, `gate`, and `loop` require at least two
+friends. With fewer, they refuse with exit 3 before a run directory is
+created, so there is no partial judging run to interpret or resume.
 
 A lens name with no matching file falls back to the generic prompt alone and
 is recorded as a downgrade in `run.json`, rather than failing the run or

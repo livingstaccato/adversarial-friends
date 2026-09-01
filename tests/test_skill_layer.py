@@ -73,6 +73,19 @@ def test_skill_doctor_contract_uses_provider_readiness_not_binary_presence():
         assert phrase in body, phrase
 
 
+def test_skill_distinguishes_report_degradation_from_judging_mode_refusal():
+    body = " ".join((SKILL / "SKILL.md").read_text().lower().replace("`", "").split())
+
+    for phrase in (
+        "report with one friend",
+        "recorded downgrade",
+        "crossexam, gate, and loop",
+        "exit 3",
+        "before a run directory",
+    ):
+        assert phrase in body, phrase
+
+
 def test_afriend_console_script_is_installed_and_runs():
     """Package-data misconfiguration (a missing adapter/lens in the wheel) is
     silent at import time -- it only surfaces when the installed entry point

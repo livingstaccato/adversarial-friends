@@ -632,6 +632,12 @@ def select_snapshot(
 def history_from_meta(
     meta: Mapping[str, object], current: SnapshotIdentity
 ) -> list[SnapshotIdentity]:
+    # Preflight validates history before the frozen artifact is available for
+    # full verification. Legacy identities still carry the invocation path at
+    # that point, while each history entry is resolved below. Compare like
+    # with like using the same immutable saved-tree walk; verification later
+    # still binds the resulting blob to the frozen bytes.
+    current = current._resolved_binding()
     if "snapshot_history" not in meta:
         return [current]
     raw = meta["snapshot_history"]

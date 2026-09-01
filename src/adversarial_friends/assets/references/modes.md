@@ -7,6 +7,15 @@
 | `gate` | **implemented** | Cross-examination, then every surviving non-advisory claim needs an explicit resolution before the gate clears. |
 | `loop` | **implemented** | Cross-examination, repeated until two consecutive rounds surface nothing new. |
 
+## Minimum roster
+
+A `report` with one friend is allowed as a recorded downgrade in `run.json`
+and `report.md`; it is one review, not a cross-examination. `crossexam`,
+`gate`, and `loop` require at least two friends. With fewer, they refuse with
+exit 3 before a run directory is created. This preflight rule prevents a
+single-reviewer judging run from leaving artifacts that look resumable or
+authoritative.
+
 ## Cross-examination
 
 This is the mode the project exists for: it automates the manual loop of
@@ -394,7 +403,7 @@ every command in this build:
 | `0` | success | a run that reached terminal states with nothing blocked; `afriend doctor` when at least one provider is ready |
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
 | `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` without verifiably changed evidence |
-| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable; `afriend doctor` when no provider is ready |
+| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable, or when `crossexam`, `gate`, or `loop` resolves fewer than two friends; `afriend doctor` when no provider is ready |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
 | `12` | below quorum | `--require-friends N` set, and fewer than `N` friends produced a usable answer this run |
