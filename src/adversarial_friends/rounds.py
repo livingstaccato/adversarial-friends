@@ -16,6 +16,8 @@ from collections.abc import Callable, Iterator, Sequence
 import concurrent.futures
 import contextlib
 from dataclasses import dataclass, replace
+import hashlib
+import json
 from pathlib import Path
 import tempfile
 import threading
@@ -34,7 +36,7 @@ from .dispatch import (
     _stderr_tail,
     failure_summary,
 )
-from .errors import AfError
+from .errors import AfError, UsageError
 from .failures import AUTH, RepeatTracker, auth_abort_message, classify
 from .progress import Progress, disabled
 from .runstore import RunStore
@@ -107,13 +109,16 @@ def persist_skip(store: RunStore, round_no: int, skipped: SkippedFriend) -> dict
 
 
 def prune_undispatched_prompts(
-    specs: Sequence[FriendSpec], prompt_for: dict[str, Path], results: Sequence[RoundResult]
+    specs: Sequence[FriendSpec],
+    prompt_for: dict[str, Path],
+    results: Sequence[RoundResult],
+    store: RunStore,
 ) -> None:
     """Keep prompt artifacts only for dispatch attempts that returned an auditable row."""
     dispatched = {spec.name for spec, _capability, _outcome in results}
     for spec in specs:
         if spec.name not in dispatched:
-            prompt_for[spec.name].unlink(missing_ok=True)
+            store.unlink_owned(prompt_for[spec.name], missing_ok=True)
 
 
 def _outcome_word(outcome: SpawnResult, contract: PayloadContract) -> str:
@@ -461,7 +466,7 @@ def persist_result(
         # surfaced in the same status column readers already check for
         # "failed", rather than a silent field only run.json carries.
         status += " [orphans suspected]"
-    return {
+    row = {
         "name": spec.name,
         "model": spec.model,
         "effort": spec.effort,
@@ -481,3 +486,80 @@ def persist_result(
         "diagnostics": diagnostics,
         "diagnostics_path": diagnostics_path,
     }
+    captures: dict[str, str | None] = {}
+    capture_paths = {
+        "prompt": store.friend_prompt_path(round_no, spec.name),
+        "raw": raw_path,
+        "meta": meta_path,
+        "err": err_path,
+    }
+    for label, path in capture_paths.items():
+        if store.owned_regular_exists(path):
+            payload = store.read_owned_bytes(path, max_bytes=32 * 1024 * 1024)
+            captures[label] = "sha256:" + hashlib.sha256(payload).hexdigest()
+        else:
+            captures[label] = None
+    store.write_sensitive(
+        store.friend_audit_path(round_no, spec.name),
+        json.dumps(
+            {"version": 1, "round": round_no, "name": spec.name, "row": row, "captures": captures},
+            sort_keys=True,
+        ),
+    )
+    return row
+
+
+def recover_result_audit(store: RunStore, round_no: int, spec: FriendSpec) -> dict[str, Any]:
+    """Authenticate a persisted result row before exposing a replayed verdict."""
+    path = store.friend_audit_path(round_no, spec.name)
+    if not store.owned_regular_exists(path):
+        return {
+            "name": spec.name,
+            "model": spec.model,
+            "effort": spec.effort,
+            "transport": "legacy-unknown",
+            "write_protected": False,
+            "declared_scope": spec.scope,
+            "os_confined": False,
+            "external_tools": "legacy-unknown",
+            "external_tool_policy": "legacy-unknown",
+            "external_tool_sources": [],
+            "deny_external_tools_argv": [],
+            "readonly": False,
+            "scope": spec.scope,
+            "round": round_no,
+            "status": "ok",
+            "diagnostics": "",
+            "diagnostics_path": f"round-{round_no}/{spec.name}.err",
+        }
+    from .commands.checkpoint import normalize_friend_rows
+    from .jsonio import MAX_JSON_FILE_BYTES, decode_json_object
+
+    payload = store.read_owned_bytes(path, max_bytes=MAX_JSON_FILE_BYTES)
+    data = decode_json_object(payload, path=path, label="persisted friend audit")
+    if set(data) != {"version", "round", "name", "row", "captures"}:
+        raise UsageError("persisted friend audit has an invalid shape")
+    if data["version"] != 1 or data["round"] != round_no or data["name"] != spec.name:
+        raise UsageError("persisted friend audit has the wrong identity")
+    rows = normalize_friend_rows([data["row"]], {spec.name})
+    captures = data["captures"]
+    if type(captures) is not dict or set(captures) != {"prompt", "raw", "meta", "err"}:
+        raise UsageError("persisted friend audit has invalid capture bindings")
+    paths = {
+        "prompt": store.friend_prompt_path(round_no, spec.name),
+        "raw": store.friend_paths(round_no, spec.name)[0],
+        "meta": store.friend_paths(round_no, spec.name)[2],
+        "err": store.friend_err_path(round_no, spec.name),
+    }
+    for label, capture_path in paths.items():
+        expected = captures[label]
+        if expected is None:
+            if label == "prompt":
+                raise UsageError("persisted judging audit is not bound to its prompt")
+            continue
+        if type(expected) is not str or not expected.startswith("sha256:"):
+            raise UsageError("persisted friend audit has an invalid digest")
+        actual = store.read_owned_bytes(capture_path, max_bytes=32 * 1024 * 1024)
+        if "sha256:" + hashlib.sha256(actual).hexdigest() != expected:
+            raise UsageError(f"persisted friend audit {label} capture was modified")
+    return rows[0]

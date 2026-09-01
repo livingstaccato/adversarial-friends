@@ -1,11 +1,13 @@
 """Regression tests for run-owned paths with hostile symlink ancestors."""
 
 import contextlib
+import os
 import stat
+from types import SimpleNamespace
 
 import pytest
 
-from adversarial_friends import childenv, isolation, rounds
+from adversarial_friends import childenv, isolation, rounds, secureio
 from adversarial_friends.ledger import Claim
 from adversarial_friends.runstore import RunStore
 
@@ -156,3 +158,98 @@ def test_resume_with_a_symlinked_round_refuses_writes_without_touching_target(tm
     assert list(outside.iterdir()) == []
     with contextlib.suppress(OSError):
         resumed._lock_handle and resumed._lock_handle.close()
+
+
+@pytest.mark.parametrize("op", [secureio.secure_open_write, secureio.secure_open_append])
+def test_secure_open_closes_descriptor_when_post_open_chmod_fails(tmp_path, monkeypatch, op):
+    target = tmp_path / "capture"
+    captured = []
+    real_open = secureio.os.open
+
+    def recording_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        captured.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(secureio.os, "open", recording_open)
+    monkeypatch.setattr(
+        secureio.os,
+        "fchmod",
+        lambda _fd, _mode: (_ for _ in ()).throw(OSError("boom")),
+    )
+
+    with pytest.raises(OSError, match="boom"):
+        op(target, root=tmp_path)
+
+    with pytest.raises(OSError):
+        os.fstat(captured[-1])
+
+
+def test_secure_read_closes_descriptor_when_post_open_fstat_fails(tmp_path, monkeypatch):
+    target = tmp_path / "capture"
+    target.write_text("payload")
+    captured = []
+    real_open = secureio.os.open
+
+    def recording_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        captured.append(descriptor)
+        return descriptor
+
+    real_fstat = secureio.os.fstat
+
+    def failing_fstat(descriptor):
+        if descriptor == captured[-1] and len(captured) > 1:
+            raise OSError("boom")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(secureio.os, "open", recording_open)
+    monkeypatch.setattr(secureio.os, "fstat", failing_fstat)
+    with pytest.raises(OSError, match="boom"):
+        secureio.secure_open_read(target, root=tmp_path)
+    with pytest.raises(OSError):
+        real_fstat(captured[-1])
+
+
+def test_secure_directory_open_closes_descriptor_when_fstat_fails(tmp_path, monkeypatch):
+    captured = []
+    real_open = secureio.os.open
+    real_fstat = secureio.os.fstat
+
+    def recording_open(*args, **kwargs):
+        descriptor = real_open(*args, **kwargs)
+        captured.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(secureio.os, "open", recording_open)
+    monkeypatch.setattr(
+        secureio.os,
+        "fstat",
+        lambda _fd: (_ for _ in ()).throw(OSError("directory fstat boom")),
+    )
+    with pytest.raises(OSError, match="directory fstat boom"):
+        secureio.secure_open_directory(tmp_path, root=tmp_path)
+    with pytest.raises(OSError):
+        real_fstat(captured[-1])
+
+
+def test_prompt_prune_refuses_replaced_run_ancestor_without_unlinking_outside(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-prune")
+    prompt = store.friend_prompt_path(1, "friend-ops-0")
+    store.write_sensitive(prompt, "prompt")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_prompt = outside / "round-1" / prompt.name
+    outside_prompt.parent.mkdir()
+    outside_prompt.write_text("outside")
+    _replace_with_symlink(store.run_dir, outside)
+
+    with pytest.raises(OSError):
+        rounds.prune_undispatched_prompts(
+            [SimpleNamespace(name="friend-ops-0")],
+            {"friend-ops-0": prompt},
+            [],
+            store,
+        )
+
+    assert outside_prompt.read_text() == "outside"

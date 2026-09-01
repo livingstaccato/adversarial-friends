@@ -510,6 +510,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         ThemeProposal.from_dict(value) for value in meta["theme_proposals"]
     ]
     restored._resume_produced_new_themes = meta["produced_new_themes"]
+    restored._resume_downgrades = list(meta.get("downgrades", []))
     return restored
 
 

@@ -25,14 +25,17 @@ before a single Alias is written.
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .claimschema import validate_payload
 from .errors import AfError, UsageError
-from .jsonio import load_json_object
+from .jsonio import MAX_JSON_FILE_BYTES, decode_json_object
 from .ledger import Alias, Claim
-from .secureio import secure_write_text
+from .secureio import secure_read_bytes, secure_regular_exists, secure_write_text
 from .themes import ThemeProposal
+
+if TYPE_CHECKING:
+    from .runstore import RunStore
 
 REQUEST_NAME = "REQUEST.json"
 RESPONSE_NAME = "RESPONSE.json"
@@ -108,7 +111,14 @@ def response_path(round_dir: Path) -> Path:
     return Path(round_dir) / RESPONSE_NAME
 
 
-def write_request(round_dir: Path, run_id: str, round_no: int, claims: list[Claim]) -> Path:
+def write_request(
+    round_dir: Path,
+    run_id: str,
+    round_no: int,
+    claims: list[Claim],
+    *,
+    store: "RunStore | None" = None,
+) -> Path:
     """Write the question. Returns the path, for the message that names it.
 
     Claims are rendered with the fields dedup actually needs and no others.
@@ -135,12 +145,17 @@ def write_request(round_dir: Path, run_id: str, round_no: int, claims: list[Clai
         ],
         "merges": [],
     }
-    secure_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if store is None:
+        secure_write_text(path, text, root=Path(round_dir))
+    else:
+        store.write_sensitive(path, text)
     return path
 
 
 def _load(path: Path) -> dict[str, Any]:
-    return load_json_object(path, label="orchestrator response")
+    payload = secure_read_bytes(path, root=path.parent, max_bytes=MAX_JSON_FILE_BYTES)
+    return decode_json_object(payload, path=path, label="orchestrator response")
 
 
 def read_response(
@@ -178,7 +193,11 @@ def read_response(
     exact response is already known to have applied, not a guess.
     """
     path = response_path(round_dir) if response_file is None else Path(response_file)
-    if not path.is_file():
+    try:
+        exists = secure_regular_exists(path, root=Path(round_dir))
+    except OSError as exc:
+        raise UsageError(f"orchestrator response is not a safe regular file: {exc}") from exc
+    if not exists:
         raise UsageError(
             f"no {RESPONSE_NAME} in {round_dir}. This run halted for merge "
             f"adjudication; write the file described in {REQUEST_NAME} and "
@@ -310,7 +329,12 @@ _EXTRACT_INSTRUCTIONS = (
 
 
 def write_extract_request(
-    round_dir: Path, run_id: str, round_no: int, unparseable: list[dict[str, Any]]
+    round_dir: Path,
+    run_id: str,
+    round_no: int,
+    unparseable: list[dict[str, Any]],
+    *,
+    store: "RunStore | None" = None,
 ) -> Path:
     """Ask for claims to be read out of unparseable friend output.
 
@@ -331,7 +355,11 @@ def write_extract_request(
             for e in unparseable
         ],
     }
-    secure_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if store is None:
+        secure_write_text(path, text, root=Path(round_dir))
+    else:
+        store.write_sensitive(path, text)
     return path
 
 
@@ -346,7 +374,11 @@ def read_extract_response(
     unsubstantiated for exactly the reasons §6.1 gives, whoever wrote it.
     """
     path = response_path(round_dir) if response_file is None else Path(response_file)
-    if not path.is_file():
+    try:
+        exists = secure_regular_exists(path, root=Path(round_dir))
+    except OSError as exc:
+        raise UsageError(f"orchestrator response is not a safe regular file: {exc}") from exc
+    if not exists:
         raise UsageError(
             f"no {RESPONSE_NAME} in {round_dir}. This run halted for claim "
             f"extraction; fill in `findings` in {REQUEST_NAME}, save it as "

@@ -38,6 +38,7 @@ from ..rounds import (
     persist_result,
     persist_skip,
     prune_undispatched_prompts,
+    recover_result_audit,
 )
 from ..runstore import RunStore
 from ..verdictschema import VERDICT_CONTRACT
@@ -252,6 +253,14 @@ def run_rounds(
         }
         recovered_judges.intersection_update(friend_key(spec) for spec in active)
         if recovered_judges:
+            audited = {(row.get("name"), row.get("round")) for row in outcome.friends_meta}
+            for spec in active:
+                if friend_key(spec) not in recovered_judges:
+                    continue
+                audit_identity = (spec.name, round_no)
+                if audit_identity not in audited:
+                    outcome.friends_meta.append(recover_result_audit(store, round_no, spec))
+                    audited.add(audit_identity)
             # The saved checkpoint predates this judging work. Charge each
             # durable judge exactly once so retry cannot regain call budget.
             budget.spend(len(recovered_judges))
@@ -367,7 +376,7 @@ def run_rounds(
             round_auth_abort = batch.auth_abort
             outcome.dispatch_error = batch.error
         finally:
-            prune_undispatched_prompts(judge_specs, prompt_for, results)
+            prune_undispatched_prompts(judge_specs, prompt_for, results, store)
         for spec, _capability, _result in results:
             outcome.downgrades.extend(prompt_downgrades_for.get(spec.name, []))
         budget.spend(len(results))

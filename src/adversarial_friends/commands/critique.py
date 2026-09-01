@@ -210,7 +210,7 @@ def run_critique(
         outcome.auth_abort = batch.auth_abort
         outcome.dispatch_error = batch.error
     finally:
-        prune_undispatched_prompts(dispatchable, prompt_for, results)
+        prune_undispatched_prompts(dispatchable, prompt_for, results, store)
     result_names = {spec.name for spec, _capability, _result in results}
     outcome.downgrades.extend(
         note for note in prompt_downgrades if note.split(":", 1)[0] in result_names
@@ -313,7 +313,9 @@ def run_critique(
     # NeedsOrchestrator halt for the same reason -- there is nothing a
     # RESPONSE.json could resolve.
     if outcome.auth_abort is None and unparseable:
-        path = write_extract_request(store.round_dir(round_no), run_id, round_no, unparseable)
+        path = write_extract_request(
+            store.round_dir(round_no), run_id, round_no, unparseable, store=store
+        )
         names = ", ".join(e["friend"] for e in unparseable)
         raise NeedsOrchestrator(
             f"{names} produced output that could not be parsed into claims. "

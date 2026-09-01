@@ -28,7 +28,11 @@ def _relative_parts(root: Path, target: Path) -> tuple[str, ...]:
 
 def _open_directory(name: str | Path, *, dir_fd: int | None = None) -> int:
     descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=dir_fd)
-    info = os.fstat(descriptor)
+    try:
+        info = os.fstat(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
     if not stat.S_ISDIR(info.st_mode):
         os.close(descriptor)
         raise OSError(errno.ENOTDIR, "secure path component is not a directory", str(name))
@@ -140,7 +144,11 @@ def secure_open_write(path: Path, *, root: Path) -> int:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     with _parent_fd(root, path) as (parent, name):
         descriptor = os.open(name, flags, FILE_MODE, dir_fd=parent)
-    os.fchmod(descriptor, FILE_MODE)
+    try:
+        os.fchmod(descriptor, FILE_MODE)
+    except BaseException:
+        os.close(descriptor)
+        raise
     return descriptor
 
 
@@ -148,18 +156,74 @@ def secure_open_append(path: Path, *, root: Path) -> int:
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     with _parent_fd(root, path) as (parent, name):
         descriptor = os.open(name, flags, FILE_MODE, dir_fd=parent)
-    os.fchmod(descriptor, FILE_MODE)
+    try:
+        os.fchmod(descriptor, FILE_MODE)
+    except BaseException:
+        os.close(descriptor)
+        raise
     return descriptor
 
 
 def secure_open_read(path: Path, *, root: Path) -> int:
     with _parent_fd(root, path) as (parent, name):
         descriptor = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent)
-    info = os.fstat(descriptor)
+    try:
+        info = os.fstat(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        raise
     if not stat.S_ISREG(info.st_mode):
         os.close(descriptor)
         raise OSError(errno.ELOOP, "secure file must be regular", str(path))
     return descriptor
+
+
+def secure_read_bytes(path: Path, *, root: Path, max_bytes: int) -> bytes:
+    descriptor = secure_open_read(path, root=root)
+    try:
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > max_bytes:
+            raise OSError(errno.EFBIG, "secure file exceeds byte limit", str(path))
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def secure_regular_exists(path: Path, *, root: Path) -> bool:
+    try:
+        descriptor = secure_open_read(path, root=root)
+    except FileNotFoundError:
+        return False
+    else:
+        os.close(descriptor)
+        return True
+
+
+def secure_create_bytes(path: Path, payload: bytes, *, root: Path) -> Path:
+    """Durably create one private file without replacing an existing name."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    with _parent_fd(root, path) as (parent, name):
+        descriptor = os.open(name, flags, FILE_MODE, dir_fd=parent)
+        try:
+            os.fchmod(descriptor, FILE_MODE)
+            view = memoryview(payload)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("secure create made no progress")
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    return Path(path)
 
 
 def secure_open_directory(path: Path, *, root: Path) -> int:

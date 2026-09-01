@@ -12,6 +12,9 @@ from test_run_end_to_end_orchestrator import (
     _write_run_json,
 )
 
+from adversarial_friends.commands.checkpoint import normalize_resume_report_state
+from adversarial_friends.errors import UsageError
+
 
 def _remove_task6_success_checkpoint(tmp_path):
     meta = _run_json(tmp_path)
@@ -127,3 +130,15 @@ def test_malformed_saved_friend_rows_refuse_resume_without_mutating_artifacts(tm
     assert "saved friends" in resumed.stderr
     assert meta_path.read_bytes() == before_meta
     assert report_path.read_bytes() == before_report
+
+
+def test_saved_downgrades_are_strictly_validated_and_restored_in_order():
+    assert normalize_resume_report_state({"downgrades": ["first", "second", "first"]})[
+        "downgrades"
+    ] == ["first", "second"]
+
+
+@pytest.mark.parametrize("value", ["not-a-list", [1], ["x" * 8193]])
+def test_hostile_saved_downgrades_are_refused(value):
+    with pytest.raises(UsageError, match="saved downgrades"):
+        normalize_resume_report_state({"downgrades": value})

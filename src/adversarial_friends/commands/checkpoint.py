@@ -5,9 +5,10 @@ from typing import Any
 
 from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail, failure_summary
 from ..errors import UsageError
-from ..jsonio import load_json_object
+from ..jsonio import MAX_JSON_FILE_BYTES, decode_json_object
 from ..orchestrator import QUESTION_EXTRACT, QUESTION_MERGE, REQUEST_NAME, RESPONSE_NAME
 from ..outcomes import MAX_JSON_SAFE_INTEGER
+from ..secureio import secure_read_bytes, secure_regular_exists
 from ..snapshots import SnapshotIdentity, history_from_meta
 from ..verdicts import CONTESTED, INCOMPLETE, TERMINAL_STATES, UNPROVEN
 
@@ -26,6 +27,7 @@ _OPTIONAL_STRINGS = frozenset(
 _OPTIONAL_BOOLS = frozenset({"write_protected", "readonly", "os_confined"})
 _OPTIONAL_STRING_LISTS = frozenset({"external_tool_sources", "deny_external_tools_argv"})
 _CLAIM_STATES = TERMINAL_STATES | {CONTESTED, UNPROVEN, INCOMPLETE}
+MAX_AUDIT_TEXT_CHARS = 8192
 
 
 def _friend_error(index: int, detail: str) -> UsageError:
@@ -193,6 +195,19 @@ def legacy_successful_friend_ids(rows: list[dict[str, Any]], critique_round: int
 def normalize_resume_report_state(meta: dict[str, Any]) -> dict[str, object]:
     """Validate saved values consumed by carry-over and its eventual report."""
     normalized: dict[str, object] = {}
+    if "downgrades" in meta:
+        downgrades = meta["downgrades"]
+        if type(downgrades) is not list or any(
+            type(note) is not str or len(note) > MAX_AUDIT_TEXT_CHARS for note in downgrades
+        ):
+            raise UsageError("cannot resume: saved downgrades must be a bounded list of strings")
+        seen: set[str] = set()
+        unique: list[str] = []
+        for note in downgrades:
+            if note not in seen:
+                seen.add(note)
+                unique.append(note)
+        normalized["downgrades"] = unique
     if "claim_states" in meta:
         states = meta["claim_states"]
         if type(states) is not dict or any(
@@ -254,11 +269,17 @@ def _legacy_halt_is_outstanding(meta: dict[str, Any], run_dir: Path) -> bool:
         return False
     round_dir = run_dir / f"round-{(iteration - 1) * max_rounds + 1}"
     request_path = round_dir / REQUEST_NAME
-    if not request_path.is_file() or (round_dir / f"{RESPONSE_NAME}.applied").exists():
+    try:
+        request_exists = secure_regular_exists(request_path, root=run_dir)
+        applied_exists = secure_regular_exists(round_dir / f"{RESPONSE_NAME}.applied", root=run_dir)
+    except OSError:
+        return False
+    if not request_exists or applied_exists:
         return False
     try:
-        request = load_json_object(request_path, label="orchestrator request")
-    except UsageError:
+        payload = secure_read_bytes(request_path, root=run_dir, max_bytes=MAX_JSON_FILE_BYTES)
+        request = decode_json_object(payload, path=request_path, label="orchestrator request")
+    except (OSError, UsageError):
         return False
     return type(request) is dict and request.get("question") in {QUESTION_MERGE, QUESTION_EXTRACT}
 

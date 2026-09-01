@@ -205,14 +205,24 @@ def test_a_consumed_response_is_renamed_so_a_second_resume_cannot_reapply_it(tmp
     path, where the defect is real. Renaming covers both -- and a resume
     that finds nothing left to apply beats the merge path's loud refusal.
     """
-    from adversarial_friends.commands.resume import CONSUMED_SUFFIX, _mark_response_consumed
+    from adversarial_friends.commands.resume import (
+        CONSUMED_SUFFIX,
+        PreparedResponse,
+        _mark_response_consumed,
+        _response_digest,
+    )
+    from adversarial_friends.runstore import RunStore
 
-    round_dir = tmp_path / "round-1"
-    round_dir.mkdir()
+    store = RunStore(tmp_path, "run-consume")
+    round_dir = store.round_dir(1)
     response = round_dir / "RESPONSE.json"
     response.write_text("{}")
+    payload = response.read_bytes()
+    store.create_owned_bytes(round_dir / "RESPONSE.json.applying", payload)
 
-    _mark_response_consumed(round_dir)
+    _mark_response_consumed(
+        store, round_dir, PreparedResponse(response, payload, _response_digest(payload), None)
+    )
 
     assert not response.exists()
     assert (round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}").read_text() == "{}"
@@ -221,22 +231,33 @@ def test_a_consumed_response_is_renamed_so_a_second_resume_cannot_reapply_it(tmp
 def test_marking_a_missing_response_is_not_an_error(tmp_path):
     """Called on every resume, including modes that never wrote one. It must
     not turn a completed resume into a traceback."""
-    from adversarial_friends.commands.resume import _mark_response_consumed
+    from adversarial_friends.commands.resume import PreparedResponse, _mark_response_consumed
+    from adversarial_friends.runstore import RunStore
 
-    round_dir = tmp_path / "round-1"
-    round_dir.mkdir()
-    _mark_response_consumed(round_dir)
+    store = RunStore(tmp_path, "run-missing-response")
+    round_dir = store.round_dir(1)
+    _mark_response_consumed(store, round_dir, PreparedResponse(round_dir, b"", "", None))
 
 
 def test_the_consumed_copy_is_kept_rather_than_deleted(tmp_path):
     """It is the operator's own written judgment. A run directory that
     discards it cannot be audited afterwards."""
-    from adversarial_friends.commands.resume import _mark_response_consumed
+    from adversarial_friends.commands.resume import (
+        PreparedResponse,
+        _mark_response_consumed,
+        _response_digest,
+    )
+    from adversarial_friends.runstore import RunStore
 
-    round_dir = tmp_path / "round-1"
-    round_dir.mkdir()
-    (round_dir / "RESPONSE.json").write_text('{"merges": []}')
-    _mark_response_consumed(round_dir)
+    store = RunStore(tmp_path, "run-kept-response")
+    round_dir = store.round_dir(1)
+    response = round_dir / "RESPONSE.json"
+    response.write_text('{"merges": []}')
+    payload = response.read_bytes()
+    store.create_owned_bytes(round_dir / "RESPONSE.json.applying", payload)
+    _mark_response_consumed(
+        store, round_dir, PreparedResponse(response, payload, _response_digest(payload), None)
+    )
     kept = list(round_dir.glob("RESPONSE.json*"))
     assert len(kept) == 1
     assert kept[0].read_text() == '{"merges": []}'

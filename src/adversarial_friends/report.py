@@ -88,6 +88,24 @@ _BLOCK_LEADER_RE = re.compile(
     r"|<"
     r")"
 )
+_BIDI_CONTROL_RE = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+_URI_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
+_ACTIVE_URI_RE = re.compile(r"(?i)\b(javascript|vbscript|data):")
+
+
+def _sanitize_display(value: object, *, single_line: bool = False) -> str:
+    """Neutralize terminal/display controls before any Markdown escaping."""
+    text = _strip_terminal_controls(str(value))
+    text = _BIDI_CONTROL_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if single_line:
+        return text.replace("\n", " ")
+    return text
+
+
+def _defang_links(text: str) -> str:
+    text = _URI_RE.sub(lambda match: f"{match.group(1)}: //", text)
+    return _ACTIVE_URI_RE.sub(lambda match: f"{match.group(1)}: ", text)
 
 
 def _escape_cell(value: object) -> str:
@@ -100,8 +118,10 @@ def _escape_cell(value: object) -> str:
     authors, but nothing here guarantees they are pipe-free, so every cell
     is escaped the same way regardless of which field it came from.
     """
-    text = str(value)
+    text = _sanitize_display(value, single_line=True)
+    text = _defang_links(text).replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("\\", "\\\\").replace("|", "\\|")
+    text = text.replace("`", "&#96;").replace("[", "\\[").replace("]", "\\]")
     return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
@@ -133,6 +153,7 @@ def _code_span(text: str) -> str:
     exactly one space on each side is enough to round-trip the original
     text, because CommonMark only ever removes one space per side.
     """
+    text = _sanitize_display(text, single_line=True)
     if text == "":
         return "``"
     longest_run = 0
@@ -164,6 +185,7 @@ def _escape_block(text: str) -> str:
     ordinary prose rather than being wrapped in a code block, which would
     misrepresent prose fields like `claim` and `suggested_fix`.
     """
+    text = _sanitize_display(text)
     escaped_lines = []
     for line in text.split("\n"):
         match = _BLOCK_LEADER_RE.match(line)
@@ -171,6 +193,10 @@ def _escape_block(text: str) -> str:
             marker = match.group("marker")
             start, end = match.span("marker")
             line = line[:start] + "\\" + marker[0] + marker[1:] + line[end:]
+        line = _defang_links(line)
+        if not line.lstrip(" \t").startswith("\\<"):
+            line = re.sub(r"(?<!\\)<", r"\\<", line)
+        line = line.replace("[", "\\[").replace("]", "\\]")
         escaped_lines.append(line)
     return "\n".join(escaped_lines)
 
@@ -359,7 +385,9 @@ def render(
     aliases = review.aliases
     verdicts = review.verdicts
     lines: list[str] = [f"# Adversarial review — {_artifact_label(run_meta['artifact'])}", ""]
-    lines.append(f"Mode: `{run_meta['mode']}` · preset: `{run_meta['preset']}`")
+    lines.append(
+        f"Mode: {_code_span(str(run_meta['mode']))} · preset: {_code_span(str(run_meta['preset']))}"
+    )
     lines.append("")
     lifecycle_state = run_meta.get("lifecycle_state")
     if lifecycle_state == "terminal":
@@ -412,7 +440,7 @@ def render(
     read_exposed: list[str] = []
     exposed_seen: set[str] = set()
     for friend in run_meta["friends"]:
-        name = str(friend["name"])
+        name = _sanitize_display(friend["name"], single_line=True)
         exposed = (
             friend.get("transport", "exec") != "http"
             and friend.get("write_protected", friend.get("readonly", False))
@@ -426,7 +454,7 @@ def render(
             [
                 "",
                 "**Filesystem read scope:** "
-                + ", ".join(read_exposed)
+                + ", ".join(_escape_cell(name) for name in read_exposed)
                 + " were write-protected but not OS-confined; each retained "
                 "same-user filesystem read access outside the declared prompt scope.",
             ]
@@ -480,7 +508,10 @@ def render(
         # live defect.
         state = (states or {}).get(claim.id)
         badge = f" — {state}" if state else ""
-        lines.append(f"### {claim.id} — {claim.severity}{flag}{badge}")
+        lines.append(
+            f"### {_escape_cell(claim.id)} — {_escape_cell(claim.severity)}"
+            f"{flag}{_escape_cell(badge)}"
+        )
         lines.append("")
         lines.append(f"**Claim:** {_escape_block(claim.claim)}")
         if claim.location:

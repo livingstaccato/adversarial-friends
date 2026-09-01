@@ -4,12 +4,15 @@ import pytest
 
 from adversarial_friends import rounds as rounds_mod
 from adversarial_friends.adapters import Capability, FriendSpec
+from adversarial_friends.authority import ExternalToolPolicy
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands import crossexam as crossexam_mod
 from adversarial_friends.commands.crossexam import run_rounds
+from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Claim, Verdict
 from adversarial_friends.normalize import NormalizeResult
 from adversarial_friends.reviewstate import ReviewState
+from adversarial_friends.rounds import persist_result
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.spawn import SpawnResult
 from adversarial_friends.verdicts import build_successor
@@ -55,6 +58,28 @@ def test_judging_retry_reuses_durable_verdicts_and_dispatches_only_missing_work(
     )
     store = RunStore(tmp_path, "run-recover-judging")
     store.ledger.append(claim)
+    prompt = store.friend_prompt_path(2, first.name)
+    store.write_sensitive(prompt, "judge prompt for durable first vote")
+    durable_result = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout='{"verdicts":[{"claim_id":"c-0001@1","verdict":"upheld"}]}',
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult({}, [], True),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+    durable_row = persist_result(
+        store,
+        2,
+        first,
+        Capability(False, True, "none"),
+        durable_result,
+        "fake",
+        ExternalToolPolicy.DENY,
+    )
     store.ledger.append(durable)
     artifact = tmp_path / "artifact.md"
     artifact.write_text("# artifact\n")
@@ -113,6 +138,7 @@ def test_judging_retry_reuses_durable_verdicts_and_dispatches_only_missing_work(
     assert list(store.ledger.verdicts_for(claim.id)) == [durable, outcome.verdicts[-1]]
     assert outcome.states[claim.id] == "settled-upheld"
     assert budget.calls == 2
+    assert [row for row in outcome.friends_meta if row["name"] == first.name] == [durable_row]
 
 
 def test_judging_retry_reuses_a_successor_persisted_before_the_crash(monkeypatch, tmp_path):
@@ -165,6 +191,62 @@ def test_judging_retry_reuses_a_successor_persisted_before_the_crash(monkeypatch
 
     assert [saved.id for saved in store.ledger.claims()] == [claim.id, successor.id]
     assert not any(saved.id.endswith("@3") for saved in outcome.claims)
+    assert [row["transport"] for row in outcome.friends_meta] == [
+        "legacy-unknown",
+        "legacy-unknown",
+    ]
+
+
+def test_recovered_verdict_refuses_a_tampered_audit_capture(tmp_path):
+    spec = _spec("first-ops-0", "first")
+    claim = _claim()
+    durable = Verdict(claim.id, "fake/first", 2, "upheld", "high", "verified", "vote", None, None)
+    store = RunStore(tmp_path, "run-tampered-judge-audit")
+    store.ledger.append(claim)
+    store.write_sensitive(store.friend_prompt_path(2, spec.name), "prompt")
+    result = SpawnResult(
+        argv=["fake"],
+        exit_code=0,
+        stdout="original",
+        stderr="",
+        duration_s=0.1,
+        timed_out=False,
+        result=NormalizeResult({}, [], True),
+        failure_reason=None,
+        orphans_suspected=False,
+    )
+    persist_result(
+        store,
+        2,
+        spec,
+        Capability(False, True, "none"),
+        result,
+        "fake",
+        ExternalToolPolicy.DENY,
+    )
+    store.ledger.append(durable)
+    store.write_sensitive(store.friend_paths(2, spec.name)[0], "tampered")
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("artifact")
+
+    with pytest.raises(UsageError, match="raw capture was modified"):
+        run_rounds(
+            [spec],
+            [claim],
+            store,
+            ReviewState.replay(store.ledger.records()),
+            {},
+            None,
+            tmp_path / "schema.json",
+            artifact,
+            artifact.read_text(),
+            None,
+            None,
+            threading.Event(),
+            Budget(max_calls=10, started=0.0),
+            2,
+            now=lambda: 0.0,
+        )
 
 
 def test_judging_replay_does_not_let_future_votes_rewrite_an_earlier_successor(

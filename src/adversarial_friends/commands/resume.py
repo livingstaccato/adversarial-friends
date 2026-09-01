@@ -15,12 +15,9 @@ folded back in.
 import argparse
 from collections.abc import Callable, Sequence
 import concurrent.futures
-import contextlib
 from dataclasses import dataclass, field
 import hashlib
-import os
 from pathlib import Path
-import stat
 import threading
 from typing import Any
 
@@ -30,7 +27,7 @@ from ..ceilings import Budget
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
-from ..jsonio import decode_json_object, read_bounded_bytes
+from ..jsonio import MAX_JSON_FILE_BYTES, decode_json_object
 from ..ledger import Alias, Claim
 from ..merge import next_claim_number
 from ..orchestrator import (
@@ -45,7 +42,6 @@ from ..orchestrator import (
 from ..progress import Progress
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
-from ..secureio import secure_write_bytes
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
 from .haltstate import resumed_streak
@@ -58,11 +54,20 @@ class OutstandingRequest:
     digest: str
 
 
-def _outstanding_request(round_dir: Path, run_id: str, round_no: int) -> OutstandingRequest:
+def _read_owned_json_bytes(store: RunStore, path: Path, label: str) -> bytes:
+    try:
+        return store.read_owned_bytes(path, max_bytes=MAX_JSON_FILE_BYTES)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise UsageError(f"{label} is not a safely readable regular file: {exc}") from exc
+
+
+def _outstanding_request(store: RunStore, round_dir: Path, round_no: int) -> OutstandingRequest:
     """Authenticate the exact request before touching its response."""
     path = request_path(round_dir)
     try:
-        payload = read_bounded_bytes(path, label="orchestrator request")
+        payload = _read_owned_json_bytes(store, path, "orchestrator request")
         data = decode_json_object(payload, path=path, label="orchestrator request")
     except UsageError as exc:
         raise UsageError(
@@ -76,7 +81,7 @@ def _outstanding_request(round_dir: Path, run_id: str, round_no: int) -> Outstan
     question = data.get("question")
     if (
         data.get("version") != 1
-        or data.get("run_id") != run_id
+        or data.get("run_id") != store.run_id
         or data.get("round") != round_no
         or not isinstance(question, str)
         or question not in {QUESTION_MERGE, QUESTION_EXTRACT}
@@ -108,16 +113,7 @@ CONSUMED_SUFFIX = ".applied"
 APPLYING_SUFFIX = ".applying"
 
 
-def _fsync_directory(path: Path) -> None:
-    with contextlib.suppress(OSError):
-        descriptor = os.open(path, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-
-
-def _mark_response_consumed(round_dir: Path, response_file: Path | None = None) -> None:
+def _mark_response_consumed(store: RunStore, round_dir: Path, prepared: "PreparedResponse") -> None:
     """Rename RESPONSE.json once its contents are in the ledger.
 
     The ledger is append-only with no dedupe (`ledger.append` is a bare JSONL
@@ -138,13 +134,20 @@ def _mark_response_consumed(round_dir: Path, response_file: Path | None = None) 
     written first, so a rename failure remains recoverable and must not be
     hidden while judging continues.
     """
-    response = Path(response_file) if response_file is not None else round_dir / "RESPONSE.json"
-    try:
-        response.rename(round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}")
-        _fsync_directory(round_dir)
-    except FileNotFoundError:
-        if response.exists():
-            raise
+    applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
+    applied = round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}"
+    if store.owned_regular_exists(applying):
+        store.replace_owned(applying, applied)
+        store.fsync_owned_directory(round_dir)
+    live = round_dir / "RESPONSE.json"
+    if store.owned_regular_exists(live):
+        live_payload = _read_owned_json_bytes(store, live, "orchestrator response")
+        if _response_digest(live_payload) != prepared.digest:
+            raise UsageError(
+                "cannot resume: live response changed after validation; retained for audit"
+            )
+        store.unlink_owned(live)
+        store.fsync_owned_directory(round_dir)
 
 
 def _response_digest(payload: bytes) -> str:
@@ -193,17 +196,8 @@ class PreparedResponse:
     checkpoint: dict[str, Any] | None
 
 
-def _regular_response_exists(path: Path) -> bool:
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        return False
-    if not stat.S_ISREG(info.st_mode):
-        raise UsageError(f"cannot resume: response artifact must be a regular file: {path}")
-    return True
-
-
 def _prepare_response(
+    store: RunStore,
     round_dir: Path,
     meta: dict[str, Any],
     *,
@@ -211,18 +205,16 @@ def _prepare_response(
     question: str,
     request_digest: str,
 ) -> PreparedResponse:
-    """Freeze one response path and read its bytes exactly once."""
+    """Capture response bytes without mutating any lifecycle artifact."""
     live = round_dir / "RESPONSE.json"
     applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
     applied = live.with_suffix(live.suffix + CONSUMED_SUFFIX)
-    live_exists = _regular_response_exists(live)
-    applying_exists = _regular_response_exists(applying)
-    applied_exists = _regular_response_exists(applied)
-    if sum((live_exists, applying_exists, applied_exists)) > 1:
-        raise UsageError(
-            "cannot resume: multiple live/applying/applied response artifacts exist; "
-            "response state is ambiguous"
-        )
+    try:
+        live_exists = store.owned_regular_exists(live)
+        applying_exists = store.owned_regular_exists(applying)
+        applied_exists = store.owned_regular_exists(applied)
+    except OSError as exc:
+        raise UsageError(f"cannot resume: response artifact must be a regular file: {exc}") from exc
     checkpoint = _validated_response_checkpoint(
         meta,
         round_no=round_no,
@@ -230,20 +222,14 @@ def _prepare_response(
         request_digest=request_digest,
     )
     if checkpoint is None:
-        if applied_exists:
+        if applied_exists or applying_exists:
             raise UsageError(
-                "cannot resume: retained applied response has no matching durable checkpoint"
+                "cannot resume: retained applying/applied response has no matching durable checkpoint"
             )
-        if live_exists:
-            live.rename(applying)
-            _fsync_directory(round_dir)
-            applying_exists = True
-        selected = applying
+        selected = live
     else:
         selected = applied if applied_exists else applying
-        if live_exists:
-            selected = live
-    if not selected.is_file():
+    if not store.owned_regular_exists(selected):
         if checkpoint is None:
             raise UsageError(
                 f"no RESPONSE.json in {round_dir}. This run halted for orchestrator "
@@ -251,20 +237,36 @@ def _prepare_response(
                 "with --resume."
             )
         raise UsageError("cannot resume: response checkpoint has no response artifact")
-    payload = read_bounded_bytes(selected, label="orchestrator response")
+    payload = _read_owned_json_bytes(store, selected, "orchestrator response")
     digest = _response_digest(payload)
     if checkpoint is not None and digest != checkpoint["sha256"]:
         raise UsageError("cannot resume: applied response artifact hash disagrees with checkpoint")
-    if selected == applying:
-        # Keep the audit artifact byte-identical to the single inode snapshot
-        # used for both parsing and hashing. A pathname replacement after the
-        # bounded read cannot substitute different bytes for the eventual
-        # `.applied` evidence.
-        temporary = round_dir / ".RESPONSE.json.prepared.tmp"
-        secure_write_bytes(temporary, payload)
-        temporary.replace(applying)
-        _fsync_directory(round_dir)
+    for sibling, exists in (
+        (live, live_exists),
+        (applying, applying_exists),
+        (applied, applied_exists),
+    ):
+        if exists and sibling != selected:
+            sibling_payload = _read_owned_json_bytes(store, sibling, "orchestrator response")
+            if _response_digest(sibling_payload) != digest:
+                raise UsageError(
+                    "cannot resume: multiple response artifacts disagree; state is ambiguous"
+                )
     return PreparedResponse(selected, payload, digest, checkpoint)
+
+
+def _materialize_response(store: RunStore, round_dir: Path, prepared: PreparedResponse) -> None:
+    """Durably freeze the exact validated bytes before checkpoint mutation."""
+    applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
+    if prepared.path == applying:
+        return
+    if store.owned_regular_exists(applying):
+        existing = _read_owned_json_bytes(store, applying, "orchestrator response")
+        if existing != prepared.payload:
+            raise UsageError("cannot resume: prepared response disagrees with validated bytes")
+        return
+    store.create_owned_bytes(applying, prepared.payload)
+    store.fsync_owned_directory(round_dir)
 
 
 def _checkpoint_response_application(
@@ -461,13 +463,14 @@ def resume_round_one(
 
     # The same handshake serves two questions (§4.2, §14.2), so the answer is
     # read according to what was actually asked rather than assumed.
-    outstanding = _outstanding_request(round_dir, store.run_id, base_round)
+    outstanding = _outstanding_request(store, round_dir, base_round)
     question = outstanding.question
     # What an EARLIER attempt at this exact round already applied, before it
     # crashed between a ledger write and _mark_response_consumed. Read from
     # the ledger, not guessed: see _resumed_progress.
     previous_extractions, previous_merges = _resumed_progress(historical, base_round)
     prepared = _prepare_response(
+        store,
         round_dir,
         getattr(args, "_resume_meta", {}) or {},
         round_no=base_round,
@@ -486,6 +489,7 @@ def resume_round_one(
         if applied_checkpoint is not None and applied_checkpoint["records"] != len(extracted):
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
         if applied_checkpoint is None:
+            _materialize_response(store, round_dir, prepared)
             _checkpoint_response_preparation(
                 args,
                 store,
@@ -542,6 +546,7 @@ def resume_round_one(
         if applied_checkpoint is not None and applied_checkpoint["records"] != expected_records:
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
         if applied_checkpoint is None:
+            _materialize_response(store, round_dir, prepared)
             _checkpoint_response_preparation(
                 args,
                 store,
@@ -580,8 +585,7 @@ def resume_round_one(
         response_digest=prepared.digest,
         records=applied_records,
     )
-    if prepared.path.name != f"RESPONSE.json{CONSUMED_SUFFIX}":
-        _mark_response_consumed(round_dir, prepared.path)
+    _mark_response_consumed(store, round_dir, prepared)
     resumed.claims = claims
     resumed.counter = counter
     resumed.aliases = adjudicated

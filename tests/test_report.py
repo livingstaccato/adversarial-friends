@@ -5,7 +5,12 @@ import subprocess
 import pytest
 
 from adversarial_friends.ledger import Claim
-from adversarial_friends.report import _code_span, _escape_block, render as render_review
+from adversarial_friends.report import (
+    _code_span,
+    _escape_block,
+    _escape_cell,
+    render as render_review,
+)
 from adversarial_friends.reviewstate import ReviewState
 
 CMARK = shutil.which("cmark")
@@ -463,6 +468,45 @@ def test_hostile_downgrade_note_heading_is_escaped():
     heading_lines = [ln for ln in out.splitlines() if ln.startswith("### ")]
     assert heading_lines == ["### c-0001@1 — high"]
     assert "\\### c-9999@1" in out
+
+
+def test_every_untrusted_report_field_strips_terminal_and_bidi_controls():
+    hostile = "safe\x1b]8;;https://evil.test\x07LINK\x1b]8;;\x07\u202eflip\x00end"
+    c = Claim(
+        **{
+            **claim("c-0001@1").__dict__,
+            "claim": hostile + "\n### forged",
+            "evidence": hostile,
+            "failure_scenario": hostile,
+            "suggested_fix": hostile,
+            "location": hostile,
+            "origin": [hostile],
+        }
+    )
+    m = meta(
+        friends=[
+            {
+                "name": hostile,
+                "model": hostile,
+                "effort": hostile,
+                "readonly": True,
+                "scope": hostile,
+                "status": "ok " + hostile,
+            }
+        ],
+        downgrades=[hostile + "\n### forged downgrade"],
+    )
+    out = render([c], [], m)
+
+    assert "\x1b" not in out and "\x07" not in out and "\x00" not in out
+    assert "\u202e" not in out
+    assert "https://evil.test" not in out
+    assert "\n### forged" not in out
+    assert "\\### forged" in out
+
+
+def test_table_cell_escapes_relative_markdown_links_after_backslashes():
+    assert _escape_cell("[local](../../evil)") == "\\[local\\](../../evil)"
 
 
 def test_escape_block_escapes_leading_markers_of_every_listed_kind():

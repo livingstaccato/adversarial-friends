@@ -92,7 +92,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     setup = prepare_run(args)
     registry = setup.registry
     fake_cmd = setup.fake_cmd
-    downgrades = setup.downgrades
+    saved_downgrades = list(getattr(args, "_resume_downgrades", []))
+    seen_downgrades: set[str] = set()
+    downgrades: list[str] = []
+    for note in [*saved_downgrades, *setup.downgrades]:
+        if note not in seen_downgrades:
+            seen_downgrades.add(note)
+            downgrades.append(note)
     extra_args = setup.extra_args
     resolved, specs = setup.resolved, setup.specs
     env_withheld = setup.env_withheld
@@ -513,7 +519,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # run.json a resume needs, so neither halt can ship a
                     # directory that cannot be continued.
                     request = write_request(
-                        store.round_dir(base_round), run_id, base_round, all_claims
+                        store.round_dir(base_round),
+                        run_id,
+                        base_round,
+                        all_claims,
+                        store=store,
                     )
                     raise NeedsOrchestrator(
                         f"waiting for merge adjudication. Fill in {request}, save "
@@ -678,7 +688,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Initialization failures before a durable run.json exists must not
         # leave a fresh directory that looks resumable but explains nothing.
         # A resumed directory predates this process and is never removed.
-        if store is not None and resume_dir is None and not (store.run_dir / "run.json").is_file():
+        if (
+            store is not None
+            and resume_dir is None
+            and not store.owned_regular_exists(store.run_dir / "run.json")
+        ):
             shutil.rmtree(store.run_dir, ignore_errors=True)
         raise
     finally:

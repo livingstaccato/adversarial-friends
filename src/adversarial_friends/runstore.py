@@ -20,11 +20,14 @@ from .outcomes import json_node_count
 from .secureio import (
     repair_private_tree,
     secure_copy,
+    secure_create_bytes,
     secure_mkdir,
     secure_open_directory,
     secure_open_read,
     secure_open_write,
+    secure_read_bytes,
     secure_read_text,
+    secure_regular_exists,
     secure_replace,
     secure_unlink,
     secure_write_text,
@@ -148,6 +151,11 @@ class RunStore:
         base = self.round_dir(round_no)
         return contain_path(self.run_dir, base / f"{friend_name}.err")
 
+    def friend_audit_path(self, round_no: int, friend_name: str) -> Path:
+        validate_friend_name(friend_name)
+        base = self.round_dir(round_no)
+        return contain_path(self.run_dir, base / f"{friend_name}.audit.json")
+
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"
         secure_mkdir(target_dir, parents=True, exist_ok=True, root=self.root)
@@ -258,6 +266,41 @@ class RunStore:
     def write_sensitive(self, path: Path, text: str) -> Path:
         """Write a known run-owned text artifact with mode 0600."""
         return secure_write_text(contain_path(self.run_dir, path), text, root=self.root)
+
+    def _owned_path(self, path: Path) -> Path:
+        """Lexically bind a path to this run without following symlinks."""
+        candidate = Path(path).absolute()
+        try:
+            candidate.relative_to(self.run_dir.absolute())
+        except ValueError as exc:
+            raise OSError(f"run-owned path escapes {self.run_dir}: {path}") from exc
+        return candidate
+
+    def read_owned_bytes(self, path: Path, *, max_bytes: int) -> bytes:
+        return secure_read_bytes(self._owned_path(path), root=self.root, max_bytes=max_bytes)
+
+    def owned_regular_exists(self, path: Path) -> bool:
+        return secure_regular_exists(self._owned_path(path), root=self.root)
+
+    def create_owned_bytes(self, path: Path, payload: bytes) -> Path:
+        return secure_create_bytes(self._owned_path(path), payload, root=self.root)
+
+    def replace_owned(self, source: Path, target: Path) -> Path:
+        return secure_replace(
+            self._owned_path(source),
+            self._owned_path(target),
+            root=self.root,
+        )
+
+    def unlink_owned(self, path: Path, *, missing_ok: bool = False) -> None:
+        secure_unlink(self._owned_path(path), root=self.root, missing_ok=missing_ok)
+
+    def fsync_owned_directory(self, path: Path) -> None:
+        descriptor = secure_open_directory(self._owned_path(path), root=self.root)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def repair_permissions(self) -> None:
         repair_private_tree(self.run_dir)

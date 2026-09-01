@@ -373,14 +373,14 @@ def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monk
         "sha256:" + hashlib.sha256(orchestrator.request_path(round_dir).read_bytes()).hexdigest()
     )
 
-    original_rename = Path.rename
+    original_replace = store.replace_owned
 
-    def fail_response_rename(self, target):
+    def fail_response_rename(source, target):
         if Path(target).name == "RESPONSE.json.applied":
             raise RuntimeError("injected rename failure")
-        return original_rename(self, target)
+        return original_replace(source, target)
 
-    monkeypatch.setattr(Path, "rename", fail_response_rename)
+    monkeypatch.setattr(store, "replace_owned", fail_response_rename)
     with pytest.raises(RuntimeError, match="injected rename failure"):
         _call_resume_round_one(store, 2)
 
@@ -405,26 +405,27 @@ def test_response_application_and_digest_use_one_captured_snapshot(tmp_path, mon
     response = orchestrator.response_path(round_dir)
     original = b'{"version": 1, "merges": []}'
     response.write_bytes(original)
-    real_read = resume_mod.read_bounded_bytes
+    real_read = store.read_owned_bytes
     response_reads = 0
 
-    def swap_after_read(path, *, label, max_bytes=32 * 1024 * 1024):
+    def swap_after_read(path, *, max_bytes=32 * 1024 * 1024):
         nonlocal response_reads
-        payload = real_read(path, label=label, max_bytes=max_bytes)
-        if label == "orchestrator response":
+        payload = real_read(path, max_bytes=max_bytes)
+        if Path(path).name == "RESPONSE.json":
             response_reads += 1
             Path(path).write_bytes(
                 b'{"version": 1, "merges": [{"canonical": "x", "duplicate": "y"}]}'
             )
         return payload
 
-    monkeypatch.setattr(resume_mod, "read_bounded_bytes", swap_after_read)
+    monkeypatch.setattr(store, "read_owned_bytes", swap_after_read)
 
-    _call_resume_round_one(store, 2)
+    with pytest.raises(UsageError, match="changed after validation"):
+        _call_resume_round_one(store, 2)
 
     applied = round_dir / "RESPONSE.json.applied"
     checkpoint = json.loads((store.run_dir / "run.json").read_text())
-    assert response_reads == 1
+    assert response_reads == 2
     assert applied.read_bytes() == original
     assert checkpoint["applied_response"]["sha256"] == (
         "sha256:" + hashlib.sha256(original).hexdigest()
@@ -568,6 +569,32 @@ def test_hostile_request_is_refused_without_applying_or_rewriting_response(tmp_p
 
     assert response.read_bytes() == before
     assert not response.with_suffix(".json.applied").exists()
+    assert not (store.run_dir / "run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"{malformed",
+        b'{"version": 1, "merges": "not-an-array"}',
+        b'{"version": 1, "merges": [{"canonical": "missing", "duplicate": "also-missing"}]}',
+    ],
+)
+def test_invalid_response_is_refused_without_any_state_transition(tmp_path, payload):
+    store = _store(tmp_path, "run-invalid-response")
+    store.ledger.append(_claim(1))
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [_claim(1)])
+    response = orchestrator.response_path(round_dir)
+    response.write_bytes(payload)
+    before = response.read_bytes()
+
+    with pytest.raises(UsageError):
+        _call_resume_round_one(store, 2)
+
+    assert response.read_bytes() == before
+    assert not (round_dir / "RESPONSE.json.applying").exists()
+    assert not (round_dir / "RESPONSE.json.applied").exists()
     assert not (store.run_dir / "run.json").exists()
 
 
