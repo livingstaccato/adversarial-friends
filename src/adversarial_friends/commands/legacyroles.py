@@ -14,7 +14,7 @@ from typing import Any
 from .. import verdicts as vd
 from ..adapters import FriendSpec, friend_key, independent_friend_keys
 from ..errors import UsageError
-from ..ledger import Claim, Ledger, Verdict
+from ..ledger import Claim, Ledger, Record, Verdict
 from ..reviewstate import ReviewState
 from ..themes import ThemeProposal
 
@@ -105,6 +105,73 @@ def _missing_judges(
         # _active_specs and cannot reach this branch.
         missing.add(judge)
     return missing
+
+
+def _successor_error(successor: Claim, detail: str) -> UsageError:
+    return _cannot_replay(
+        f"persisted successor {successor.id!r} is not authorized by "
+        f"independent amendments: {detail}"
+    )
+
+
+def _authenticate_successors(
+    records: list[Record],
+    specs: list[FriendSpec],
+    audit: dict[tuple[int, str], str],
+    rounds_per_iteration: int,
+) -> None:
+    """Validate successors against the authority that existed when appended."""
+    historical = ReviewState()
+    for record in records:
+        if isinstance(record, Claim) and record.supersedes is not None:
+            predecessor = next(
+                (claim for claim in historical.claims if claim.id == record.supersedes),
+                None,
+            )
+            if predecessor is None:
+                raise _successor_error(record, "its predecessor is unavailable")
+            active_specs = _active_specs(specs, audit, record.round)
+            roster = independent_friend_keys(active_specs)
+            independent_judges = set(roster)
+            cast = _round_verdicts(historical.verdicts, independent_judges, record.round)
+            missing = _missing_judges(
+                predecessor,
+                active_specs,
+                audit,
+                _verdict_index(historical.verdicts),
+                record.round,
+            )
+            state = vd.state_for(
+                predecessor,
+                cast,
+                roster,
+                record.round,
+                _block_end(record.round, rounds_per_iteration),
+                required_missing=bool(missing),
+            )
+            if state != vd.SUPERSEDED:
+                raise _successor_error(record, f"predecessor replayed as {state!r}")
+            amendments = [
+                verdict
+                for verdict in vd.latest_per_judge(
+                    verdict
+                    for verdict in cast
+                    if verdict.claim_id == predecessor.id and verdict.judge in independent_judges
+                )
+                if verdict.verdict == "amended"
+            ]
+            try:
+                expected, _note = vd.build_successor(
+                    predecessor,
+                    amendments,
+                    record.round,
+                    taken={claim.id for claim in historical.claims},
+                )
+            except ValueError as exc:
+                raise _successor_error(record, str(exc)) from exc
+            if record != expected:
+                raise _successor_error(record, "its contents differ from the derived successor")
+        historical.apply(record)
 
 
 def _reduced_claim_state(
@@ -246,7 +313,9 @@ def reduce_legacy_host_checkpoint(
     specs = [FriendSpec(**entry) for entry in roster]
     audit = _audit_index(meta.get("friends", []))
     ledger = Ledger(run_dir / "claims.jsonl", root=run_dir.parent)
-    review = ReviewState.replay(ledger.records())
+    records = list(ledger.records())
+    _authenticate_successors(records, specs, audit, int(meta["invocation"]["max_rounds"]))
+    review = ReviewState.replay(records)
     states, incomplete = _reduced_claim_state(review, meta, specs, audit)
     if "claim_states" in meta:
         normalized["claim_states"] = states

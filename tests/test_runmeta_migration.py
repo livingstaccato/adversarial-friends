@@ -1,12 +1,14 @@
 """Migration coverage for run.json files written by adversarial-friends 0.2.0."""
 
 import copy
+from dataclasses import replace
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from adversarial_friends import verdicts as vd
 from adversarial_friends.adapters import FriendSpec
 from adversarial_friends.authority import DENY_ALL
 from adversarial_friends.commands.runmeta import (
@@ -676,6 +678,92 @@ def test_known_legacy_loop_halt_recomputes_independent_state_and_streak_inputs(t
     assert restored._resume_meta["halted_round_dry"] is False
     assert restored._resume_meta["halted_round_failed"] is True
     assert resumed_streak(restored, restored._resume_streak) == 0
+
+
+def test_legacy_host_only_amendment_successor_fails_closed(tmp_path):
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_judging_meta("loop")
+    _make_second_loop_halt(meta)
+    claim = replace(_legacy_claim(), origin=["fake/author", "fake/security"])
+    host_amendment = Verdict(
+        claim_id=claim.id,
+        judge="codex/ops",
+        round=2,
+        verdict="amended",
+        confidence="high",
+        evidence_assessment="verified",
+        reasoning="host rewrote its peer-authored claim",
+        counter_evidence=None,
+        amended_claim="host-authored rewrite",
+    )
+    successor, _note = vd.build_successor(claim, [host_amendment], 2)
+    meta.update(
+        {
+            "claim_states": {
+                claim.id: vd.SUPERSEDED,
+                successor.id: vd.CONTESTED,
+            },
+            "incomplete": False,
+        }
+    )
+    meta["friends"].append(_friend_audit("codex-ops", 2, "ok"))
+    run_dir = _run_dir(tmp_path, meta)
+    _write_outstanding_request(run_dir, 4)
+    _append_ledger(run_dir, claim, host_amendment, successor)
+
+    with pytest.raises(UsageError, match=r"persisted successor.*independent amendments.*rerun"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_legacy_independent_amendment_successor_is_authenticated(tmp_path):
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_judging_meta("loop")
+    _make_second_loop_halt(meta)
+    claim = replace(_legacy_claim(), origin=["codex/ops"])
+
+    def amendment(judge: str, wording: str) -> Verdict:
+        return Verdict(
+            claim_id=claim.id,
+            judge=judge,
+            round=2,
+            verdict="amended",
+            confidence="high",
+            evidence_assessment="verified",
+            reasoning="rewrite",
+            counter_evidence=None,
+            amended_claim=wording,
+        )
+
+    host_amendment = amendment("codex/ops", "host-only wording")
+    independent_amendments = [
+        amendment("fake/security", "independently agreed rewrite"),
+        amendment("fake/author", "independently agreed rewrite"),
+    ]
+    successor, _note = vd.build_successor(claim, independent_amendments, 2)
+    meta.update(
+        {
+            "claim_states": {
+                claim.id: vd.SUPERSEDED,
+                successor.id: vd.CONTESTED,
+            },
+            "incomplete": False,
+        }
+    )
+    meta["friends"].extend(
+        _friend_audit(name, 2, "ok") for name in ("codex-ops", "fake-security", "fake-author")
+    )
+    run_dir = _run_dir(tmp_path, meta)
+    _write_outstanding_request(run_dir, 4)
+    _append_ledger(run_dir, claim, host_amendment, *independent_amendments, successor)
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    assert restored._resume_meta["claim_states"] == {
+        claim.id: vd.SUPERSEDED,
+        successor.id: vd.CONTESTED,
+    }
 
 
 def test_legacy_loop_health_ignores_failed_host_when_independent_reviewers_succeed(
