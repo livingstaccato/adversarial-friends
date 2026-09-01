@@ -1,12 +1,12 @@
 ---
 name: adversarial-friends
-description: Cross-examine a spec, plan, design doc, or another reviewer's findings by dispatching it to other agent CLIs (claude, codex, agy, opencode) as independent adversarial reviewers, then merging their critiques into one ranked findings report. Use this whenever the user wants a design or plan challenged, wants a second or third opinion on a review, says something like "poke holes in this", "what's wrong with this plan", "have another model check this", "review my spec", "sanity-check this doc", "tell me why this is a bad idea" — or is about to commit to an architectural decision and wants more than one model's eyes on it before doing so.
+description: Use when a request starts with afriend, says afriend to ..., explicitly names Adversarial Friends, or directly selects this skill. Do not use for generic review, challenge or poke holes, second opinion, or architectural-decision requests when afriend and the full product name are absent.
 ---
 
 # Adversarial Friends
 
-Challenge an artifact by having several *other* agent CLIs attack it
-independently, then merge what they find.
+Challenge an artifact by dispatching it to agent CLIs under distinct lenses,
+then merge what they find.
 
 The point is not more review — it is **disagreement you can see**. One model
 reviewing a document tends to produce confident prose. Several models
@@ -15,18 +15,29 @@ they disagree are usually where the real problem is.
 
 ## When this fires
 
-Use it for specs, design docs, implementation plans, and — the highest-value
-case — **another reviewer's findings**. Challenging a review is what this was
-built for: a finding that survives a second model's scrutiny is worth acting
-on, and one that does not is worth dropping before it costs you a day.
+Activate only for command-like intent: a request that starts with `afriend`,
+uses `afriend to ...`, explicitly names **Adversarial Friends**, or directly
+selects this skill. Equivalent forms include `afriend this plan`, `afriend to
+this plan`, `afriend docs/design.md`, and `afriend to docs/design.md with
+crossexam`.
 
-Do not use it to generate a first review of code. It challenges artifacts; it
-does not produce the initial critique.
+Conversational shorthand maps to `afriend run`; it is not a new CLI alias. If
+the request names an existing path, pass that path to `afriend run`. If “this”
+unambiguously refers to the current task's backing file, use that file. Only
+materialize an exact artifact when its complete contents are already within
+the request. Otherwise ask for a path rather than inventing or reconstructing
+the artifact.
+
+Generic requests such as `review this`, `poke holes in this`, `give me a
+second opinion`, or architectural-decision language do not activate the skill
+when `afriend` and the full product name are absent. Those remain ordinary
+Codex work. Do not use this skill to generate a first review of code.
 
 ## Running it
 
 ```bash
-afriend run <artifact> --mode report      # one round of parallel critique
+afriend run <artifact>                    # report: one parallel critique fan-out
+afriend run <artifact> --mode report      # explicit spelling of the default
 afriend run <artifact> --mode crossexam   # then friends judge each other
 afriend run <artifact> --mode gate        # then every claim needs a resolution
 afriend run <artifact> --mode loop        # repeat until nothing new appears
@@ -38,9 +49,14 @@ skill cannot run — install it with
 `uv tool install git+https://github.com/livingstaccato/adversarial-friends`
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
 
+The CLI never runs automatically by itself. A plugin packages capabilities;
+its underlying skill may be implicitly selected only by the narrow triggers
+above, or directly selected by the user, and then invokes the CLI.
+
 `<artifact>` is a path to a file — a spec, a plan, a review someone else
 wrote, saved to disk. All four modes run; see `references/modes.md` for the
-full rules.
+full rules. `report` is the default conversational and CLI mode. Select
+another mode only when the user names it or clearly requests its semantics.
 
 Every mode dispatches the artifact to every discovered friend in parallel and
 writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
@@ -54,13 +70,22 @@ path to stdout; read `report.md` from there and present the findings.
 
 ### Choose ready friends, not merely installed CLIs
 
-The host is the orchestrator, not an independent reviewer. A Codex-hosted
-run therefore excludes `codex` from automatic discovery by default; the same
-rule applies to every detected host. Use `--include-self` only when a
-deliberate self-review is useful. An explicit `--friend` roster is already a
-deliberate choice and may name the host or a disabled provider. Explicit
-friends still preflight executable/endpoint availability, required models,
-adapter policy, and external-tool authority before a run directory is created.
+The host is the orchestrator. In Codex, Codex remains the orchestrator and is
+included as a friend by default. Its report row is labeled
+`host-self-review (advisory)` with `independent=false`. It may contribute
+findings and advisory verdicts, but cannot satisfy the two-independent-friend
+admission rule, `--require-friends` participation, judging quorum, gate
+clearance, or loop convergence. Judging modes therefore need two independent
+non-host friends in addition to any host; `report` may run host-only as a
+recorded downgrade.
+
+Non-Codex hosts remain excluded by default. `--include-self` and
+`--exclude-self` are mutually exclusive per-run overrides. An explicit
+`--friend` roster remains a deliberate selection and may name the host or a
+disabled provider, but host-role marking and independent-authority rules still
+apply. Explicit friends preflight executable/endpoint availability, required
+models, adapter policy, and external-tool authority before a run directory is
+created.
 
 Persistent provider defaults are user-owned, outside the reviewed repository:
 
@@ -81,20 +106,28 @@ model), `unavailable`, `disabled`, `host-excluded`, and `policy-blocked`.
 
 External tools are denied by default, separately from filesystem/process
 confinement. Adapters must neutralize provider-managed tools, plugins, apps,
-and MCP servers or become `policy-blocked`; use `--allow-external-tools` only
-as an explicit per-run opt-in. Security grants are never restored by
-`--resume`: repeat them exactly on the current command line. A run written by
-0.2.0 cannot prove its inherited connector authority, so reports mark it
-`legacy-unknown` rather than claiming tools were denied.
+and MCP servers or become `policy-blocked`. The required-value flag is
+repeatable: use `--allow-external-tools=PROVIDER` for a provider or the
+explicit global grant `--allow-external-tools=*`. Unknown, duplicate, or
+mixed `*` plus provider grants are invalid, as is the old valueless form.
+`--unsafe-extra-args` additionally requires the global `*` grant and its own
+acknowledgement.
 
-### This takes minutes, not seconds
+External-tool authority is independent of persistent and per-run provider
+enable/disable selection. Grants do not change provider defaults. Security
+grants are never restored by `--resume`: repeat the same normalized set
+exactly on the current command line. A run written by 0.2.0 cannot prove its
+inherited connector authority, so reports mark it `legacy-unknown` rather
+than claiming tools were denied.
 
-Budget for it, and tell whoever asked. A friend is a whole agent CLI reading
-a document and writing a critique: measured here at **around six minutes for
-a single friend in a single round**, against a default `--timeout` of 15
-minutes each. Friends within a round run in parallel, so a round costs about
-what its slowest friend costs — but `crossexam` runs up to three rounds, so
-**twenty minutes or more is normal, not a symptom**.
+### Runtime depends on the run
+
+A friend is a whole agent CLI reading a document and writing a critique.
+Runtime depends on the slowest selected friend, document size, and mode;
+friends within a round run in parallel. `report` is one critique fan-out.
+Judging modes use three total rounds by default. `loop` permits a maximum of
+five iterations by default and requires two consecutive dry rounds for
+convergence.
 
 Do not kill a run because it has gone quiet. Progress goes to **stderr**: a
 line per friend as it finishes, and every 30 seconds a line naming whatever
@@ -109,7 +142,7 @@ does not make friends faster; it only converts slow ones into failures.
 
 Which mode to reach for:
 
-* **`report`** — a first look at a document. One fan-out, no judging.
+* **`report`** — the default. One critique fan-out, no judging.
 * **`crossexam`** — when the question is *which of these findings are real*
   rather than *what might be wrong*. Costs a fan-out per round.
 * **`gate`** — when something downstream should stop until a human has
@@ -129,8 +162,8 @@ failed, or a `crossexam` left claims undecided or lost a required friend
 mid-round; `2` a usage or config error — a missing artifact, an
 unrecognized `--friend` value, `--max-rounds 1` with a judging mode; `3` no
 usable friend could be found, or a judging mode resolved fewer than two
-friends (install another agent CLI, or pass `--include-self` to let the host
-CLI review its own artifact); `10`
+independent non-host friends (install additional independent agent CLIs, or
+use `report` for a host-only/single-reviewer result); `10`
 `--merge orchestrator` is waiting for you to adjudicate merges (see
 `references/modes.md`); `11` a judging mode stopped at a ceiling, having
 neither converged nor cleared anything; `12` `--require-friends N` was set
@@ -255,8 +288,9 @@ agy:security --friend opencode:scope` — never a single `--friend` layered on
 top of discovery. A `report` with one friend is allowed as a recorded
 downgrade in `run.json` and `report.md`; present it as a single review, not a
 cross-examination. `crossexam`, `gate`, and `loop` require at least two
-friends. With fewer, they refuse with exit 3 before a run directory is
-created, so there is no partial judging run to interpret or resume.
+independent non-host friends. With fewer, they refuse with exit 3 before a run
+directory is created, so there is no partial judging run to interpret or
+resume.
 
 A lens name with no matching file falls back to the generic prompt alone and
 is recorded as a downgrade in `run.json`, rather than failing the run or

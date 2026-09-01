@@ -22,6 +22,48 @@ def test_skill_has_name_and_description():
     assert len(meta["description"]) > 80
 
 
+def test_skill_activation_contract_is_command_like_and_narrow():
+    text = (SKILL / "SKILL.md").read_text()
+    description = " ".join(frontmatter(text)["description"].lower().split())
+
+    for trigger in ("starts with afriend", "afriend to", "adversarial friends", "directly selects"):
+        assert trigger in description, trigger
+    assert "do not use" in description
+    for generic_request in ("poke holes", "second opinion", "architectural-decision"):
+        assert generic_request in description, generic_request
+
+    activation = text.split("## When this fires", 1)[1].split("\n## ", 1)[0]
+    normalized = " ".join(activation.lower().replace("`", "").split())
+    assert "generic requests" in normalized
+    assert "ordinary codex work" in normalized
+    for generic_request in ("review this", "poke holes", "second opinion"):
+        assert generic_request in normalized, generic_request
+    assert "do not activate" in normalized
+
+
+def test_skill_maps_conversational_shorthand_to_the_real_cli_without_inventing_an_artifact():
+    body = " ".join((SKILL / "SKILL.md").read_text().lower().replace("`", "").split())
+
+    for shorthand in (
+        "afriend this plan",
+        "afriend to this plan",
+        "afriend docs/design.md",
+        "afriend to docs/design.md with crossexam",
+    ):
+        assert shorthand in body, shorthand
+    for contract in (
+        "maps to afriend run",
+        "existing path",
+        "current task's backing file",
+        "materialize",
+        "exact artifact",
+        "ask for a path",
+        "default",
+        "report",
+    ):
+        assert contract in body, contract
+
+
 def test_skill_body_is_under_777_lines():
     assert len((SKILL / "SKILL.md").read_text().splitlines()) < 777
 

@@ -7,14 +7,24 @@
 | `gate` | **implemented** | Cross-examination, then every surviving non-advisory claim needs an explicit resolution before the gate clears. |
 | `loop` | **implemented** | Cross-examination, repeated until two consecutive rounds surface nothing new. |
 
+`report` is the default when `--mode` is omitted. Use another mode only when
+the operator names it or deliberately requests its semantics.
+
 ## Minimum roster
 
-A `report` with one friend is allowed as a recorded downgrade in `run.json`
-and `report.md`; it is one review, not a cross-examination. `crossexam`,
-`gate`, and `loop` require at least two friends. With fewer, they refuse with
-exit 3 before a run directory is created. This preflight rule prevents a
-single-reviewer judging run from leaving artifacts that look resumable or
-authoritative.
+A `report` with one friend, including a Codex host self-review, is allowed as
+a recorded downgrade in `run.json` and `report.md`; it is one review, not a
+cross-examination. A detected Codex host is included as a friend by default
+but remains advisory: its row is `host-self-review (advisory)` and
+`independent=false`. Its findings remain visible, while its verdicts cannot
+settle claims.
+
+`crossexam`, `gate`, and `loop` require at least two independent non-host
+friends in addition to any host. With fewer, they refuse with exit 3 before a
+run directory is created. The host cannot satisfy admission,
+`--require-friends` participation, judging quorum, gate clearance, or loop
+convergence. This preflight rule prevents an advisory or single-reviewer
+judging run from leaving artifacts that look resumable or authoritative.
 
 ## Cross-examination
 
@@ -75,10 +85,10 @@ amenders.
 
 | Flag | Default |
 |---|---|
-| `--max-rounds` | `3` |
+| `--max-rounds` | `3` (three total rounds, including the critique round) |
 | `--max-calls` | derived: `ceil(friends × max-rounds × iterations × 1.5)` |
 | `--max-wall-clock` | `7200` (seconds) |
-| `--max-loop-iterations` | `5` (`loop` only) |
+| `--max-loop-iterations` | `5` (`loop` only; a maximum of five iterations) |
 
 `--max-calls` is derived from your roster rather than fixed, so adding a
 friend does not make the default configuration trip its own ceiling. Hitting
@@ -147,7 +157,7 @@ recording it would make every resolution look equally well-supported.
 
 ## Loop
 
-`loop` repeats the whole cross-examination and stops when two consecutive
+`loop` repeats the whole cross-examination and stops when two consecutive dry
 rounds surface nothing new *and* every non-advisory claim is terminal.
 
 ```bash
@@ -200,7 +210,7 @@ run directory, because the same response has to produce the same run:
 ```bash
 afriend run --resume <run-id>
 # If and only if the halted invocation granted external tools:
-afriend run --resume <run-id> --allow-external-tools
+afriend run --resume <run-id> --allow-external-tools=agy
 ```
 
 The saved snapshot is immutable input identity, not a hint. Resume verifies
@@ -208,11 +218,11 @@ the frozen artifact hash and, for repository runs, the saved commit, tree, and
 repository-relative artifact blob; it refuses a missing or mismatched snapshot
 rather than reviewing current files. Invocation-local authority is the
 exception to restored configuration.
-`--allow-external-tools`, unsandboxed execution, extra arguments, and passed
-environment variables are the exceptions. These authority grants must be
-repeated exactly on the current command line. For example, repeat
-`--allow-external-tools` only when the halted invocation recorded that grant;
-omitting it or newly adding it is refused.
+`--allow-external-tools=PROVIDER`, unsandboxed execution, extra arguments,
+and passed environment variables are the exceptions. These authority grants
+must be repeated exactly on the current command line. For example, repeat
+`--allow-external-tools=agy` only when the halted invocation recorded that
+grant; omitting it, changing the provider set, or newly adding it is refused.
 Historical 0.2.0 runs report external authority as `legacy-unknown` because
 their metadata did not record enough evidence to claim denial.
 
@@ -325,9 +335,12 @@ the default usable with no harness attached.
 
 ### Provider selection and readiness
 
-The host is the orchestrator, so automatic discovery excludes its provider.
-Use `--include-self` to override that default. Provider preferences live in
-the user's XDG configuration, never in the reviewed repository:
+The host is the orchestrator. In Codex, Codex remains the orchestrator and is
+included as a friend by default; it is marked `host-self-review (advisory)`
+and `independent=false`. Non-Codex hosts are excluded by default.
+`--include-self` and `--exclude-self` are mutually exclusive overrides.
+Provider preferences live in the user's XDG configuration, never in the
+reviewed repository:
 
 ```bash
 afriend providers list
@@ -349,8 +362,12 @@ exits `3` if no provider is ready.
 External tools are denied by default. The denial is distinct from local
 read-only/OS confinement and covers provider-managed tools, plugins, apps,
 and MCP servers. A provider that cannot enforce denial is `policy-blocked`
-unless the operator explicitly passes `--allow-external-tools` for that run.
-No persistent or repository configuration can grant this authority.
+unless the operator explicitly passes the repeatable, required-value
+`--allow-external-tools=PROVIDER` for that run. Use
+`--allow-external-tools=*` only for an explicit global grant. Unknown,
+duplicate, or mixed `*` plus provider grants are invalid; the old valueless
+form is invalid too. No persistent or repository configuration can grant
+this authority, and these grants do not change provider defaults.
 
 | Flag | Effect |
 |---|---|
@@ -361,9 +378,9 @@ No persistent or repository configuration can grant this authority.
 | `--keep` | Leave friend worktrees under the run directory to inspect |
 | `--json` | Print run.json instead of the run directory path |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
-| `--include-self` | Let the host CLI review its own artifact, when it is the only one installed |
+| `--include-self`, `--exclude-self` | Mutually exclusive overrides for host participation; host review remains advisory and non-independent |
 | `--enable-provider NAME`, `--disable-provider NAME` | Override persistent provider policy for this automatic roster only |
-| `--allow-external-tools` | Explicitly inherit provider-managed tools and connectors for this run |
+| `--allow-external-tools=PROVIDER` | Explicitly inherit that provider's managed tools and connectors for this run; repeat per provider, or use `=*` globally |
 | `--pass-env VAR` (repeatable) | Also pass `VAR` through to confined friends |
 | `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
 | `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
@@ -375,8 +392,9 @@ process died. A run halted for the orchestrator keeps its report and survives.
 
 **`--unsafe-extra-args` is the only way arbitrary flags reach a friend**, and
 it is deliberately awkward. It is command-line only (never from a roster),
-requires `--i-accept-unsandboxed`, still refuses flags that disable approval
-outright, and forces `read-only: False` in the report for every friend —
+requires `--i-accept-unsandboxed` plus the global `*` external-tool grant,
+still refuses flags that disable approval outright, and forces `read-only:
+False` in the report for every friend —
 the runner cannot know what an unvalidated flag re-enabled. Use the `=` form:
 `--unsafe-extra-args='--foo'`.
 
@@ -403,7 +421,7 @@ every command in this build:
 | `0` | success | a run that reached terminal states with nothing blocked; `afriend doctor` when at least one provider is ready |
 | `1` | gate blocked, or run incomplete | every dispatched friend failed; a `crossexam` that left claims undecided or lost a required friend mid-round; or a `gate` with claims still needing a resolution |
 | `2` | usage/config error | a missing artifact, a malformed `--friend` value, an unknown `cli` in `--friend`, an invalid model in a `cli:lens:model` value, `--max-rounds 1` with a judging mode, a `--resume` naming a run that does not exist or did not halt for the orchestrator, an existing `--out` directory, or an `afriend resolve` naming no location / an unknown claim / a `fixed` without verifiably changed evidence |
-| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable, or when `crossexam`, `gate`, or `loop` resolves fewer than two friends; `afriend doctor` when no provider is ready |
+| `3` | no usable friends for the requested mode | `afriend run` when discovery finds nothing usable, or when `crossexam`, `gate`, or `loop` resolves fewer than two independent non-host friends; `afriend doctor` when no provider is ready |
 | `10` | needs orchestrator | `--merge orchestrator` halting for merge adjudication; resume with `afriend run --resume` |
 | `11` | ceiling hit | a judging mode hitting `--max-calls`, `--max-rounds` budget, `--max-wall-clock`, or `--max-loop-iterations` |
 | `12` | below quorum | `--require-friends N` set, and fewer than `N` friends produced a usable answer this run |

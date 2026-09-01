@@ -3,20 +3,58 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "I've got a design doc at docs/superpowers/specs/2026-08-22-adversarial-friends-design.md that I'm about to start building from. Before I commit to it, can you get a couple of other models to poke holes in it? I want to know what I'm going to regret.",
-      "expected_output": "Runs af run with mode report against the spec, reports which friends actually succeeded and which failed, and presents merged findings ranked by severity rather than relaying each friend's output separately.",
+      "prompt": "afriend docs/design.md",
+      "should_trigger": true,
+      "expected_output": "Selects the skill and maps the conversational shorthand to `afriend run docs/design.md` in the default report mode. It reads the resulting report, identifies failures or downgrades, and presents ranked findings.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "codex just gave me a review of my auth refactor with 9 findings. honestly some of them feel like nitpicks and one or two might be flat wrong. can you have something else check its work?",
-      "expected_output": "Treats the existing review as the artifact to challenge, dispatches it to friends other than codex, and separates findings that survived scrutiny from ones that did not — rather than generating a fresh code review.",
+      "prompt": "afriend to docs/design.md with crossexam",
+      "should_trigger": true,
+      "expected_output": "Selects the skill and runs `afriend run docs/design.md --mode crossexam`. In Codex, the Codex host remains advisory and the run needs two independent non-host friends for judging.",
       "files": []
     },
     {
       "id": 3,
-      "prompt": "before I ship this I want a second opinion, run the adversarial thing on my migration plan. heads up though, this box only has claude installed as far as I know, no codex or anything else",
-      "expected_output": "Runs af doctor first to confirm what is actually on PATH, finds no second friend, and says plainly that cross-examination needs at least two independent agent CLIs — it does not silently produce a report that looks like a clean multi-reviewer result. Either offers a clearly-labeled single-friend report (naming it as a downgrade, not a real cross-examination) or tells the user which CLI to install (codex, agy, or opencode) to get a real second opinion.",
+      "prompt": "Use Adversarial Friends on docs/migration-plan.md.",
+      "should_trigger": true,
+      "expected_output": "Selects the named product's skill and runs `afriend run docs/migration-plan.md` in report mode unless the user requests different mode semantics.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "$adversarial-friends docs/auth-review.md",
+      "should_trigger": true,
+      "expected_output": "Honors direct skill selection and runs `afriend run docs/auth-review.md` in report mode.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "afriend this plan",
+      "should_trigger": true,
+      "expected_output": "Uses an unambiguous current task backing file if one exists. If there is no exact backing file or complete artifact already in the request, asks for a path instead of inventing the plan.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Review this design doc and tell me what is wrong with it.",
+      "should_trigger": false,
+      "expected_output": "Keeps this as ordinary Codex review work. It does not select Adversarial Friends or invoke the `afriend` CLI because the narrow command-like trigger is absent.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Poke holes in this architecture before I commit to it.",
+      "should_trigger": false,
+      "expected_output": "Keeps this as ordinary Codex work and does not invoke `afriend`; generic challenge or architectural-decision language is not an activation trigger.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Can you give me a second opinion on this review?",
+      "should_trigger": false,
+      "expected_output": "Responds as ordinary Codex work or asks for the review contents as needed. It does not select the skill solely from second-opinion language.",
       "files": []
     }
   ]

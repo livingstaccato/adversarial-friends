@@ -253,6 +253,22 @@ def test_evals_file_is_valid_and_has_cases():
     assert all("prompt" in e and "expected_output" in e for e in data["evals"])
 
 
+def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
+    evals = json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
+    assert all(type(case.get("should_trigger")) is bool for case in evals)
+    positives = [case for case in evals if case["should_trigger"]]
+    negatives = [case for case in evals if not case["should_trigger"]]
+    positive_prompts = " ".join(case["prompt"].lower() for case in positives)
+    negative_prompts = " ".join(case["prompt"].lower() for case in negatives)
+
+    assert "afriend to" in positive_prompts
+    assert "adversarial friends" in positive_prompts
+    assert "$adversarial-friends" in positive_prompts
+    for phrase in ("review this", "poke holes", "second opinion"):
+        assert phrase in negative_prompts, phrase
+    assert all("af run" not in case["expected_output"].lower() for case in evals)
+
+
 def test_the_advertised_test_count_is_the_real_one():
     """The README states a test count in its badge, and nothing kept it
     honest. It once said 365 while the suite had grown past 900, which is the
@@ -381,15 +397,17 @@ def test_shipped_docs_state_the_one_friend_mode_contract_exactly():
         assert "exit 3" in prose
         assert "before a run directory" in prose
 
-    assert "report: record one-friend downgrade" in diagram
+    assert "report: record one-friend or\\nhost-only downgrade" in diagram
     assert "judging mode: exit 3 before run directory" in diagram
+    assert "fewer than two independent\\nnon-host friends" in diagram
 
 
 def test_rendered_run_flow_shows_the_one_friend_mode_contract():
     visible = _svg_visible_text(REPO / "docs" / "architecture" / "run-flow.svg").lower()
 
-    assert "report: record one-friend downgrade" in visible
+    assert "report: record one-friend or host-only downgrade" in visible
     assert "judging mode: exit 3 before run directory" in visible
+    assert "fewer than two independent non-host friends" in visible
 
 
 def test_modes_explains_resume_authority_exception_and_doctor_readiness():
@@ -403,9 +421,92 @@ def test_modes_explains_resume_authority_exception_and_doctor_readiness():
 
     assert "no other non-authority configuration flags" in modes
     assert "authority grants must be repeated exactly" in modes
-    assert "afriend run --resume <run-id> --allow-external-tools" in modes
+    assert "afriend run --resume <run-id> --allow-external-tools=agy" in modes
     assert "lists every known provider" in modes
     assert "disabled providers are not probed" in modes
     assert "exits 0 if at least one provider is ready" in modes
     assert "exits 3 if no provider is ready" in modes
     assert "no other flags" not in modes
+
+
+def test_operator_docs_explain_advisory_host_and_independent_authority():
+    paths = (
+        REPO / "README.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md",
+    )
+    docs = " ".join(" ".join(path.read_text().lower().replace("`", "").split()) for path in paths)
+
+    for contract in (
+        "codex remains the orchestrator",
+        "included as a friend by default",
+        "host-self-review (advisory)",
+        "independent=false",
+        "two independent non-host friends",
+        "--require-friends",
+        "judging quorum",
+        "gate clearance",
+        "loop convergence",
+        "non-codex hosts",
+        "excluded by default",
+        "--include-self and --exclude-self are mutually exclusive",
+    ):
+        assert contract in docs, contract
+
+
+def test_operator_docs_pin_provider_authority_and_agy_harness_contracts():
+    paths = (
+        REPO / "README.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md",
+        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md",
+    )
+    docs = " ".join(" ".join(path.read_text().lower().replace("`", "").split()) for path in paths)
+
+    for contract in (
+        "--allow-external-tools=provider",
+        "--allow-external-tools=*",
+        "unknown, duplicate, or mixed",
+        "valueless",
+        "unsafe-extra-args",
+        "global *",
+        "do not change provider defaults",
+        "staged into the run's isolated workspace",
+        "--agent",
+        "--disable-slash-commands",
+        "--mode plan",
+        "--sandbox",
+        "external_tools=uncontrolled",
+        "explicitly-allowed",
+        "global agy configuration",
+        "best-effort limitation",
+        "sandbox does not mean external tools were denied",
+    ):
+        assert contract in docs, contract
+
+
+def test_operator_docs_state_real_mode_defaults_and_runtime_expectations():
+    skill = " ".join(
+        (REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md")
+        .read_text()
+        .lower()
+        .replace("`", "")
+        .split()
+    )
+    modes = " ".join(
+        (REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md")
+        .read_text()
+        .lower()
+        .replace("`", "")
+        .split()
+    )
+    combined = f"{skill} {modes}"
+
+    assert "report is the default" in combined
+    assert "three total rounds" in combined
+    assert "maximum of five iterations" in combined
+    assert "two consecutive dry rounds" in combined
+    assert "slowest selected friend" in combined
+    assert "six minutes" not in combined
+    assert "twenty minutes" not in combined

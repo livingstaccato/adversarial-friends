@@ -36,13 +36,15 @@ partition "Resolve the roster" {
   else (no)
     :discover CLIs on PATH\nround-robin a lens to each;
   endif
+  :detect host; Codex is included by default,\nother hosts excluded unless overridden;
+  :mark any host friend advisory\nand independent=false;
   if (any friends?) then (no)
     :exit 3 — no usable friends;
     stop
   endif
-  if (fewer than two friends?) then (yes)
+  if (fewer than two independent\nnon-host friends?) then (yes)
     if (""report"" mode?) then (yes)
-      :report: record one-friend downgrade;<<#FFE0B2>>
+      :report: record one-friend or\nhost-only downgrade;<<#FFE0B2>>
     else (judging)
       :judging mode: exit 3 before run directory;
       stop

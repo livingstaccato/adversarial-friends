@@ -2,14 +2,14 @@
 
 # Adversarial Friends
 
-> Hand your spec, plan, or review to **other** agent CLIs — `claude`, `codex`,
-> `agy`, `opencode` — as independent adversarial reviewers, then merge their
-> critiques into one ranked findings report.
+> Hand your spec, plan, or review to agent CLIs — `claude`, `codex`, `agy`,
+> `opencode` — under adversarial lenses, then merge their critiques into one
+> ranked findings report.
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1964-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1970-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -55,9 +55,9 @@ for the full account.
 
 ## 📦 Install
 
-Requires **Python 3.11+** and at least one agent CLI besides the one you're
-running under. The runner itself is **stdlib-only** — zero runtime
-dependencies.
+Requires **Python 3.11+** and at least one agent CLI. Judging modes additionally
+require two independent non-host friends. The runner itself is **stdlib-only**
+— zero runtime dependencies.
 
 ```bash
 uv tool install adversarial-friends
@@ -87,13 +87,6 @@ Then confirm what's actually available:
 afriend doctor
 ```
 
-```
-claude     ready                    enabled (built-in default)
-codex      host-excluded            current host orchestrates by default
-ollama     reachable-unconfigured   set a model before automatic selection
-opencode   disabled                 disabled in user provider configuration
-```
-
 `doctor` reports shared readiness — including `ready`,
 `reachable-unconfigured`, `unavailable`, `disabled`, `host-excluded`, and
 `policy-blocked` — plus what each friend can genuinely enforce. For Ollama,
@@ -107,10 +100,17 @@ reachability alone is insufficient because dispatch also requires a model.
 afriend run docs/my-design.md --mode report
 ```
 
-The host is the orchestrator, not an independent reviewer: a run hosted by
-Codex excludes `codex` from automatic discovery. Pass `--include-self` only
-for deliberate self-review. Manage persistent user defaults, including a
-default Ollama model, with:
+The host is the orchestrator. In Codex, Codex remains the orchestrator and is
+included as a friend by default. The report labels it
+`host-self-review (advisory)`, `independent=false`: it contributes findings
+and advisory verdicts, but cannot satisfy two-independent-friend admission,
+`--require-friends` participation, judging quorum, gate clearance, or loop
+convergence. Judging modes need two independent non-host friends in addition
+to any host; a `report` can be host-only. Non-Codex hosts are excluded by
+default. `--include-self` and `--exclude-self` are mutually exclusive
+overrides.
+
+Manage persistent user defaults, including a default Ollama model, with:
 
 ```bash
 afriend providers list
@@ -124,6 +124,14 @@ For one automatic roster, `--enable-provider NAME` and
 `--disable-provider NAME` override those defaults. Disabled providers are not
 probed. An explicit `--friend` roster remains authoritative and may name the
 host or a disabled provider.
+
+External-tool authority is separate from provider selection. The repeatable
+required-value form is `--allow-external-tools=PROVIDER`; the explicit global
+grant is `--allow-external-tools=*`. Unknown, duplicate, or mixed `*` plus
+provider grants are invalid, and the old valueless form is invalid.
+`--unsafe-extra-args` requires the global `*` grant plus
+`--i-accept-unsandboxed`. Grants do not change provider defaults and must be
+repeated as the same normalized set on resume.
 
 **Stdout** carries one thing — the run directory. Read `report.md` inside it:
 
@@ -146,15 +154,16 @@ afriend run spec.md --friend ollama:security:qwen3:0.6b
 > ⚠️ `--friend` **replaces** discovery rather than adding to it. One
 > `--friend` flag means a one-friend roster. A `report` with one friend is
 > allowed as a recorded downgrade in `run.json` and `report.md` rather than
-> being presented as a full review. `crossexam`, `gate`, and `loop` require
-> at least two friends; with fewer, they refuse with exit 3 before a run
-> directory is created.
+> being presented as a full review. `crossexam`, `gate`, and `loop` require at
+> least two independent non-host friends; with fewer, they refuse with exit 3
+> before a run directory is created.
 
-A run takes minutes, not seconds — a friend is a whole agent CLI reading a
-document. Progress goes to **stderr**: a line per friend as it finishes, and
-a heartbeat naming whatever is still outstanding, so a quiet run is
-distinguishable from a hung one. `--no-progress` silences it for a caller
-that captures both streams together.
+Runtime depends on the slowest selected friend, document size, and mode.
+Progress goes to **stderr**: a line per friend as it finishes, and a heartbeat
+naming whatever is still outstanding, so a quiet run is distinguishable from
+a hung one. `--no-progress` silences it for a caller that captures both
+streams together; reducing `--timeout` turns slow friends into failures rather
+than making them faster.
 
 ---
 
@@ -171,6 +180,7 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
 | 🔒 **Isolate** | Friends with a real read-only mode get a private `git worktree` from one shared snapshot. A CLI with no read-only mode is confined by the OS instead (`sandbox-exec` / `bwrap`) — or refused |
 | 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools=PROVIDER` explicitly opts that provider in for this run |
+| 🧰 **Stage harnesses** | Adapter-owned workspace assets are copied into each isolated run workspace. Agy receives the controlled `afriend-reviewer` agent selected with `--agent`, `--disable-slash-commands`, `--mode plan`, and `--sandbox` |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
 | 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
 | 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |
@@ -266,10 +276,10 @@ comes back thin, that's what you read — not a guess.
 
 | Mode | What it does |
 |---|---|
-| `report` | One round. Every friend critiques in parallel; claims merge into one ranked report. |
-| `crossexam` | Then friends judge the claims they did not write, blind, until each settles or deadlocks. |
+| `report` | The default: one critique fan-out. Every friend critiques in parallel; claims merge into one ranked report. |
+| `crossexam` | Then friends judge the claims they did not write, blind, for three total rounds by default or until each settles or deadlocks. |
 | `gate` | Then every non-advisory claim that did not clear needs an explicit resolution — this is the one that fails a build. |
-| `loop` | Repeats until two consecutive rounds surface nothing new. |
+| `loop` | Repeats for a maximum of five iterations by default, until two consecutive dry rounds surface nothing new. |
 
 ```bash
 afriend run docs/design.md --mode crossexam
@@ -330,6 +340,14 @@ is derived from your roster and actually enforced.
 | `opencode` | ✅ ships — no read-only mode, reported honestly |
 | `ollama` | ✅ ships — local models over HTTP, no schema/read-only to enforce; needs an explicit model |
 
+Agy's controlled reviewer is staged into the run's isolated workspace; it
+does not edit global Agy configuration. The staged agent and `--sandbox` are
+defense in depth, but sandbox does not mean external tools were denied. Agy
+remains `external_tools=uncontrolled` because its CLI cannot prove every
+plugin/MCP integration disabled invocation-locally. That is an accepted
+best-effort limitation: Agy is policy-blocked by default, while
+`--allow-external-tools=agy` records it as `explicitly-allowed`.
+
 There is no `gemini` adapter: the `gemini` CLI returns an ineligible-tier
 error on the individual free tier, and Google's own supported path from there
 is Antigravity — which is `agy`.
@@ -341,7 +359,7 @@ is Antigravity — which is `agy`.
 | `0` | the run reached terminal states with nothing blocked |
 | `1` | a `gate` still has claims needing a resolution, or every dispatched friend failed |
 | `2` | usage error — bad flag, unknown CLI, missing artifact |
-| `3` | no usable friends found, or a judging mode resolved fewer than two friends; refused before a run directory |
+| `3` | no usable friends found, or a judging mode resolved fewer than two independent non-host friends; refused before a run directory |
 | `10` | `--merge orchestrator` is waiting for you to adjudicate merges |
 | `11` | a ceiling was hit — including natural `--max-loop-iterations` exhaustion without convergence; the run was truncated, not decided |
 | `12` | `--require-friends N` was set and fewer than `N` friends answered |
@@ -374,8 +392,17 @@ under [`plugins/`](plugins/) for loaders that can't install a Python package:
 /plugin marketplace add /path/to/adversarial-friends/plugins
 ```
 
-The skill invokes `afriend`, so the package must be installed for it to work —
-`afriend doctor` is the check.
+Plugins package capabilities; the Adversarial Friends plugin contributes the
+underlying skill, and that skill invokes the `afriend` CLI. The CLI never runs
+automatically by itself. In Codex, implicit skill selection is deliberately
+narrow: a request must start with `afriend`, say `afriend to ...`, or
+explicitly name **Adversarial Friends**. Direct skill selection also works.
+Generic “review this,” “poke holes,” “second opinion,” and architectural
+decision requests stay ordinary Codex work.
+
+The package must therefore be installed for the skill to work — `afriend
+doctor` is the check. Conversational forms such as `afriend docs/design.md`
+map to `afriend run docs/design.md`; they are not additional CLI syntax.
 
 ---
 

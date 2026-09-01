@@ -10,9 +10,11 @@ with no failed friends listed is a real "nothing found"; an empty report where
 the friend table shows failures is not — read the friend table before trusting
 an empty findings section.
 
-The host is the orchestrator and is `host-excluded` from automatic discovery
-unless `--include-self` was passed. Disabled providers are not probed at all;
-use `afriend providers list`, `afriend providers enable NAME`, or a one-run
+The host is the orchestrator. A Codex host is included as a friend by default
+but labeled `host-self-review (advisory)`, `independent=false`; non-Codex hosts
+are `host-excluded` by default. `--include-self` and `--exclude-self` are
+mutually exclusive overrides. Disabled providers are not probed at all; use
+`afriend providers list`, `afriend providers enable NAME`, or a one-run
 `--enable-provider NAME` override when that exclusion was intentional but is
 no longer wanted. A reachable Ollama server without a configured model is
 `reachable-unconfigured`, not ready; set one with `afriend providers
@@ -26,12 +28,36 @@ servers; when its installed CLI cannot enforce that strategy, readiness is
 `policy-blocked` and the process is not launched. `afriend doctor` names the
 denial limitation.
 
-`--allow-external-tools` is an explicit per-run opt-in, not a persistent
-setting. It may expose provider-managed integrations that the runner cannot
-inventory completely. A resume never restores that grant: repeat it exactly
-on the resume command line. Metadata from 0.2.0 is reported as
-`legacy-unknown`, because those runs did not capture enough authority evidence
-to make a denial claim.
+`--allow-external-tools=PROVIDER` is a required-value, repeatable per-run
+opt-in, not a persistent setting. `--allow-external-tools=*` is the explicit
+global form. Unknown, duplicate, or mixed `*` plus provider grants fail before
+dispatch; the old valueless form is invalid. The grant may expose
+provider-managed integrations that the runner cannot inventory completely,
+and it does not change provider defaults. A resume never restores authority:
+repeat the same normalized grant set exactly on the resume command line.
+Metadata from 0.2.0 is reported as `legacy-unknown`, because those runs did
+not capture enough authority evidence to make a denial claim.
+
+`--unsafe-extra-args` requires `--i-accept-unsandboxed` and the global `*`
+grant; a provider-scoped grant is insufficient because arbitrary extra flags
+can affect every selected friend.
+
+## Agy is policy-blocked even though it has a controlled reviewer
+
+For each Agy dispatch, the packaged `afriend-reviewer` agent is staged into
+the run's isolated workspace. The adapter selects it with `--agent
+afriend-reviewer`, `--disable-slash-commands`, `--mode plan`, and `--sandbox`.
+The agent's own frontmatter disables tools and inherited customizations, and
+the runner does not edit global Agy configuration.
+
+This is defense in depth, not proof that every inherited plugin, MCP server,
+or provider-managed tool was disabled. Agy remains
+`external_tools=uncontrolled` and is `policy-blocked` by default. Its inability
+to disable every plugin invocation-locally is an accepted best-effort
+limitation, not a hidden guarantee. `--allow-external-tools=agy` changes the
+audit state to `explicitly-allowed`; it does not claim denial. Likewise,
+`--sandbox` limits local execution, but sandbox does not mean external tools
+were denied.
 
 ## Resume refuses the saved snapshot
 
