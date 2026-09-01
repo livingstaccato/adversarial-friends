@@ -258,7 +258,7 @@ def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
     monkeypatch.setattr(dispatch.shutil, "which", lambda _binary: None)
     monkeypatch.setattr(dispatch, "run_process", run_process)
     prompt, schema = files
-    _spec_out, capability, _outcome = _dispatch(
+    _spec_out, capability, _outcome, provider_policy = _dispatch(
         _spec("codex"),
         tmp_path,
         registry,
@@ -269,8 +269,50 @@ def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
         authority_policy=AuthorityPolicy.from_grants(["*"], registry),
     )
     assert captured[-2:] == ["--enable", "apps"]
+    assert provider_policy is ExternalToolPolicy.ALLOW
     assert capability.external_tools == "explicitly-allowed"
     assert capability.deny_external_tools_argv == ()
+
+
+def test_dispatch_carries_each_provider_local_policy(monkeypatch, tmp_path, registry, files):
+    from adversarial_friends import dispatch
+
+    def run_process(argv, *_args, **_kwargs):
+        return SpawnResult(
+            argv=argv,
+            exit_code=0,
+            stdout='{"no_findings": true}',
+            stderr="",
+            duration_s=0.0,
+            timed_out=False,
+            result=NormalizeResult({"no_findings": True}, [], True),
+            failure_reason=None,
+            orphans_suspected=False,
+        )
+
+    monkeypatch.setattr(dispatch.shutil, "which", lambda _binary: None)
+    monkeypatch.setattr(dispatch, "run_process", run_process)
+    prompt, schema = files
+    authority = AuthorityPolicy.from_grants(["agy"], registry)
+
+    dispatched = {
+        name: _dispatch(
+            _spec(name),
+            tmp_path,
+            registry,
+            None,
+            prompt,
+            schema,
+            authority_policy=authority,
+        )
+        for name in ("agy", "codex", "claude")
+    }
+
+    assert {name: result[3] for name, result in dispatched.items()} == {
+        "agy": ExternalToolPolicy.ALLOW,
+        "codex": ExternalToolPolicy.DENY,
+        "claude": ExternalToolPolicy.DENY,
+    }
 
 
 SECURITY_GRANTS = {

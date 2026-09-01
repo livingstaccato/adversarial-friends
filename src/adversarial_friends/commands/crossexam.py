@@ -446,7 +446,7 @@ def run_rounds(
             outcome.dispatch_error = batch.error
         finally:
             prune_undispatched_prompts(judge_specs, prompt_for, results, store)
-        for spec, _capability, _result in results:
+        for spec, _capability, _result, _policy in results:
             outcome.downgrades.extend(prompt_downgrades_for.get(spec.name, []))
         budget.spend(len(results))
         outcome.rounds_run = round_no
@@ -455,7 +455,7 @@ def run_rounds(
         # reported -- §7.2's M12, the same as one that failed. Repeat-disabled
         # judges were partitioned and audited before prompts above; this
         # catches a dispatch that was interrupted during setup instead.
-        dispatched = {spec.name for spec, _capability, _result in results}
+        dispatched = {spec.name for spec, _capability, _result, _policy in results}
         withheld = [s for s in judge_specs if s.name not in dispatched]
         # §7.2's M12, per claim: the judges that never reported on it this
         # round. A friend that failed or was withheld is missing from every
@@ -497,7 +497,7 @@ def run_rounds(
 
         round_verdicts: list[Verdict] = []
         any_failed = bool(withheld)
-        for spec, capability, result in results:
+        for spec, capability, result, provider_policy in results:
             transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
             row = persist_result(
                 store,
@@ -506,7 +506,7 @@ def run_rounds(
                 capability,
                 result,
                 transport,
-                authority_policy.for_provider(spec.cli),
+                provider_policy,
             )
             outcome.friends_meta.append(row)
             if result.failure_reason is not None:

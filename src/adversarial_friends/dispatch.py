@@ -13,14 +13,20 @@ import threading
 
 from . import childenv, http_transport, sandbox
 from .adapters import Adapter, Capability, FriendSpec, build_argv, place_extra_args
-from .authority import DENY_ALL, AuthorityPolicy, enforce, enforce_extra_args
+from .authority import (
+    DENY_ALL,
+    AuthorityPolicy,
+    ExternalToolPolicy,
+    enforce,
+    enforce_extra_args,
+)
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
 from .normalize import NormalizeResult
 from .spawn import SpawnResult, run_process
 from .trust import check_denied_values
 
-_DispatchResult = tuple[FriendSpec, Capability, SpawnResult]
+_DispatchResult = tuple[FriendSpec, Capability, SpawnResult, ExternalToolPolicy]
 
 # Spec §11.3: the runner's own kill deadline must be strictly greater than a
 # friend's configured --timeout, so a CLI with its own internal timeout
@@ -229,7 +235,7 @@ def _dispatch(
     pass_env: tuple[str, ...] = (),
     authority_policy: AuthorityPolicy = DENY_ALL,
 ) -> _DispatchResult:
-    """Build argv for one friend and run it. Returns (spec, capability, outcome).
+    """Build argv for one friend and return its exact adapter-local policy.
 
     Capability is always the value build_argv computed and returned for
     THIS call -- never re-derived from the finished argv or from
@@ -271,6 +277,7 @@ def _dispatch(
     # Guard again at the dispatch boundary so library callers cannot bypass
     # prepare_run's earlier, pre-run-directory refusal.
     enforce_extra_args(authority_policy, extra_args)
+    provider_policy = authority_policy.for_provider(spec.cli)
     # None means "inherit", which is what every friend gets unless it is
     # being confined. Initialised before the branches because the fake and
     # http paths never reach the exec branch that sets it.
@@ -305,7 +312,6 @@ def _dispatch(
         # SpawnResult shape, so everything downstream stays
         # transport-agnostic.
         adapter = registry[spec.cli]
-        provider_policy = authority_policy.for_provider(spec.cli)
         authority = enforce(adapter, provider_policy)
         return (
             spec,
@@ -318,10 +324,10 @@ def _dispatch(
                 contract,
                 abort_event=abort_event,
             ),
+            provider_policy,
         )
     else:
         adapter = registry[spec.cli]
-        provider_policy = authority_policy.for_provider(spec.cli)
         argv, stdin_text, capability = build_argv(
             adapter, spec, prompt_file, schema_file, provider_policy
         )
@@ -391,7 +397,12 @@ def _dispatch(
                 # refusing it there would ground a friend that is no worse
                 # off than it was before the opt-in existed.
                 if not self_confines and not allow_unsandboxed:
-                    return spec, capability, _refused_unsandboxed(argv, spec, adapter)
+                    return (
+                        spec,
+                        capability,
+                        _refused_unsandboxed(argv, spec, adapter),
+                        provider_policy,
+                    )
             else:
                 # The prompt and schema are written to the RUN directory,
                 # not the friend's isolation directory, so a confined friend
@@ -477,4 +488,4 @@ def _dispatch(
         env=child_env,
     )
     outcome.os_confined = os_confined
-    return spec, capability, outcome
+    return spec, capability, outcome, provider_policy

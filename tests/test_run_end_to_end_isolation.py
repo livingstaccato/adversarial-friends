@@ -433,7 +433,9 @@ def test_dispatch_never_rederives_capability_from_requested_scope():
     )
     prompt_file = REPO / "tests" / "fake_friend.py"  # any existing text file
     schema_file = prompt_file  # build_argv never reads its contents
-    _, capability, outcome = cli._dispatch(spec, REPO, registry, None, prompt_file, schema_file)
+    _, capability, outcome, _policy = cli._dispatch(
+        spec, REPO, registry, None, prompt_file, schema_file
+    )
     assert capability.readonly is False, (
         "spec.scope == 'repo' but this adapter has no readonly_argv at all -- "
         "re-deriving readonly from spec.scope instead of using build_argv's "

@@ -16,6 +16,7 @@ import threading
 
 from adversarial_friends import rounds as rounds_mod
 from adversarial_friends.adapters import Adapter, AuthMarkers, FriendSpec
+from adversarial_friends.authority import ExternalToolPolicy
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.commands import critique as critique_mod, crossexam as crossexam_mod
 from adversarial_friends.commands.critique import run_critique
@@ -112,7 +113,12 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
     outcomes = {good.name: _ok_result("the guard is missing"), broken.name: _auth_failed_result()}
 
     def _fake_dispatch(spec, *_args, **_kwargs):
-        return spec, rounds_mod._UNKNOWN_CAPABILITY, outcomes[spec.name]
+        return (
+            spec,
+            rounds_mod._UNKNOWN_CAPABILITY,
+            outcomes[spec.name],
+            ExternalToolPolicy.DENY,
+        )
 
     monkeypatch.setattr(rounds_mod, "_dispatch", _fake_dispatch)
 
@@ -160,7 +166,7 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
         tracker=tracker,
     )
 
-    assert {spec.name for spec, _cap, _outcome in batch.results} == {
+    assert {spec.name for spec, _cap, _outcome, _policy in batch.results} == {
         "good-friend",
         "broken-friend",
     }
@@ -178,8 +184,18 @@ def test_run_critique_persists_every_friend_before_surfacing_an_auth_abort(monke
     good = _spec("good-friend")
     broken = _spec("broken-friend")
     results = [
-        (good, rounds_mod._UNKNOWN_CAPABILITY, _ok_result("the guard is missing")),
-        (broken, rounds_mod._UNKNOWN_CAPABILITY, _auth_failed_result()),
+        (
+            good,
+            rounds_mod._UNKNOWN_CAPABILITY,
+            _ok_result("the guard is missing"),
+            ExternalToolPolicy.DENY,
+        ),
+        (
+            broken,
+            rounds_mod._UNKNOWN_CAPABILITY,
+            _auth_failed_result(),
+            ExternalToolPolicy.DENY,
+        ),
     ]
 
     def _fake_dispatch_round(*_args, **_kwargs):
@@ -248,8 +264,18 @@ def test_run_rounds_settles_the_current_round_then_stops_scheduling_more(monkeyp
         orphans_suspected=False,
     )
     results = [
-        (judge_a, rounds_mod._UNKNOWN_CAPABILITY, judge_a_result),
-        (judge_b, rounds_mod._UNKNOWN_CAPABILITY, _auth_failed_result()),
+        (
+            judge_a,
+            rounds_mod._UNKNOWN_CAPABILITY,
+            judge_a_result,
+            ExternalToolPolicy.DENY,
+        ),
+        (
+            judge_b,
+            rounds_mod._UNKNOWN_CAPABILITY,
+            _auth_failed_result(),
+            ExternalToolPolicy.DENY,
+        ),
     ]
     calls = []
 

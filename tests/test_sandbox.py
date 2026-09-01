@@ -365,7 +365,7 @@ def test_a_friend_with_no_readonly_mode_is_refused_without_a_mechanism(monkeypat
     registry = {"unconfinable": _unconfinable_adapter()}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
-    _spec, _cap, outcome = dispatch._dispatch(
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
         _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.failure_reason is not None
@@ -382,7 +382,7 @@ def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
     registry = {"unconfinable": _unconfinable_adapter(binary="true")}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
-    _spec, _cap, outcome = dispatch._dispatch(
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
         _spec_for(),
         tmp_path,
         registry,
@@ -411,7 +411,7 @@ def test_confinement_is_recorded_only_after_the_command_is_wrapped(monkeypatch, 
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
 
-    _spec, _cap, outcome = dispatch._dispatch(
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
         _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
 
@@ -430,7 +430,7 @@ def test_a_friend_whose_binary_is_missing_is_not_sandboxed(tmp_path):
     registry = {"unconfinable": _unconfinable_adapter(binary="af-nonexistent-xyz")}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
-    _spec, _cap, outcome = dispatch._dispatch(
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
         _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.failure_reason == "binary not found: af-nonexistent-xyz"
@@ -446,7 +446,7 @@ def test_a_confined_friend_gets_the_sandbox_prefix(tmp_path):
     registry = {"unconfinable": _unconfinable_adapter(binary="true")}
     prompt = tmp_path / "p.prompt"
     prompt.write_text("hi")
-    _spec, _cap, outcome = dispatch._dispatch(
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
         _spec_for(), tmp_path, registry, None, prompt, tmp_path / "s.json"
     )
     assert outcome.argv[0] in (sandbox.SANDBOX_EXEC, sandbox.BWRAP)

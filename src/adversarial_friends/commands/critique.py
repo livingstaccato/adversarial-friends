@@ -218,7 +218,7 @@ def run_critique(
         outcome.dispatch_error = batch.error
     finally:
         prune_undispatched_prompts(dispatchable, prompt_for, results, store)
-    result_names = {spec.name for spec, _capability, _result in results}
+    result_names = {spec.name for spec, _capability, _result, _policy in results}
     outcome.downgrades.extend(
         note for note in prompt_downgrades if note.split(":", 1)[0] in result_names
     )
@@ -227,7 +227,7 @@ def run_critique(
     all_claims = list(known_claims)
     counter = claim_counter
     unparseable: list[dict[str, Any]] = []
-    for spec, capability, result in results:
+    for spec, capability, result, provider_policy in results:
         transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
         outcome.friends_meta.append(
             persist_result(
@@ -237,7 +237,7 @@ def run_critique(
                 capability,
                 result,
                 transport,
-                authority_policy.for_provider(spec.cli),
+                provider_policy,
             )
         )
         if result.failure_reason is not None:

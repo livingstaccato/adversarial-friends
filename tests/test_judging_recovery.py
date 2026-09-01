@@ -114,7 +114,9 @@ def test_judging_retry_reuses_durable_verdicts_and_dispatches_only_missing_work(
             failure_reason=None,
             orphans_suspected=False,
         )
-        return rounds_mod.DispatchRoundOutcome([(second, Capability(False, True, "none"), result)])
+        return rounds_mod.DispatchRoundOutcome(
+            [(second, Capability(False, True, "none"), result, ExternalToolPolicy.DENY)]
+        )
 
     monkeypatch.setattr(crossexam_mod, "dispatch_round", dispatch)
     budget = Budget(max_calls=10, started=0.0)
@@ -183,7 +185,7 @@ def test_judging_retry_replays_a_complete_captured_batch_without_redispatch(
         crossexam_mod,
         "dispatch_round",
         lambda *_args, **_kwargs: rounds_mod.DispatchRoundOutcome(
-            [(spec, Capability(False, True, "none"), result)]
+            [(spec, Capability(False, True, "none"), result, ExternalToolPolicy.DENY)]
         ),
     )
     original_append = store.ledger.append

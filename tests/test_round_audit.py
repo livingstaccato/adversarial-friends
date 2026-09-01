@@ -292,7 +292,7 @@ def test_dispatch_round_returns_completed_and_refused_attempts_when_one_friend_e
             raise raised
         if spec is undispatched:
             pytest.fail("queued friend should be cancelled after the refusal")
-        return spec, Capability(False, True, "none"), _success()
+        return spec, Capability(False, True, "none"), _success(), ExternalToolPolicy.DENY
 
     monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
 
@@ -338,7 +338,7 @@ def test_critique_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monk
             raise UsageError("refused unsafe dispatch")
         if spec.name == undispatched.name:
             pytest.fail("queued friend should not be dispatched")
-        return spec, Capability(False, True, "none"), _success()
+        return spec, Capability(False, True, "none"), _success(), ExternalToolPolicy.DENY
 
     monkeypatch.setattr(critique_mod, "dispatch_round", serial_dispatch)
     monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
@@ -362,6 +362,7 @@ def test_critique_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monk
 
     assert isinstance(outcome.dispatch_error, UsageError)
     assert [row["name"] for row in outcome.friends_meta] == [good.name, refused.name]
+    assert outcome.friends_meta[1]["external_tool_policy"] == "unknown"
     assert store.friend_prompt_path(1, good.name).exists()
     assert store.friend_prompt_path(1, refused.name).exists()
     assert not store.friend_prompt_path(1, undispatched.name).exists()
@@ -396,7 +397,7 @@ def test_critique_recovers_actual_attempt_when_later_future_submission_stops(
 
     def fake_dispatch(spec, *_args, **_kwargs):
         begun.set()
-        return spec, Capability(False, True, "none"), _success()
+        return spec, Capability(False, True, "none"), _success(), ExternalToolPolicy.DENY
 
     monkeypatch.setattr(
         rounds_mod.concurrent.futures.ThreadPoolExecutor,
@@ -474,7 +475,7 @@ def test_judging_keeps_only_prompts_and_rows_for_actual_partial_dispatches(monke
             raise UsageError("refused unsafe dispatch")
         if spec.name == undispatched.name:
             pytest.fail("queued judge should not be dispatched")
-        return spec, Capability(False, True, "none"), verdict
+        return spec, Capability(False, True, "none"), verdict, ExternalToolPolicy.DENY
 
     monkeypatch.setattr(crossexam_mod, "dispatch_round", serial_dispatch)
     monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)

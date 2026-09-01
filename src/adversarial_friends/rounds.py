@@ -42,7 +42,7 @@ from .progress import Progress, disabled
 from .runstore import RunStore
 from .spawn import SpawnResult
 
-RoundResult = tuple[FriendSpec, Capability, SpawnResult]
+RoundResult = tuple[FriendSpec, Capability, SpawnResult, ExternalToolPolicy | None]
 
 
 @dataclass(frozen=True)
@@ -115,7 +115,7 @@ def prune_undispatched_prompts(
     store: RunStore,
 ) -> None:
     """Keep prompt artifacts only for dispatch attempts that returned an auditable row."""
-    dispatched = {spec.name for spec, _capability, _outcome in results}
+    dispatched = {spec.name for spec, _capability, _outcome, _policy in results}
     for spec in specs:
         if spec.name not in dispatched:
             store.unlink_owned(prompt_for[spec.name], missing_ok=True)
@@ -157,7 +157,7 @@ def _round_summary(results: list[RoundResult], contract: PayloadContract) -> str
         return "no friends dispatched"
     answered = [r for r in results if r[2].result.succeeded and r[2].result.payload is not None]
     total = 0
-    for _spec, _capability, outcome in answered:
+    for _spec, _capability, outcome, _policy in answered:
         assert outcome.result.payload is not None
         items = outcome.result.payload.get(contract.container_key)
         total += len(items) if isinstance(items, list) else 0
@@ -273,6 +273,7 @@ def dispatch_round(
                 if abort_event.is_set():
                     return None
                 report.friend_dispatched(spec.name, spec.timeout)
+                result: RoundResult
                 try:
                     result = _dispatch(
                         spec,
@@ -290,23 +291,26 @@ def dispatch_round(
                     )
                 except AfError as exc:
                     # The process may have been refused before spawn, but
-                    # this worker crossed the reliable dispatch boundary:
-                    # its prompt was consumed and adapter policy evaluated.
-                    # Return both an auditable failed row and the deliberate
-                    # stop so callers can persist partial evidence before
-                    # terminalizing the run.
+                    # this worker crossed the reliable dispatch boundary and
+                    # consumed its prompt. Because _dispatch raised instead
+                    # of returning its adapter-local decision, the synthetic
+                    # row carries None and audits the policy as unknown rather
+                    # than deriving a potentially different value here.
+                    # Return both that failed row and the deliberate stop so
+                    # callers can persist partial evidence before terminalizing.
                     abort_event.set()
                     result = (
                         spec,
                         _UNKNOWN_CAPABILITY,
                         replace(_exception_outcome([], exc), failure_reason=str(exc)),
+                        None,
                     )
                     report.friend_finished(spec.name, _outcome_word(result[2], contract))
                     return _DispatchAttempt(result, exc)
                 except Exception as exc:
                     report.friend_finished(spec.name, f"failed: {exc.__class__.__name__}")
                     return _DispatchAttempt(
-                        (spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc))
+                        (spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc), None)
                     )
                 except BaseException as exc:
                     # KeyboardInterrupt can be delivered while a worker is
@@ -314,7 +318,7 @@ def dispatch_round(
                     # requirement as AfError: retain the attempted prompt and
                     # a friend row, stop peers, and surface the interruption.
                     abort_event.set()
-                    result = spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc)
+                    result = spec, _UNKNOWN_CAPABILITY, _exception_outcome([], exc), None
                     report.friend_finished(spec.name, _outcome_word(result[2], contract))
                     return _DispatchAttempt(result, exc)
                 report.friend_finished(spec.name, _outcome_word(result[2], contract))
@@ -364,7 +368,7 @@ def dispatch_round(
                 # already completed. Recover every finished attempt once the
                 # abort has drained in-flight transports; prompt existence is
                 # never used as a guess for whether dispatch happened.
-                recorded = {spec.name for spec, _capability, _outcome in results}
+                recorded = {spec.name for spec, _capability, _outcome, _policy in results}
                 for future in futures:
                     if future.cancelled() or not future.done():
                         continue
@@ -394,7 +398,7 @@ def dispatch_round(
 
     auth_abort: str | None = None
     if tracker is not None:
-        for spec, _capability, outcome in results:
+        for spec, _capability, outcome, _policy in results:
             tracker.record(spec.name, outcome)
             # §7.2: an auth failure is deterministic, so every remaining
             # round and iteration would fail identically -- the caller
@@ -419,7 +423,7 @@ def persist_result(
     capability: Capability,
     outcome: SpawnResult,
     transport: str,
-    external_tool_policy: ExternalToolPolicy,
+    external_tool_policy: ExternalToolPolicy | None,
 ) -> dict[str, Any]:
     """Write one friend's raw output, stderr and metadata; return its row.
 
@@ -432,6 +436,7 @@ def persist_result(
     """
     raw_path, _json_path, meta_path = store.friend_paths(round_no, spec.name)
     store.write_sensitive(raw_path, outcome.stdout)
+    policy_value = external_tool_policy.value if external_tool_policy is not None else "unknown"
     store.write_sensitive(
         meta_path,
         f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
@@ -445,7 +450,7 @@ def persist_result(
         # flag on this line.
         f"output_truncated={outcome.output_truncated}\n"
         f"transport={transport}\nos_confined={outcome.os_confined}\n"
-        f"external_tool_policy={external_tool_policy.value}\n"
+        f"external_tool_policy={policy_value}\n"
         f"external_tools={capability.external_tools}\n"
         f"external_tool_sources={list(capability.external_tool_sources)}\n"
         f"deny_external_tools_argv={list(capability.deny_external_tools_argv)}\n",
@@ -475,7 +480,7 @@ def persist_result(
         "declared_scope": spec.scope,
         "os_confined": outcome.os_confined,
         "external_tools": capability.external_tools,
-        "external_tool_policy": external_tool_policy.value,
+        "external_tool_policy": policy_value,
         "external_tool_sources": list(capability.external_tool_sources),
         "deny_external_tools_argv": list(capability.deny_external_tools_argv),
         # Compatibility keys for consumers of the pre-0.2 run.json shape.
