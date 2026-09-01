@@ -44,6 +44,7 @@ def test_packaged_agy_agent_uses_supported_restrictive_frontmatter():
 
     assert "name: afriend-reviewer" in frontmatter
     assert "tools: []" in frontmatter
+    assert "subagent: false" in frontmatter
     assert "disable-model-invocation: true" in frontmatter
     assert "inheritCustomizations: false" in frontmatter
     assert "structured adversarial review" in text.lower()

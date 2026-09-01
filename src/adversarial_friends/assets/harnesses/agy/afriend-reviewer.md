@@ -2,6 +2,7 @@
 name: afriend-reviewer
 description: Perform only a structured adversarial review of the supplied artifact.
 tools: []
+subagent: false
 disable-model-invocation: true
 inheritCustomizations: false
 ---
