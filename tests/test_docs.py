@@ -264,7 +264,7 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     assert "afriend to" in positive_prompts
     assert "adversarial friends" in positive_prompts
     assert "$adversarial-friends" in positive_prompts
-    for phrase in ("review this", "poke holes", "second opinion"):
+    for phrase in ("review this", "challenge this", "poke holes", "second opinion"):
         assert phrase in negative_prompts, phrase
     assert all("af run" not in case["expected_output"].lower() for case in evals)
 

@@ -56,6 +56,13 @@
       "should_trigger": false,
       "expected_output": "Responds as ordinary Codex work or asks for the review contents as needed. It does not select the skill solely from second-opinion language.",
       "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "Challenge this plan.",
+      "should_trigger": false,
+      "expected_output": "Keeps this as ordinary Codex work and does not invoke the Adversarial Friends plugin or the `afriend` CLI because generic challenge language is not an activation trigger.",
+      "files": []
     }
   ]
 }
