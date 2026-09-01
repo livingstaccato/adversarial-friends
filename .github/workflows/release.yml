@@ -27,6 +27,20 @@ jobs:
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${GITHUB_SHA}" "origin/main"
 
+      - name: Extract and verify release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## ${version}" '
+            $0 == heading { in_section = 1; next }
+            in_section && /^## / { exit }
+            in_section { print }
+            END { if (!in_section) exit 1 }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          grep -Eq '[^[:space:]]' release-notes.md
+
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -113,6 +127,7 @@ jobs:
             END { if (!in_section) exit 1 }
           ' CHANGELOG.md > release-notes.md
           test -s release-notes.md
+          grep -Eq '[^[:space:]]' release-notes.md
 
       - name: Create or repair the GitHub release
         env:

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.1
+
+A contract-first hardening release that makes provider selection, authority,
+and replay behavior explicit and fail-closed. It also completes the
+end-to-end dogfood and release-quality work for the hardened runner.
+
+### Provider policy and authority
+
+- Added persistent provider enable/disable preferences and per-run overrides,
+  with the current host provider excluded from automatic discovery unless
+  `--include-self` is passed.
+- Added readiness states and model configuration, so unavailable, disabled,
+  host-excluded, unconfigured, and policy-blocked providers do not consume the
+  friend cap.
+- Denied provider-managed tools, plugins, apps, and MCP servers by default.
+  Providers that cannot prove denial now fail closed unless the operator grants
+  `--allow-external-tools` for that invocation.
+
+### Replay and judging correctness
+
+- Bound resume to its frozen artifact, repository commit, tree, blob, and
+  invocation-local authority grants, rejecting changed or unverifiable input.
+- Made `crossexam`, `gate`, and `loop` require two independent ready friends
+  before creating a run; single-friend `report` remains available as an
+  explicit downgrade.
+- Centralized terminal outcomes and made unconverged loop exhaustion a ceiling
+  with exit 11. Hardened checkpoint, ledger, merge, and judging recovery across
+  crash and resume boundaries.
+- Fixed an exact-call-budget resume regression where a completed report could
+  not consume its already-written orchestrator merge response.
+
+### Release assurance
+
+- Raised the enforced source-file ceiling to 777 lines and expanded the
+  contract, replay, authority, readiness, recovery, and end-to-end test suites.
+- Added hermetic Ollama HTTP end-to-end coverage, wheel and source-distribution
+  validation, isolated installed-CLI smoke tests, and Linux confinement checks.
+
 ## 0.2.0
 
 A staged hardening release centered on replay-safe state, bounded

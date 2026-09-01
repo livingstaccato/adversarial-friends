@@ -3,6 +3,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+CHANGELOG = ROOT / "CHANGELOG.md"
+VERSION = ROOT / "VERSION"
 
 
 def workflow_text() -> str:
@@ -54,6 +56,29 @@ def test_release_workflow_rejects_mismatched_or_unmerged_tags():
     assert '"${GITHUB_REF_NAME}" = "v${version}"' in build
     assert 'git merge-base --is-ancestor "${GITHUB_SHA}" "origin/main"' in build
     assert "fetch-depth: 0" in build
+
+
+def test_current_version_has_nonempty_changelog_section():
+    version = VERSION.read_text(encoding="utf-8").strip()
+    changelog = CHANGELOG.read_text(encoding="utf-8")
+    match = re.search(
+        rf"^## {re.escape(version)}\n(?P<body>.*?)(?=^## |\Z)",
+        changelog,
+        re.MULTILINE | re.DOTALL,
+    )
+
+    assert match is not None
+    assert match.group("body").strip()
+
+
+def test_release_build_validates_changelog_before_artifact_upload():
+    build = job_block("build")
+
+    validation = build.index("Extract and verify release notes")
+    upload = build.index("Store release distributions")
+    assert validation < upload
+    assert "CHANGELOG.md" in build[validation:upload]
+    assert "test -s release-notes.md" in build[validation:upload]
 
 
 def test_release_build_verifies_both_distributions_and_installed_cli():
