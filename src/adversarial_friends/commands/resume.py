@@ -15,9 +15,12 @@ folded back in.
 import argparse
 from collections.abc import Callable, Sequence
 import concurrent.futures
+import contextlib
 from dataclasses import dataclass, field
 import hashlib
+import os
 from pathlib import Path
+import stat
 import threading
 from typing import Any
 
@@ -27,36 +30,62 @@ from ..ceilings import Budget
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ids import format_claim_id
-from ..jsonio import load_json_object, read_bounded_bytes
+from ..jsonio import decode_json_object, read_bounded_bytes
 from ..ledger import Alias, Claim
 from ..merge import next_claim_number
 from ..orchestrator import (
     QUESTION_EXTRACT,
+    QUESTION_MERGE,
+    MergeDecision,
     apply_merges,
-    read_extract_response,
-    read_response,
     request_path,
+    validate_extract_response,
+    validate_merge_response,
 )
 from ..progress import Progress
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
+from ..secureio import secure_write_bytes
 from ..verdictschema import schema_path as verdict_schema_path
 from .crossexam import CrossexamOutcome, run_rounds
 from .haltstate import resumed_streak
 from .runmeta import JUDGING_MODES
 
 
-def _question_asked(round_dir: Path) -> str:
-    """Which question this round's REQUEST.json posed.
+@dataclass(frozen=True)
+class OutstandingRequest:
+    question: str
+    digest: str
 
-    Read from the request rather than inferred from the response: the
-    response is the file a human just edited, and guessing its shape would
-    turn a typo into a confusing schema error rather than a clear one.
-    """
+
+def _outstanding_request(round_dir: Path, run_id: str, round_no: int) -> OutstandingRequest:
+    """Authenticate the exact request before touching its response."""
     path = request_path(round_dir)
-    if not path.exists():
-        return ""
-    return str(load_json_object(path, label="orchestrator request").get("question", ""))
+    try:
+        payload = read_bounded_bytes(path, label="orchestrator request")
+        data = decode_json_object(payload, path=path, label="orchestrator request")
+    except UsageError as exc:
+        raise UsageError(
+            f"cannot resume: outstanding orchestrator request is invalid: {exc}"
+        ) from exc
+    expected_keys = {"version", "run_id", "round", "question"}
+    if not expected_keys.issubset(data):
+        raise UsageError(
+            "cannot resume: outstanding orchestrator request is missing identity fields"
+        )
+    question = data.get("question")
+    if (
+        data.get("version") != 1
+        or data.get("run_id") != run_id
+        or data.get("round") != round_no
+        or not isinstance(question, str)
+        or question not in {QUESTION_MERGE, QUESTION_EXTRACT}
+    ):
+        raise UsageError(
+            "cannot resume: outstanding orchestrator request does not match this run and round"
+        )
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    return OutstandingRequest(question, digest)
 
 
 @dataclass
@@ -76,9 +105,19 @@ class ResumedRun:
 # original rather than deleted: it is the operator's own written judgment,
 # and a run directory that discards it cannot be audited afterwards.
 CONSUMED_SUFFIX = ".applied"
+APPLYING_SUFFIX = ".applying"
 
 
-def _mark_response_consumed(round_dir: Path) -> None:
+def _fsync_directory(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _mark_response_consumed(round_dir: Path, response_file: Path | None = None) -> None:
     """Rename RESPONSE.json once its contents are in the ledger.
 
     The ledger is append-only with no dedupe (`ledger.append` is a bare JSONL
@@ -99,35 +138,42 @@ def _mark_response_consumed(round_dir: Path) -> None:
     written first, so a rename failure remains recoverable and must not be
     hidden while judging continues.
     """
-    response = round_dir / "RESPONSE.json"
+    response = Path(response_file) if response_file is not None else round_dir / "RESPONSE.json"
     try:
-        response.rename(response.with_suffix(response.suffix + CONSUMED_SUFFIX))
+        response.rename(round_dir / f"RESPONSE.json{CONSUMED_SUFFIX}")
+        _fsync_directory(round_dir)
     except FileNotFoundError:
         if response.exists():
             raise
 
 
-def _response_digest(path: Path) -> str:
-    payload = read_bounded_bytes(path, label="orchestrator response")
+def _response_digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
-def _validated_applied_response(
-    meta: dict[str, Any], *, round_no: int, question: str
+def _validated_response_checkpoint(
+    meta: dict[str, Any], *, round_no: int, question: str, request_digest: str
 ) -> dict[str, Any] | None:
     raw = meta.get("applied_response")
     if raw is None:
         if meta.get("lifecycle_state") == "response-applied":
             raise UsageError("cannot resume: response-applied checkpoint has no applied_response")
         return None
-    if type(raw) is not dict or set(raw) != {"version", "round", "question", "sha256", "records"}:
+    if type(raw) is not dict:
         raise UsageError("cannot resume: saved applied_response has an invalid shape")
+    keys = {"version", "round", "question", "request_sha256", "sha256", "records"}
+    legacy_keys = keys - {"request_sha256"}
+    if frozenset(raw) not in {frozenset(keys), frozenset(legacy_keys)}:
+        raise UsageError("cannot resume: saved applied_response has an invalid shape")
+    if "request_sha256" not in raw and meta.get("lifecycle_state") != "response-applied":
+        raise UsageError("cannot resume: prepared response is not bound to its request")
     digest = raw.get("sha256")
     records = raw.get("records")
     if (
         raw.get("version") != 1
         or raw.get("round") != round_no
         or raw.get("question") != question
+        or raw.get("request_sha256", request_digest) != request_digest
         or type(records) is not int
         or records < 0
         or not isinstance(digest, str)
@@ -139,31 +185,86 @@ def _validated_applied_response(
     return raw
 
 
-def _response_file(
-    round_dir: Path, meta: dict[str, Any], *, round_no: int, question: str
-) -> tuple[Path, dict[str, Any] | None]:
-    """Resolve one authenticated live or retained response without guessing."""
+@dataclass(frozen=True)
+class PreparedResponse:
+    path: Path
+    payload: bytes
+    digest: str
+    checkpoint: dict[str, Any] | None
+
+
+def _regular_response_exists(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(info.st_mode):
+        raise UsageError(f"cannot resume: response artifact must be a regular file: {path}")
+    return True
+
+
+def _prepare_response(
+    round_dir: Path,
+    meta: dict[str, Any],
+    *,
+    round_no: int,
+    question: str,
+    request_digest: str,
+) -> PreparedResponse:
+    """Freeze one response path and read its bytes exactly once."""
     live = round_dir / "RESPONSE.json"
+    applying = round_dir / f"RESPONSE.json{APPLYING_SUFFIX}"
     applied = live.with_suffix(live.suffix + CONSUMED_SUFFIX)
-    live_exists = live.is_file()
-    applied_exists = applied.is_file()
-    if live_exists and applied_exists:
+    live_exists = _regular_response_exists(live)
+    applying_exists = _regular_response_exists(applying)
+    applied_exists = _regular_response_exists(applied)
+    if sum((live_exists, applying_exists, applied_exists)) > 1:
         raise UsageError(
-            f"cannot resume: both {live.name} and {applied.name} exist; response state is ambiguous"
+            "cannot resume: multiple live/applying/applied response artifacts exist; "
+            "response state is ambiguous"
         )
-    checkpoint = _validated_applied_response(meta, round_no=round_no, question=question)
+    checkpoint = _validated_response_checkpoint(
+        meta,
+        round_no=round_no,
+        question=question,
+        request_digest=request_digest,
+    )
     if checkpoint is None:
         if applied_exists:
             raise UsageError(
                 "cannot resume: retained applied response has no matching durable checkpoint"
             )
-        return live, None
-    selected = applied if applied_exists else live
+        if live_exists:
+            live.rename(applying)
+            _fsync_directory(round_dir)
+            applying_exists = True
+        selected = applying
+    else:
+        selected = applied if applied_exists else applying
+        if live_exists:
+            selected = live
     if not selected.is_file():
-        raise UsageError("cannot resume: applied response checkpoint has no response artifact")
-    if _response_digest(selected) != checkpoint["sha256"]:
+        if checkpoint is None:
+            raise UsageError(
+                f"no RESPONSE.json in {round_dir}. This run halted for orchestrator "
+                "judgment; write the response described by REQUEST.json and re-run "
+                "with --resume."
+            )
+        raise UsageError("cannot resume: response checkpoint has no response artifact")
+    payload = read_bounded_bytes(selected, label="orchestrator response")
+    digest = _response_digest(payload)
+    if checkpoint is not None and digest != checkpoint["sha256"]:
         raise UsageError("cannot resume: applied response artifact hash disagrees with checkpoint")
-    return selected, checkpoint
+    if selected == applying:
+        # Keep the audit artifact byte-identical to the single inode snapshot
+        # used for both parsing and hashing. A pathname replacement after the
+        # bounded read cannot substitute different bytes for the eventual
+        # `.applied` evidence.
+        temporary = round_dir / ".RESPONSE.json.prepared.tmp"
+        secure_write_bytes(temporary, payload)
+        temporary.replace(applying)
+        _fsync_directory(round_dir)
+    return PreparedResponse(selected, payload, digest, checkpoint)
 
 
 def _checkpoint_response_application(
@@ -172,7 +273,8 @@ def _checkpoint_response_application(
     *,
     round_no: int,
     question: str,
-    response_file: Path,
+    request_digest: str,
+    response_digest: str,
     records: int,
 ) -> None:
     meta = dict(getattr(args, "_resume_meta", {}) or {})
@@ -181,14 +283,39 @@ def _checkpoint_response_application(
         "version": 1,
         "round": round_no,
         "question": question,
-        "sha256": _response_digest(response_file),
+        "request_sha256": request_digest,
+        "sha256": response_digest,
         "records": records,
     }
     store.write_run_json(meta)
     args._resume_meta = meta
 
 
-def _resumed_progress(records: Sequence[object], round_no: int) -> tuple[int, frozenset[str]]:
+def _checkpoint_response_preparation(
+    args: argparse.Namespace,
+    store: RunStore,
+    *,
+    round_no: int,
+    question: str,
+    request_digest: str,
+    response_digest: str,
+    records: int,
+) -> None:
+    meta = dict(getattr(args, "_resume_meta", {}) or {})
+    meta["lifecycle_state"] = "response-applying"
+    meta["applied_response"] = {
+        "version": 1,
+        "round": round_no,
+        "question": question,
+        "request_sha256": request_digest,
+        "sha256": response_digest,
+        "records": records,
+    }
+    store.write_run_json(meta)
+    args._resume_meta = meta
+
+
+def _resumed_progress(records: Sequence[object], round_no: int) -> tuple[list[Claim], list[Alias]]:
     """How much of THIS round's RESPONSE.json the ledger already reflects.
 
     Read from the ledger itself, the same source `canonical_claims` and
@@ -208,26 +335,72 @@ def _resumed_progress(records: Sequence[object], round_no: int) -> tuple[int, fr
     Two independent counts, because the two branches record progress
     differently:
 
-    * `extracted_count` -- how many `lens="extracted"` claims already carry
-      this round number. `read_extract_response` returns entries in a
-      stable file order every call (RESPONSE.json is not mutated until the
-      whole response is applied), so the leading `extracted_count` entries
-      of a fresh read are exactly the ones an earlier, crashed attempt at
-      this same round already wrote. The caller skips them rather than
-      re-appending.
-    * `merged_duplicates` -- the `duplicate` id of every Alias already
-      recorded for this round. Passed to `read_response` so it can skip
-      re-validating exactly the merges a prior attempt already finished,
-      instead of refusing the whole file over ids that are correctly gone.
+    * `extracted` -- the `lens="extracted"` claims already carrying this
+      round number, in durable order. The caller requires them to equal the
+      response prefix before skipping them.
+    * `merged` -- the orchestrator Alias records for this round, in durable
+      order. Exact-dedup aliases are unrelated progress and are excluded;
+      the caller requires every retained alias to equal the response prefix.
     """
-    extracted_count = 0
-    merged: set[str] = set()
+    extracted: list[Claim] = []
+    merged: list[Alias] = []
     for record in records:
         if isinstance(record, Claim) and record.round == round_no and record.lens == "extracted":
-            extracted_count += 1
-        elif isinstance(record, Alias) and record.round == round_no:
-            merged.add(record.duplicate)
-    return extracted_count, frozenset(merged)
+            extracted.append(record)
+        elif (
+            isinstance(record, Alias)
+            and record.round == round_no
+            and record.source == "orchestrator"
+        ):
+            merged.append(record)
+    return extracted, merged
+
+
+def _validate_partial_extraction(
+    previous: Sequence[Claim], extracted: Sequence[dict[str, Any]], round_no: int
+) -> None:
+    if len(previous) > len(extracted):
+        raise UsageError("cannot resume: partial extraction ledger does not match response")
+    for claim, finding in zip(previous, extracted, strict=False):
+        expected = (
+            [finding.get("friend", "orchestrator")],
+            round_no,
+            finding["severity"],
+            finding["claim"],
+            finding.get("location"),
+            finding["evidence"],
+            finding["failure_scenario"],
+            finding["suggested_fix"],
+        )
+        actual = (
+            claim.origin,
+            claim.round,
+            claim.severity,
+            claim.claim,
+            claim.location,
+            claim.evidence,
+            claim.failure_scenario,
+            claim.suggested_fix,
+        )
+        if claim.supersedes is not None or claim.advisory or actual != expected:
+            raise UsageError("cannot resume: partial extraction ledger does not match response")
+
+
+def _validate_partial_merges(
+    previous: Sequence[Alias], decisions: Sequence[MergeDecision], round_no: int
+) -> None:
+    if len(previous) > len(decisions):
+        raise UsageError("cannot resume: partial merge ledger does not match response")
+    for alias, decision in zip(previous, decisions, strict=False):
+        expected = Alias(
+            canonical=decision.canonical,
+            duplicate=decision.duplicate,
+            round=round_no,
+            source="orchestrator",
+            rationale=decision.rationale or "adjudicated by orchestrator",
+        )
+        if alias != expected:
+            raise UsageError("cannot resume: partial merge ledger does not match response")
 
 
 def resume_round_one(
@@ -288,22 +461,40 @@ def resume_round_one(
 
     # The same handshake serves two questions (§4.2, §14.2), so the answer is
     # read according to what was actually asked rather than assumed.
-    question = _question_asked(round_dir)
+    outstanding = _outstanding_request(round_dir, store.run_id, base_round)
+    question = outstanding.question
     # What an EARLIER attempt at this exact round already applied, before it
     # crashed between a ledger write and _mark_response_consumed. Read from
     # the ledger, not guessed: see _resumed_progress.
-    already_extracted, already_merged = _resumed_progress(historical, base_round)
-    response_file, applied_checkpoint = _response_file(
+    previous_extractions, previous_merges = _resumed_progress(historical, base_round)
+    prepared = _prepare_response(
         round_dir,
         getattr(args, "_resume_meta", {}) or {},
         round_no=base_round,
         question=question,
+        request_digest=outstanding.digest,
     )
+    response_data = decode_json_object(
+        prepared.payload, path=prepared.path, label="orchestrator response"
+    )
+    applied_checkpoint = prepared.checkpoint
     adjudicated: list[Alias] = []
     if question == QUESTION_EXTRACT:
-        extracted = read_extract_response(round_dir, response_file=response_file)
+        extracted = validate_extract_response(response_data, prepared.path)
+        _validate_partial_extraction(previous_extractions, extracted, base_round)
+        already_extracted = len(previous_extractions)
         if applied_checkpoint is not None and applied_checkpoint["records"] != len(extracted):
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
+        if applied_checkpoint is None:
+            _checkpoint_response_preparation(
+                args,
+                store,
+                round_no=base_round,
+                question=question,
+                request_digest=outstanding.digest,
+                response_digest=prepared.digest,
+                records=len(extracted),
+            )
         skipped = extracted[:already_extracted]
         for finding in extracted[already_extracted:]:
             counter += 1
@@ -340,16 +531,28 @@ def resume_round_one(
             )
         resumed.downgrades.append(note)
     else:
-        decisions = read_response(
-            round_dir,
-            {c.id for c in claims},
-            tolerate_duplicates=already_merged,
-            response_file=response_file,
+        decisions = validate_merge_response(
+            response_data,
+            prepared.path,
+            {c.id for c in claims} | {alias.duplicate for alias in previous_merges},
         )
-        expected_records = len(already_merged) + len(decisions)
+        _validate_partial_merges(previous_merges, decisions, base_round)
+        already_merged = frozenset(alias.duplicate for alias in previous_merges)
+        expected_records = len(decisions)
         if applied_checkpoint is not None and applied_checkpoint["records"] != expected_records:
             raise UsageError("cannot resume: applied response result disagrees with durable ledger")
-        claims, adjudicated = apply_merges(claims, decisions, base_round)
+        if applied_checkpoint is None:
+            _checkpoint_response_preparation(
+                args,
+                store,
+                round_no=base_round,
+                question=question,
+                request_digest=outstanding.digest,
+                response_digest=prepared.digest,
+                records=expected_records,
+            )
+        remaining_decisions = decisions[len(previous_merges) :]
+        claims, adjudicated = apply_merges(claims, remaining_decisions, base_round)
         for alias in adjudicated:
             store.ledger.append(alias)
             review.apply(alias)
@@ -373,11 +576,12 @@ def resume_round_one(
         store,
         round_no=base_round,
         question=question,
-        response_file=response_file,
+        request_digest=outstanding.digest,
+        response_digest=prepared.digest,
         records=applied_records,
     )
-    if response_file.name == "RESPONSE.json":
-        _mark_response_consumed(round_dir)
+    if prepared.path.name != f"RESPONSE.json{CONSUMED_SUFFIX}":
+        _mark_response_consumed(round_dir, prepared.path)
     resumed.claims = claims
     resumed.counter = counter
     resumed.aliases = adjudicated

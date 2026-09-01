@@ -14,6 +14,7 @@ a roster and still override a single run from the command line.
 """
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 import os
 from pathlib import Path
@@ -27,7 +28,7 @@ from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
-from ..readiness import ReadinessState, assess_all
+from ..readiness import DenyProbeResult, ReadinessState, assess_all
 from ..roster import DEGRADED_MODES, apply_capacity, resolve
 
 
@@ -36,6 +37,51 @@ class ResolvedRoster:
     specs: list[FriendSpec]
     preset: str
     source: str | None = None
+
+
+def validate_resume_capabilities(
+    specs: list[FriendSpec],
+    registry: dict[str, Adapter],
+    external_tool_policy: ExternalToolPolicy,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    capability_probe: Callable[[Adapter, str], DenyProbeResult] | None = None,
+) -> None:
+    """Revalidate mutable executable authority for a frozen resume roster.
+
+    Identity, model and ordering remain frozen. Provider enablement, host
+    exclusion and capacity are discovery policy and deliberately do not run
+    again. The executable and its deny flags are mutable local facts, though,
+    so a resume must prove them again before opening the run for mutation.
+    """
+    names = dict.fromkeys(spec.cli for spec in specs if spec.cli != "fake")
+    if not names:
+        return
+    selected: dict[str, Adapter] = {}
+    for name in names:
+        adapter = registry.get(name)
+        if adapter is None:
+            raise UsageError(f"unknown cli in saved roster: {name!r}")
+        selected[name] = adapter
+    rows = assess_all(
+        selected,
+        providerconfig.ProviderPolicy({}),
+        env=os.environ,
+        which=which,
+        include_self=True,
+        external_tool_policy=external_tool_policy,
+        selection_policy=False,
+        capability_probe=capability_probe,
+    )
+    models = {spec.cli: spec.model for spec in specs}
+    for name, row in rows.items():
+        configured_http = (
+            row.state is ReadinessState.REACHABLE_UNCONFIGURED and models[name] is not None
+        )
+        if not row.ready and not configured_http:
+            raise UsageError(
+                f"cannot resume: saved provider {name!r} is {row.state.value}: {row.reason}"
+            )
 
 
 def _validated_selection_args(
@@ -274,6 +320,7 @@ def roster_for_run(
             preset=args.preset or default_preset(args.mode),
             source=resume_meta.get("roster_source"),
         )
+        validate_resume_capabilities(specs, registry, external_tool_policy)
     else:
         resolved = resolve_friends(args, registry, fake_cmd, downgrades, external_tool_policy)
         specs = resolved.specs

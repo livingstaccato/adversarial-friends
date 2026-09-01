@@ -2,8 +2,11 @@ import dataclasses
 
 import pytest
 
-from adversarial_friends.adapters import load_adapters
+from adversarial_friends.adapters import FriendSpec, load_adapters
 from adversarial_friends.authority import ExternalToolPolicy
+from adversarial_friends.cliargs import build_parser
+from adversarial_friends.commands import friends as friends_module
+from adversarial_friends.commands.friends import validate_resume_capabilities
 from adversarial_friends.errors import UsageError
 from adversarial_friends.paths import ADAPTER_DIR
 from adversarial_friends.providerconfig import ProviderPolicy
@@ -32,6 +35,38 @@ def _shim(path, body):
     path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def test_frozen_resume_skips_fresh_resolution_but_reprobes_capability(monkeypatch):
+    frozen = FriendSpec(
+        name="codex-ops",
+        cli="codex",
+        lens="ops",
+        model="gpt-5",
+        effort="high",
+        scope="repo",
+        timeout=900,
+    )
+    args = build_parser().parse_args(["run", "spec.md", "--mode", "report"])
+    args._resume_roster = [frozen]
+    args._resume_meta = {"roster_source": None}
+
+    def fresh_resolution_would_probe(*_args, **_kwargs):
+        raise AssertionError("resume attempted fresh provider resolution")
+
+    capability_checks = []
+    monkeypatch.setattr(friends_module, "resolve_friends", fresh_resolution_would_probe)
+    monkeypatch.setattr(
+        friends_module,
+        "validate_resume_capabilities",
+        lambda specs, registry, policy: capability_checks.append((specs, registry, policy)),
+    )
+
+    resolved, specs = friends_module.roster_for_run(args, {}, None, [])
+
+    assert specs == [frozen]
+    assert resolved.specs == [frozen]
+    assert capability_checks == [([frozen], {}, ExternalToolPolicy.DENY)]
 
 
 @pytest.mark.parametrize(
@@ -179,3 +214,23 @@ def test_explicit_provider_override_still_requires_capability_verification(regis
 
     assert rows["codex"].state is ReadinessState.POLICY_BLOCKED
     assert probes == ["codex"]
+
+
+def test_resume_reprobes_frozen_provider_without_discovery_policy(registry, tmp_path):
+    adapter = _probe_adapter(registry)
+    shim = _shim(tmp_path / "changed-codex", 'printf "%s\\n" "unknown option"; exit 2')
+    probes: list[str] = []
+
+    with pytest.raises(UsageError, match=r"saved provider.*policy-blocked"):
+        validate_resume_capabilities(
+            [FriendSpec("codex-ops-0", "codex", "ops", None, None, "doc", 30)],
+            {"codex": adapter},
+            ExternalToolPolicy.DENY,
+            which=lambda _binary: str(shim),
+            capability_probe=lambda candidate, executable: (
+                probes.append(f"{candidate.name}:{executable}")
+                or DenyProbeResult(False, "deny flags disappeared")
+            ),
+        )
+
+    assert probes == [f"codex:{shim}"]

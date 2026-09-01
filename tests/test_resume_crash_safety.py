@@ -54,9 +54,16 @@ _FINDING = {
 
 
 def _write_extract_request(round_dir):
+    run_id = round_dir.parent.name
+    round_no = int(round_dir.name.removeprefix("round-"))
     orchestrator.request_path(round_dir).write_text(
         json.dumps(
-            {"version": orchestrator.SCHEMA_VERSION, "question": orchestrator.QUESTION_EXTRACT}
+            {
+                "version": orchestrator.SCHEMA_VERSION,
+                "run_id": run_id,
+                "round": round_no,
+                "question": orchestrator.QUESTION_EXTRACT,
+            }
         )
     )
 
@@ -184,6 +191,36 @@ def test_a_retry_after_a_crash_mid_extraction_does_not_reappend_what_landed(tmp_
     assert any("already applied by an earlier" in d for d in resumed.downgrades)
 
 
+def test_extraction_retry_refuses_a_nonmatching_partial_ledger(tmp_path):
+    store = _store(tmp_path, "run-extract-mismatch")
+    round_dir = store.round_dir(2)
+    _write_extract_request(round_dir)
+    _write_extract_response(round_dir, ["finding A", "finding B"])
+    store.ledger.append(
+        Claim(
+            id=format_claim_id(1),
+            supersedes=None,
+            origin=["codex/ops"],
+            lens="extracted",
+            round=2,
+            advisory=False,
+            severity="high",
+            claim="different finding",
+            location=None,
+            evidence="e",
+            failure_scenario="f",
+            suggested_fix="s",
+        )
+    )
+
+    with pytest.raises(UsageError, match=r"partial extraction.*does not match"):
+        _call_resume_round_one(store, 2)
+
+    assert [record.claim for record in store.ledger.records() if isinstance(record, Claim)] == [
+        "different finding"
+    ]
+
+
 def test_a_clean_extraction_retry_reports_no_earlier_attempt(tmp_path):
     """The downgrade addition must not fire when nothing was actually
     interrupted -- the common case, not the crash."""
@@ -250,6 +287,51 @@ def test_a_retry_after_a_crash_mid_merge_does_not_crash(tmp_path):
     _assert_reducer_matches_existing_reconstruction(store)
 
 
+def test_merge_retry_refuses_a_nonmatching_partial_alias(tmp_path):
+    store = _store(tmp_path, "run-merge-mismatch")
+    store.ledger.append(_claim(1, "defect A"))
+    store.ledger.append(_claim(2, "defect B"))
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [_claim(1), _claim(2)])
+    orchestrator.response_path(round_dir).write_text(
+        json.dumps(
+            {
+                "version": orchestrator.SCHEMA_VERSION,
+                "merges": [
+                    {
+                        "canonical": "c-0001@1",
+                        "duplicate": "c-0002@1",
+                        "rationale": "same defect",
+                    }
+                ],
+            }
+        )
+    )
+    store.ledger.append(
+        Alias(
+            canonical="c-9999@1",
+            duplicate="c-0002@1",
+            round=2,
+            source="orchestrator",
+            rationale="different decision",
+        )
+    )
+
+    with pytest.raises(UsageError, match=r"partial merge.*does not match"):
+        _call_resume_round_one(store, 2)
+
+    aliases = [record for record in store.ledger.records() if isinstance(record, Alias)]
+    assert aliases == [
+        Alias(
+            canonical="c-9999@1",
+            duplicate="c-0002@1",
+            round=2,
+            source="orchestrator",
+            rationale="different decision",
+        )
+    ]
+
+
 def test_a_clean_merge_retry_reports_no_earlier_attempt(tmp_path):
     store = _store(tmp_path, "run-merge-clean")
     store.ledger.append(_claim(1, "defect A"))
@@ -287,11 +369,14 @@ def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monk
     response_path = orchestrator.response_path(round_dir)
     response_path.write_text(json.dumps(response), encoding="utf-8")
     expected_hash = "sha256:" + hashlib.sha256(response_path.read_bytes()).hexdigest()
+    request_hash = (
+        "sha256:" + hashlib.sha256(orchestrator.request_path(round_dir).read_bytes()).hexdigest()
+    )
 
     original_rename = Path.rename
 
     def fail_response_rename(self, target):
-        if self == response_path:
+        if Path(target).name == "RESPONSE.json.applied":
             raise RuntimeError("injected rename failure")
         return original_rename(self, target)
 
@@ -305,11 +390,63 @@ def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monk
         "version": 1,
         "round": 2,
         "question": "merge",
+        "request_sha256": request_hash,
         "sha256": expected_hash,
         "records": 1,
     }
-    assert response_path.exists()
+    assert response_path.with_suffix(".json.applying").exists()
     assert not response_path.with_suffix(".json.applied").exists()
+
+
+def test_response_application_and_digest_use_one_captured_snapshot(tmp_path, monkeypatch):
+    store = _store(tmp_path, "run-single-response-snapshot")
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [])
+    response = orchestrator.response_path(round_dir)
+    original = b'{"version": 1, "merges": []}'
+    response.write_bytes(original)
+    real_read = resume_mod.read_bounded_bytes
+    response_reads = 0
+
+    def swap_after_read(path, *, label, max_bytes=32 * 1024 * 1024):
+        nonlocal response_reads
+        payload = real_read(path, label=label, max_bytes=max_bytes)
+        if label == "orchestrator response":
+            response_reads += 1
+            Path(path).write_bytes(
+                b'{"version": 1, "merges": [{"canonical": "x", "duplicate": "y"}]}'
+            )
+        return payload
+
+    monkeypatch.setattr(resume_mod, "read_bounded_bytes", swap_after_read)
+
+    _call_resume_round_one(store, 2)
+
+    applied = round_dir / "RESPONSE.json.applied"
+    checkpoint = json.loads((store.run_dir / "run.json").read_text())
+    assert response_reads == 1
+    assert applied.read_bytes() == original
+    assert checkpoint["applied_response"]["sha256"] == (
+        "sha256:" + hashlib.sha256(original).hexdigest()
+    )
+
+
+def test_response_symlink_is_refused_without_a_state_transition(tmp_path):
+    store = _store(tmp_path, "run-response-symlink")
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [])
+    outside = tmp_path / "outside-response.json"
+    outside.write_text('{"version": 1, "merges": []}', encoding="utf-8")
+    response = orchestrator.response_path(round_dir)
+    response.symlink_to(outside)
+
+    with pytest.raises(UsageError, match="response artifact must be a regular file"):
+        _call_resume_round_one(store, 2)
+
+    assert response.is_symlink()
+    assert not (round_dir / "RESPONSE.json.applying").exists()
+    assert not (round_dir / "RESPONSE.json.applied").exists()
+    assert not (store.run_dir / "run.json").exists()
 
 
 def test_retry_recovers_matching_applied_response_after_rename(tmp_path):
@@ -431,6 +568,39 @@ def test_hostile_request_is_refused_without_applying_or_rewriting_response(tmp_p
 
     assert response.read_bytes() == before
     assert not response.with_suffix(".json.applied").exists()
+    assert not (store.run_dir / "run.json").exists()
+
+
+@pytest.mark.parametrize(
+    "request_payload",
+    [
+        {},
+        {"version": 1, "run_id": "other", "round": 2, "question": "merge"},
+        {"version": 1, "run_id": "run-request-binding", "round": 3, "question": "merge"},
+        {"version": 1, "run_id": "run-request-binding", "round": 2, "question": "unknown"},
+        {"version": 1, "run_id": "run-request-binding", "round": 2, "question": 1},
+    ],
+)
+def test_response_requires_the_exact_outstanding_request_before_mutation(tmp_path, request_payload):
+    store = _store(tmp_path, "run-request-binding")
+    store.ledger.append(_claim(1))
+    round_dir = store.round_dir(2)
+    orchestrator.request_path(round_dir).write_text(json.dumps(request_payload), encoding="utf-8")
+    response = orchestrator.response_path(round_dir)
+    response.write_text('{"version": 1, "merges": []}', encoding="utf-8")
+    before = {
+        "ledger": (store.run_dir / "claims.jsonl").read_bytes(),
+        "request": orchestrator.request_path(round_dir).read_bytes(),
+        "response": response.read_bytes(),
+    }
+
+    with pytest.raises(UsageError, match="outstanding orchestrator request"):
+        _call_resume_round_one(store, 2)
+
+    assert (store.run_dir / "claims.jsonl").read_bytes() == before["ledger"]
+    assert orchestrator.request_path(round_dir).read_bytes() == before["request"]
+    assert response.read_bytes() == before["response"]
+    assert not list(round_dir.glob("RESPONSE.json.*"))
     assert not (store.run_dir / "run.json").exists()
 
 

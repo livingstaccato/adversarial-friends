@@ -132,6 +132,7 @@ def snapshot_commit(repo: Path) -> str:
 
 def add_worktree(repo: Path, sha: str, dest: Path) -> Path:
     dest = Path(dest)
+    secure_mkdir(dest, exist_ok=True, root=dest.parent)
     _git(Path(repo), *NO_HOOKS, "worktree", "add", "--detach", str(dest), sha)
     return dest
 
@@ -153,9 +154,9 @@ def doc_scope_dir(dest: Path, artifact: Path) -> Path:
     directory with no path back to the source tree.
     """
     dest = Path(dest)
-    secure_mkdir(dest, parents=True, exist_ok=True)
+    secure_mkdir(dest, parents=True, exist_ok=True, root=dest.parent)
     target = dest / Path(artifact).name
     if target.exists():
         raise AfError(f"doc scope destination already occupied: {target}")
-    secure_copy(artifact, target)
+    secure_copy(artifact, target, root=dest.parent)
     return dest

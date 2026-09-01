@@ -25,6 +25,8 @@ def read_bounded_bytes(path: Path, *, label: str, max_bytes: int = MAX_JSON_FILE
         if info.st_size > max_bytes:
             raise UsageError(f"{label} {target} exceeds the {max_bytes}-byte limit")
         descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        raise
     except UsageError:
         raise
     except OSError as exc:
@@ -53,10 +55,8 @@ def read_bounded_bytes(path: Path, *, label: str, max_bytes: int = MAX_JSON_FILE
         os.close(descriptor)
 
 
-def load_json_object(
-    path: Path, *, label: str, max_bytes: int = MAX_JSON_FILE_BYTES
-) -> dict[str, Any]:
-    payload = read_bounded_bytes(path, label=label, max_bytes=max_bytes)
+def decode_json_object(payload: bytes, *, path: Path, label: str) -> dict[str, Any]:
+    """Decode bytes already captured from one bounded file snapshot."""
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -72,3 +72,10 @@ def load_json_object(
     except (RecursionError, TypeError, ValueError) as exc:
         raise UsageError(f"{label} {path} exceeds the metadata bound: {exc}") from exc
     return value
+
+
+def load_json_object(
+    path: Path, *, label: str, max_bytes: int = MAX_JSON_FILE_BYTES
+) -> dict[str, Any]:
+    payload = read_bounded_bytes(path, label=label, max_bytes=max_bytes)
+    return decode_json_object(payload, path=path, label=label)

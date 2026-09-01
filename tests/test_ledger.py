@@ -114,6 +114,13 @@ def test_unknown_record_type_is_rejected():
         record_from_dict({"type": "nonsense"})
 
 
+def test_record_schema_rejects_extra_keys():
+    payload = record_to_dict(make_claim())
+    payload["future_surprise"] = "must not be ignored"
+    with pytest.raises(UsageError, match="unexpected keys"):
+        record_from_dict(payload)
+
+
 def test_amended_claim_roundtrips_with_multiple_origins():
     """origin is a list precisely so an amendment can carry author + amender."""
     claim = make_claim(
@@ -197,7 +204,39 @@ def test_ledger_never_follows_a_symlink_for_read_or_append(tmp_path):
 
     with pytest.raises(OSError):
         ledger.append(make_claim())
-    with pytest.raises(OSError):
+    with pytest.raises(UsageError, match="cannot read ledger"):
         list(ledger.records())
 
     assert outside.read_text(encoding="utf-8") == "sentinel\n"
+
+
+def test_ledger_refuses_an_oversized_line_before_json_decode(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    path.write_bytes(b'"' + b"x" * (8 * 1024 * 1024) + b'"\n')
+    with pytest.raises(UsageError, match="line 1 exceeds"):
+        list(Ledger(path).records())
+
+
+def test_ledger_refuses_an_oversized_sparse_file(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    with path.open("wb") as handle:
+        handle.truncate(129 * 1024 * 1024)
+    with pytest.raises(UsageError, match="file exceeds"):
+        list(Ledger(path).records())
+
+
+def test_ledger_applies_shared_string_and_depth_bounds(tmp_path):
+    path = tmp_path / "claims.jsonl"
+    huge = record_to_dict(make_claim(claim="x" * (4 * 1024 * 1024 + 1)))
+    path.write_text(json.dumps(huge) + "\n", encoding="utf-8")
+    with pytest.raises(UsageError, match="JSON bounds"):
+        list(Ledger(path).records())
+
+    nested: object = "leaf"
+    for _ in range(70):
+        nested = [nested]
+    payload = record_to_dict(make_claim())
+    payload["nested"] = nested
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(UsageError, match="JSON bounds"):
+        list(Ledger(path).records())

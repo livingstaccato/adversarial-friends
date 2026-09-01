@@ -151,10 +151,10 @@ def test_terminal_staging_failure_preserves_both_prior_artifacts(monkeypatch, tm
     expected = _waiting_artifacts(store)
     original_write = runstore_module.secure_write_text
 
-    def fail_report_stage(path, text):
+    def fail_report_stage(path, text, **kwargs):
         if path.name == ".report.md.terminal-new":
             raise OSError("simulated report staging failure")
-        return original_write(path, text)
+        return original_write(path, text, **kwargs)
 
     monkeypatch.setattr(runstore_module, "secure_write_text", fail_report_stage)
     with pytest.raises(OSError, match="report staging"):
@@ -168,14 +168,21 @@ def test_terminal_replacement_failure_rolls_back_the_first_replacement(
 ):
     store = RunStore(tmp_path, f"run-replace-{failed_target}")
     expected = _waiting_artifacts(store)
-    original_replace = Path.replace
+    original_replace = runstore_module.secure_replace
+    failed = False
 
-    def fail_selected_replace(path, target):
-        if path.name.endswith(".terminal-new") and Path(target).name == failed_target:
+    def fail_selected_replace(path, target, *, root):
+        nonlocal failed
+        if (
+            not failed
+            and path.name.endswith(".terminal-new")
+            and Path(target).name == failed_target
+        ):
+            failed = True
             raise OSError(f"simulated {failed_target} replacement failure")
-        return original_replace(path, target)
+        return original_replace(path, target, root=root)
 
-    monkeypatch.setattr(Path, "replace", fail_selected_replace)
+    monkeypatch.setattr(runstore_module, "secure_replace", fail_selected_replace)
     with pytest.raises(OSError, match=rf"{failed_target} replacement"):
         store.write_terminal_artifacts({"lifecycle_state": "terminal"}, "# terminal\n")
     _assert_waiting_artifacts(store, expected)

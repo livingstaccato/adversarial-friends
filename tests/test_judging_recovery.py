@@ -165,3 +165,76 @@ def test_judging_retry_reuses_a_successor_persisted_before_the_crash(monkeypatch
 
     assert [saved.id for saved in store.ledger.claims()] == [claim.id, successor.id]
     assert not any(saved.id.endswith("@3") for saved in outcome.claims)
+
+
+def test_judging_replay_does_not_let_future_votes_rewrite_an_earlier_successor(
+    monkeypatch, tmp_path
+):
+    """A durable round 3 can exist when run.json lagged the append-only
+    ledger. Replaying round 2 must settle it from round-2 votes alone: future
+    votes are not prior history and cannot change the successor it minted."""
+    first = _spec("first-ops-0", "first")
+    second = _spec("second-ops-0", "second")
+    claim = _claim()
+    round_two = [
+        Verdict(
+            claim.id,
+            f"fake/{lens}",
+            2,
+            "amended",
+            "high",
+            "verified",
+            "round two reasoning",
+            None,
+            "round two wording",
+        )
+        for lens in ("first", "second")
+    ]
+    successor, _note = build_successor(claim, round_two, 2)
+    round_three = [
+        Verdict(
+            claim.id,
+            f"fake/{lens}",
+            3,
+            "amended",
+            "high",
+            "verified",
+            "future reasoning",
+            None,
+            "future wording",
+        )
+        for lens in ("first", "second")
+    ]
+    store = RunStore(tmp_path, "run-future-judging")
+    for record in [claim, *round_two, successor, *round_three]:
+        store.ledger.append(record)
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("# artifact\n")
+    monkeypatch.setattr(
+        crossexam_mod,
+        "dispatch_round",
+        lambda *_args, **_kwargs: pytest.fail("durable judging work was redispatched"),
+    )
+
+    outcome = run_rounds(
+        [first, second],
+        [claim, successor],
+        store,
+        ReviewState.replay(store.ledger.records()),
+        {},
+        None,
+        tmp_path / "schema.json",
+        artifact,
+        artifact.read_text(),
+        None,
+        None,
+        threading.Event(),
+        Budget(max_calls=10, started=0.0),
+        3,
+        first_round=2,
+        now=lambda: 0.0,
+    )
+
+    assert successor in outcome.claims
+    assert not any(saved.id.endswith("@3") for saved in outcome.claims)
+    assert outcome.verdicts[:2] == round_two

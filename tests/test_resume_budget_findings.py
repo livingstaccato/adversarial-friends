@@ -33,15 +33,12 @@ def _store(tmp_path, name):
     return store
 
 
-def _write_empty_merge_round(round_dir):
+def _write_empty_merge_round(store, round_no):
     """The budget restore is what these tests exercise, not the merge
     application -- an empty `merges` list is the cheapest valid response
     that lets `resume_round_one` reach the code under test."""
-    orchestrator.request_path(round_dir).write_text(
-        json.dumps(
-            {"version": orchestrator.SCHEMA_VERSION, "question": orchestrator.QUESTION_MERGE}
-        )
-    )
+    round_dir = store.round_dir(round_no)
+    orchestrator.write_request(round_dir, store.run_id, round_no, [])
     orchestrator.response_path(round_dir).write_text(
         json.dumps({"version": orchestrator.SCHEMA_VERSION, "merges": []})
     )
@@ -166,7 +163,7 @@ def test_a_resume_restores_the_full_prior_spend_not_one_rounds_worth(tmp_path):
     the halting iteration's own round 1 -- 27 calls total, nothing to do
     with `len(specs)`, the one-round guess the old heuristic charged back."""
     store = _store(tmp_path, "run-restore")
-    _write_empty_merge_round(store.round_dir(6))
+    _write_empty_merge_round(store, 6)
     budget = Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0)
 
     _resume(store, 6, budget, {"spent_calls": 27})
@@ -179,7 +176,7 @@ def test_a_resume_with_no_recorded_spend_undercounts_rather_than_crashes(tmp_pat
     key at all. Absent is 0 -- an undercount by omission, not a crash, and
     the honest choice when the true number was simply never recorded."""
     store = _store(tmp_path, "run-restore-missing")
-    _write_empty_merge_round(store.round_dir(2))
+    _write_empty_merge_round(store, 2)
     budget = Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0)
 
     _resume(store, 2, budget, {})
@@ -195,7 +192,7 @@ def test_cumulative_spend_compounds_across_two_halts(monkeypatch, tmp_path):
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-compound")
-    _write_empty_merge_round(store.round_dir(1))
+    _write_empty_merge_round(store, 1)
 
     first_halt_budget = Budget(max_calls=1000, max_wall_clock_s=3600.0, started=0.0)
     first_halt_budget.spend(9)

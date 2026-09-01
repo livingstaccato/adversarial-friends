@@ -295,35 +295,6 @@ def test_per_run_disable_overrides_persistently_enabled_provider(monkeypatch, tm
         friends_module.resolve_friends(args, registry, None, [])
 
 
-def test_frozen_resume_roster_skips_fresh_resolution_and_probes(monkeypatch):
-    from adversarial_friends.adapters import FriendSpec
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-
-    frozen = FriendSpec(
-        name="codex-ops",
-        cli="codex",
-        lens="ops",
-        model="gpt-5",
-        effort="high",
-        scope="repo",
-        timeout=900,
-    )
-    args = build_parser().parse_args(["run", "spec.md", "--mode", "report"])
-    args._resume_roster = [frozen]
-    args._resume_meta = {"roster_source": None}
-
-    def fresh_resolution_would_probe(*_args, **_kwargs):
-        raise AssertionError("resume attempted fresh provider resolution")
-
-    monkeypatch.setattr(friends_module, "resolve_friends", fresh_resolution_would_probe)
-
-    resolved, specs = friends_module.roster_for_run(args, {}, None, [])
-
-    assert specs == [frozen]
-    assert resolved.specs == [frozen]
-
-
 def test_frozen_resume_roster_still_validates_restored_provider_controls(monkeypatch):
     from adversarial_friends.adapters import FriendSpec
     from adversarial_friends.cliargs import build_parser

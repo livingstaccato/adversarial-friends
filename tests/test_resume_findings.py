@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from adversarial_friends import orchestrator
 from adversarial_friends.ids import format_claim_id
 from adversarial_friends.ledger import Alias, Claim
 from adversarial_friends.merge import canonical_claims, next_claim_number
@@ -269,8 +270,8 @@ def test_the_resumed_judging_round_is_handed_the_prior_outcome(monkeypatch, tmp_
     sentinel = object()
     store = resume_mod.RunStore(tmp_path, "run-y")
     store.lock()
-    (store.run_dir / "round-1").mkdir(parents=True, exist_ok=True)
-    (store.run_dir / "round-1" / "REQUEST.json").write_text('{"question": "merge"}')
+    round_dir = store.round_dir(1)
+    orchestrator.write_request(round_dir, store.run_id, 1, [])
     (store.run_dir / "round-1" / "RESPONSE.json").write_text('{"version": 1, "merges": []}')
 
     args = argparse.Namespace(
@@ -333,7 +334,7 @@ def test_resume_excludes_every_transitive_origin_from_judging(monkeypatch, tmp_p
     for record in records:
         store.ledger.append(record)
     round_dir = store.round_dir(3)
-    (round_dir / "REQUEST.json").write_text('{"question": "merge"}')
+    orchestrator.write_request(round_dir, store.run_id, 3, [])
     (round_dir / "RESPONSE.json").write_text('{"version": 1, "merges": []}')
     args = argparse.Namespace(
         mode="crossexam",

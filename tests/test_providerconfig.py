@@ -218,10 +218,10 @@ def test_read_os_error_names_config_file(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True)
     path.write_text("{}", encoding="utf-8")
 
-    def fail_read(self: Path, encoding: str = "utf-8") -> str:
+    def fail_read(*_args, **_kwargs):
         raise PermissionError("mock permission failure")
 
-    monkeypatch.setattr(Path, "read_text", fail_read)
+    monkeypatch.setattr(providerconfig, "read_bounded_bytes", fail_read)
     with pytest.raises(UsageError, match=r"config.json.*mock permission failure"):
         providerconfig.load(["ollama"])
 
@@ -232,4 +232,24 @@ def test_invalid_utf8_is_reported_as_invalid_provider_configuration(tmp_path, mo
     path.parent.mkdir(parents=True)
     path.write_bytes(b"\xff\xfe")
     with pytest.raises(UsageError, match=r"config.json.*invalid provider configuration"):
+        providerconfig.load(["ollama"])
+
+
+def test_provider_config_is_bounded_before_json_decode(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = providerconfig.config_path()
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b" " * (256 * 1024 + 1))
+    with pytest.raises(UsageError, match=r"config.json.*262144-byte limit"):
+        providerconfig.load(["ollama"])
+
+
+def test_provider_config_never_follows_a_symlink(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config-home"))
+    path = providerconfig.config_path()
+    path.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"version": 1, "providers": {}}', encoding="utf-8")
+    path.symlink_to(outside)
+    with pytest.raises(UsageError, match=r"config.json.*regular file"):
         providerconfig.load(["ollama"])

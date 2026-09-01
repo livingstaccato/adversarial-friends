@@ -165,7 +165,7 @@ def _isolation_root(store: RunStore, round_no: int, keep: bool) -> Iterator[Path
         root = store.run_dir / "isolation" / f"round-{round_no}"
         from .secureio import secure_mkdir
 
-        secure_mkdir(root, parents=True, exist_ok=True)
+        secure_mkdir(root, parents=True, exist_ok=True, root=store.root)
         yield root
         return
     with tempfile.TemporaryDirectory(prefix=f"af-isolation-r{round_no}-") as path:

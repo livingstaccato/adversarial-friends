@@ -110,7 +110,7 @@ def private_dirs(private_root: Path) -> dict[str, str]:
     scratch = private_root / "tmp"
     data = private_root / "state"
     for path in (scratch, data):
-        secure_mkdir(path, parents=True, exist_ok=True)
+        secure_mkdir(path, parents=True, exist_ok=True, root=private_root.parent)
     return {
         "TMPDIR": str(scratch),
         "TEMP": str(scratch),

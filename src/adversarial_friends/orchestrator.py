@@ -185,6 +185,16 @@ def read_response(
             "re-run with --resume."
         )
     data = _load(path)
+    return validate_merge_response(data, path, known_ids, tolerate_duplicates)
+
+
+def validate_merge_response(
+    data: dict[str, Any],
+    path: Path,
+    known_ids: set[str],
+    tolerate_duplicates: frozenset[str] = frozenset(),
+) -> list[MergeDecision]:
+    """Validate merge data already decoded from one immutable snapshot."""
 
     version = data.get("version")
     if version != SCHEMA_VERSION:
@@ -343,6 +353,11 @@ def read_extract_response(
             f"{RESPONSE_NAME}, and re-run with --resume."
         )
     data = _load(path)
+    return validate_extract_response(data, path)
+
+
+def validate_extract_response(data: dict[str, Any], path: Path) -> list[dict[str, Any]]:
+    """Validate extraction data already decoded from one immutable snapshot."""
     if data.get("version") != SCHEMA_VERSION:
         raise UsageError(
             f"{path}: unsupported version {data.get('version')!r} "

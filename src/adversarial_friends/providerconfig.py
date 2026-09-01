@@ -10,12 +10,15 @@ from pathlib import Path
 import tempfile
 
 from .errors import UsageError
+from .jsonio import read_bounded_bytes
+from .outcomes import json_node_count
 from .trust import MODEL_RE
 
 CONFIG_VERSION = 1
 _TOP_LEVEL_KEYS = frozenset({"version", "providers"})
 _PROVIDER_KEYS = frozenset({"enabled", "model"})
 _NO_VALUE = object()
+MAX_PROVIDER_CONFIG_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -64,18 +67,32 @@ def load(known: Iterable[str], env: Mapping[str, str] | None = None) -> Provider
     path = config_path(env)
     defaults = {name: ProviderSetting() for name in sorted(known_names)}
     try:
-        contents = path.read_text(encoding="utf-8")
+        payload = read_bounded_bytes(
+            path,
+            label="provider configuration",
+            max_bytes=MAX_PROVIDER_CONFIG_BYTES,
+        )
     except FileNotFoundError:
         return ProviderPolicy(defaults)
-    except UnicodeDecodeError as exc:
-        raise UsageError(f"{path}: invalid provider configuration: {exc}") from exc
+    except UsageError:
+        raise
     except OSError as exc:
         raise UsageError(f"{path}: cannot read configuration: {exc}") from exc
+    try:
+        contents = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise UsageError(f"{path}: invalid provider configuration: {exc}") from exc
 
     try:
         data = json.loads(contents)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        if not isinstance(exc, json.JSONDecodeError):
+            raise UsageError(f"{path}: malformed JSON within bounds: {exc}") from exc
         raise UsageError(f"{path}: malformed JSON: {exc.msg}") from exc
+    try:
+        json_node_count(data, "provider configuration")
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise UsageError(f"{path}: provider configuration exceeds JSON bounds: {exc}") from exc
     if not isinstance(data, dict):
         raise _invalid(path, "top-level", "must be an object", got=data)
     if set(data) != _TOP_LEVEL_KEYS:

@@ -265,10 +265,14 @@ def _legacy_halt_is_outstanding(meta: dict[str, Any], run_dir: Path) -> bool:
 
 def validate_lifecycle_and_snapshot(meta: dict[str, Any], *, run_dir: Path, legacy: bool) -> None:
     lifecycle = meta.get("lifecycle_state")
-    if not legacy and lifecycle not in {"waiting-for-orchestrator", "response-applied"}:
+    if not legacy and lifecycle not in {
+        "waiting-for-orchestrator",
+        "response-applying",
+        "response-applied",
+    }:
         raise UsageError(
             "cannot resume: saved lifecycle_state must be waiting-for-orchestrator "
-            "or response-applied"
+            "or a response-applying/response-applied recovery state"
         )
     if legacy and lifecycle not in (None, "waiting-for-orchestrator"):
         raise UsageError("cannot resume: saved lifecycle_state must be waiting-for-orchestrator")

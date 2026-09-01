@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import stat
 from typing import IO, Any
 
 from .errors import UsageError
@@ -22,6 +21,12 @@ from .secureio import (
     repair_private_tree,
     secure_copy,
     secure_mkdir,
+    secure_open_directory,
+    secure_open_read,
+    secure_open_write,
+    secure_read_text,
+    secure_replace,
+    secure_unlink,
     secure_write_text,
 )
 from .trust import contain_path
@@ -45,18 +50,22 @@ class RunStore:
         self.root = Path(root)
         self.run_id = run_id
         self.run_dir = self.root / run_id
+        try:
+            secure_mkdir(self.root, parents=True, exist_ok=True)
+        except OSError as exc:
+            raise UsageError(f"cannot use run root {self.root}: {exc}") from exc
         if resume:
             # A resumed run deliberately reopens a directory that already
             # holds a ledger, an artifact copy, and a round-1 REQUEST -- the
             # refusal below exists to stop two DIFFERENT runs sharing a
             # directory, which is the opposite case.
             try:
-                run_info = self.run_dir.lstat()
+                descriptor = secure_open_directory(self.run_dir, root=self.root)
             except OSError:
-                run_info = None
-            if run_info is None or not stat.S_ISDIR(run_info.st_mode):
-                raise UsageError(f"cannot resume: no such run directory: {self.run_dir}")
-            self.ledger = Ledger(self.run_dir / "claims.jsonl")
+                raise UsageError(f"cannot resume: no such run directory: {self.run_dir}") from None
+            else:
+                os.close(descriptor)
+            self.ledger = Ledger(self.run_dir / "claims.jsonl", root=self.root)
             return
         if self.run_dir.exists():
             # A prior run (or a caller-supplied --out that collides with one)
@@ -67,7 +76,7 @@ class RunStore:
             # friend output too. Refuse instead of mixing two runs together.
             raise UsageError(f"run directory already exists: {self.run_dir}")
         try:
-            secure_mkdir(self.run_dir, parents=True)
+            secure_mkdir(self.run_dir, root=self.root)
         except OSError as exc:
             # E.g. an ancestor path component (commonly --out itself)
             # already exists as a plain file rather than a directory.
@@ -75,7 +84,7 @@ class RunStore:
             # surfaced here as a clean, actionable UsageError instead of an
             # unhandled traceback out of cmd_run.
             raise UsageError(f"cannot create run directory {self.run_dir}: {exc}") from exc
-        self.ledger = Ledger(self.run_dir / "claims.jsonl")
+        self.ledger = Ledger(self.run_dir / "claims.jsonl", root=self.root)
 
     def lock(self) -> None:
         """Take the run directory's exclusive lock for the rest of the process.
@@ -94,12 +103,7 @@ class RunStore:
         exactly that lifetime.
         """
         lock_path = self.run_dir / ".lock"
-        descriptor = os.open(
-            lock_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        os.fchmod(descriptor, 0o600)
+        descriptor = secure_open_write(lock_path, root=self.root)
         self._lock_handle = os.fdopen(descriptor, "w", encoding="utf-8")
         try:
             fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -116,7 +120,7 @@ class RunStore:
 
     def round_dir(self, round_no: int) -> Path:
         path = self.run_dir / f"round-{round_no}"
-        secure_mkdir(path, parents=True, exist_ok=True)
+        secure_mkdir(path, parents=True, exist_ok=True, root=self.root)
         return path
 
     def friend_prompt_path(self, round_no: int, friend_name: str) -> Path:
@@ -146,10 +150,11 @@ class RunStore:
 
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"
-        secure_mkdir(target_dir, parents=True, exist_ok=True)
+        secure_mkdir(target_dir, parents=True, exist_ok=True, root=self.root)
         target = target_dir / Path(source).name
-        secure_copy(source, target)
-        with target.open("rb") as handle:
+        secure_copy(source, target, root=self.root)
+        descriptor = secure_open_read(target, root=self.root)
+        with os.fdopen(descriptor, "rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
         return target, f"sha256:{digest}"
 
@@ -175,10 +180,10 @@ class RunStore:
         and the write has already succeeded by that point.
         """
         tmp = path.with_name(f".{path.name}.tmp")
-        secure_write_text(tmp, text)
-        tmp.replace(path)
+        secure_write_text(tmp, text, root=self.root)
+        secure_replace(tmp, path, root=self.root)
         with contextlib.suppress(OSError):
-            fd = os.open(self.run_dir, os.O_RDONLY)
+            fd = secure_open_directory(self.run_dir, root=self.root)
             try:
                 os.fsync(fd)
             finally:
@@ -186,11 +191,11 @@ class RunStore:
         return path
 
     def _stage_text(self, path: Path, text: str) -> Path:
-        return secure_write_text(path, text)
+        return secure_write_text(path, text, root=self.root)
 
     def _fsync_run_dir(self) -> None:
         with contextlib.suppress(OSError):
-            fd = os.open(self.run_dir, os.O_RDONLY)
+            fd = secure_open_directory(self.run_dir, root=self.root)
             try:
                 os.fsync(fd)
             finally:
@@ -213,26 +218,24 @@ class RunStore:
         report_new = self.run_dir / ".report.md.terminal-new"
         report_old = self.run_dir / ".report.md.terminal-old"
         staged = (run_new, report_new, report_old)
-        prior_report = report_path.read_text(encoding="utf-8") if report_path.exists() else None
+        try:
+            prior_report = secure_read_text(report_path, root=self.root)
+        except FileNotFoundError:
+            prior_report = None
         try:
             self._stage_text(run_new, metadata)
             self._stage_text(report_new, report)
             if prior_report is not None:
                 self._stage_text(report_old, prior_report)
-            report_new.replace(report_path)
+            secure_replace(report_new, report_path, root=self.root)
             try:
-                run_new.replace(run_path)
+                secure_replace(run_new, run_path, root=self.root)
             except BaseException as original:
                 try:
                     if prior_report is None:
-                        report_path.unlink(missing_ok=True)
+                        secure_unlink(report_path, root=self.root, missing_ok=True)
                     else:
-                        try:
-                            report_old.replace(report_path)
-                        except OSError:
-                            # A test hook or wrapper may fail Path.replace;
-                            # os.replace is the independent recovery path.
-                            os.replace(report_old, report_path)  # noqa: PTH105
+                        secure_replace(report_old, report_path, root=self.root)
                     self._fsync_run_dir()
                 except OSError as rollback_error:
                     original.add_note(f"terminal report rollback also failed: {rollback_error}")
@@ -241,7 +244,7 @@ class RunStore:
         finally:
             for path in staged:
                 with contextlib.suppress(OSError):
-                    path.unlink()
+                    secure_unlink(path, root=self.root)
 
     def write_run_json(self, meta: dict[str, Any]) -> Path:
         json_node_count(meta)
@@ -254,7 +257,7 @@ class RunStore:
 
     def write_sensitive(self, path: Path, text: str) -> Path:
         """Write a known run-owned text artifact with mode 0600."""
-        return secure_write_text(contain_path(self.run_dir, path), text)
+        return secure_write_text(contain_path(self.run_dir, path), text, root=self.root)
 
     def repair_permissions(self) -> None:
         repair_private_tree(self.run_dir)

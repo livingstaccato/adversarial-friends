@@ -156,7 +156,15 @@ def _run_dir(tmp_path: Path, meta: dict[str, object]) -> Path:
     round_dir = run_dir / "round-1"
     round_dir.mkdir()
     (round_dir / "REQUEST.json").write_text(
-        json.dumps({"version": 1, "question": "merge"}), encoding="utf-8"
+        json.dumps(
+            {
+                "version": 1,
+                "run_id": run_dir.name,
+                "round": 1,
+                "question": "merge",
+            }
+        ),
+        encoding="utf-8",
     )
     (run_dir / "run.json").write_text(json.dumps(meta), encoding="utf-8")
     return run_dir

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from .errors import UsageError
+from .outcomes import json_node_count
+from .secureio import secure_mkdir, secure_open_append, secure_open_directory, secure_open_read
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,53 @@ _TYPE_NAMES: dict[type, str] = {
 }
 _BY_NAME = {name: cls for cls, name in _TYPE_NAMES.items()}
 
+_FIELD_TYPES: dict[str, dict[str, tuple[type, ...]]] = {
+    "claim": {
+        "id": (str,),
+        "supersedes": (str, type(None)),
+        "origin": (list,),
+        "lens": (str,),
+        "round": (int,),
+        "advisory": (bool,),
+        "severity": (str,),
+        "claim": (str,),
+        "location": (str, type(None)),
+        "evidence": (str,),
+        "failure_scenario": (str,),
+        "suggested_fix": (str,),
+    },
+    "verdict": {
+        "claim_id": (str,),
+        "judge": (str,),
+        "round": (int,),
+        "verdict": (str,),
+        "confidence": (str,),
+        "evidence_assessment": (str,),
+        "reasoning": (str,),
+        "counter_evidence": (str, type(None)),
+        "amended_claim": (str, type(None)),
+    },
+    "alias": {
+        "canonical": (str,),
+        "duplicate": (str,),
+        "round": (int,),
+        "source": (str,),
+        "rationale": (str,),
+    },
+    "resolution": {
+        "claim_id": (str,),
+        "disposition": (str,),
+        "author": (str,),
+        "evidence": (str,),
+        "round": (int,),
+        "verified": (str,),
+    },
+}
+
+MAX_LEDGER_BYTES = 128 * 1024 * 1024
+MAX_LEDGER_LINE_BYTES = 8 * 1024 * 1024
+_READ_CHUNK = 64 * 1024
+
 
 def record_to_dict(record: Record) -> dict[str, Any]:
     payload = asdict(record)
@@ -92,8 +141,23 @@ def record_from_dict(payload: dict[str, Any]) -> Record:
         raise UsageError(f"unknown ledger record type: {kind!r}")
 
     known = {f.name for f in fields(cls)}
-    # Ignore extra keys not in the dataclass — forward compatibility.
-    filtered = {k: v for k, v in payload.items() if k in known}
+    expected = known | {"type"}
+    unexpected = set(payload) - expected
+    if unexpected:
+        raise UsageError(f"malformed {kind!r} record: unexpected keys {sorted(unexpected)}")
+    missing = known - set(payload)
+    if missing:
+        raise UsageError(f"malformed {kind!r} record: missing keys {sorted(missing)}")
+    filtered = {k: payload[k] for k in known}
+    for field, expected_types in _FIELD_TYPES[kind].items():
+        value = filtered[field]
+        if type(value) not in expected_types:
+            names = " or ".join(item.__name__ for item in expected_types)
+            raise UsageError(
+                f"malformed {kind!r} record: {field} must be {names}, got {type(value).__name__}"
+            )
+    if kind == "claim" and not all(type(value) is str for value in filtered["origin"]):
+        raise UsageError("malformed 'claim' record: origin must contain only strings")
 
     try:
         return cast(Record, cls(**filtered))
@@ -104,18 +168,18 @@ def record_from_dict(payload: dict[str, Any]) -> Record:
 class Ledger:
     """A JSONL file of ledger records, read and written in append order."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, root: Path | None = None) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if root is None:
+            secure_mkdir(self.path.parent, parents=True, exist_ok=True)
+            self.root = self.path.parent
+        else:
+            self.root = Path(root)
+            secure_mkdir(self.path.parent, parents=True, exist_ok=True, root=self.root)
 
     def append(self, record: Record) -> None:
         encoded = (json.dumps(record_to_dict(record), sort_keys=True) + "\n").encode("utf-8")
-        created = not self.path.exists()
-        fd = os.open(
-            self.path,
-            os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
+        fd = secure_open_append(self.path, root=self.root)
         try:
             os.fchmod(fd, 0o600)
             view = memoryview(encoded)
@@ -127,30 +191,49 @@ class Ledger:
             os.fsync(fd)
         finally:
             os.close(fd)
-        if created:
-            parent_fd = os.open(self.path.parent, os.O_RDONLY)
-            try:
-                os.fsync(parent_fd)
-            finally:
-                os.close(parent_fd)
+        parent_fd = secure_open_directory(self.path.parent, root=self.root)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
 
     def records(self) -> Iterator[Record]:
-        if not self.path.exists():
+        try:
+            descriptor = secure_open_read(self.path, root=self.root)
+        except FileNotFoundError:
             return
-        descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(descriptor, encoding="utf-8") as handle:
-            for line_no, line in enumerate(handle, start=1):
-                line = line.strip()
-                if not line:
+        except OSError as exc:
+            raise UsageError(f"cannot read ledger {self.path}: {exc}") from exc
+        try:
+            info = os.fstat(descriptor)
+            if info.st_size > MAX_LEDGER_BYTES:
+                raise UsageError(
+                    f"ledger {self.path} file exceeds the {MAX_LEDGER_BYTES}-byte limit"
+                )
+            for line_no, raw in enumerate(_bounded_lines(descriptor, self.path), start=1):
+                if not raw.strip():
                     continue
                 try:
+                    line = raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise UsageError(f"{self.path}:{line_no}: ledger must be valid UTF-8") from exc
+                try:
                     payload = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise UsageError(f"{self.path}:{line_no}: malformed JSON: {exc.msg}") from exc
+                except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                    detail = exc.msg if isinstance(exc, json.JSONDecodeError) else str(exc)
+                    raise UsageError(f"{self.path}:{line_no}: malformed JSON: {detail}") from exc
+                try:
+                    json_node_count(payload, f"ledger record {line_no}")
+                except (RecursionError, TypeError, ValueError) as exc:
+                    raise UsageError(f"{self.path}:{line_no}: JSON bounds exceeded: {exc}") from exc
                 try:
                     yield record_from_dict(payload)
                 except UsageError as exc:
                     raise UsageError(f"{self.path}:{line_no}: {exc}") from exc
+        except OSError as exc:
+            raise UsageError(f"cannot read ledger {self.path}: {exc}") from exc
+        finally:
+            os.close(descriptor)
 
     def claims(self) -> list[Claim]:
         return [r for r in self.records() if isinstance(r, Claim)]
@@ -162,3 +245,31 @@ class Ledger:
         # Exact match on the versioned id: a verdict on c-0001@1 says nothing
         # about c-0001@2, whose wording a judge may never have seen.
         return [r for r in self.records() if isinstance(r, Verdict) and r.claim_id == claim_id]
+
+
+def _bounded_lines(descriptor: int, path: Path) -> Iterator[bytes]:
+    """Yield bounded JSONL records without materializing the whole ledger."""
+    pending = bytearray()
+    total = 0
+    line_no = 1
+    while chunk := os.read(descriptor, _READ_CHUNK):
+        total += len(chunk)
+        if total > MAX_LEDGER_BYTES:
+            raise UsageError(f"ledger {path} file exceeds the {MAX_LEDGER_BYTES}-byte limit")
+        start = 0
+        while True:
+            newline = chunk.find(b"\n", start)
+            segment = chunk[start:] if newline < 0 else chunk[start:newline]
+            if len(pending) + len(segment) > MAX_LEDGER_LINE_BYTES:
+                raise UsageError(
+                    f"ledger {path} line {line_no} exceeds the {MAX_LEDGER_LINE_BYTES}-byte limit"
+                )
+            pending.extend(segment)
+            if newline < 0:
+                break
+            yield bytes(pending)
+            pending.clear()
+            line_no += 1
+            start = newline + 1
+    if pending:
+        yield bytes(pending)

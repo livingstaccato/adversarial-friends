@@ -96,7 +96,7 @@ def _verdict_identity(verdict: Verdict) -> tuple[str, str, int]:
 def _durable_verdict_index(
     review: ReviewState, first_round: int
 ) -> dict[tuple[str, str, int], Verdict]:
-    """Index already-fsynced votes, refusing ambiguous same-round history."""
+    """Index replayable votes without making future rounds visible early."""
     indexed: dict[tuple[str, str, int], Verdict] = {}
     for verdict in review.verdicts:
         # Earlier rounds belong to the saved `prior` block. In particular,
@@ -165,7 +165,13 @@ def run_rounds(
     schedule. It is False for every loop iteration but the last, where
     another iteration will judge what this one leaves contested.
     """
-    outcome = CrossexamOutcome(claims=list(claims))
+    # A replayed ReviewState may already contain successors from later
+    # durable rounds even though run.json points us at an earlier one. Only
+    # claims that existed before this block are visible initially; each
+    # current-round successor is authenticated and injected by _settle_round.
+    outcome = CrossexamOutcome(
+        claims=[claim for claim in claims if claim.supersedes is None or claim.round < first_round]
+    )
     announced = announced_skips if announced_skips is not None else set()
     durable_verdicts = _durable_verdict_index(review, first_round)
     if prior is not None:
@@ -184,9 +190,6 @@ def run_rounds(
             raise UsageError(
                 "cannot recover judging: saved progress conflicts with the durable ledger"
             )
-        if prior_verdict is None:
-            outcome.verdicts.append(verdict)
-            seeded[identity] = verdict
 
     # A claim starts unjudged. `contested` is the non-terminal set, so
     # seeding every claim as contested is what puts it in round 2's slice.
@@ -237,10 +240,15 @@ def run_rounds(
         prompt_text_for: dict[str, str] = {}
         prompt_downgrades_for: dict[str, list[str]] = {}
         contested_ids = {c.id: c for c in contested}
+        recovered_for_round = {
+            identity: verdict
+            for identity, verdict in durable_verdicts.items()
+            if identity[2] == round_no and identity[0] in contested_ids
+        }
         recovered_judges = {
             judge
-            for claim_id, judge, recovered_round in durable_verdicts
-            if recovered_round == round_no and claim_id in contested_ids
+            for claim_id, judge, _recovered_round in recovered_for_round
+            if claim_id in contested_ids
         }
         recovered_judges.intersection_update(friend_key(spec) for spec in active)
         if recovered_judges:
@@ -278,6 +286,16 @@ def run_rounds(
             pending_for[spec.name] = slice_
             prompt_for[spec.name] = path
             prompt_text_for[spec.name] = prompt_text
+
+        # Durable votes from this round become visible only after every
+        # missing judge's prompt has been reconstructed. Dispatch was a
+        # simultaneous batch originally, so showing a retrying judge a
+        # peer's already-fsynced same-round vote would change the run. Future
+        # rounds remain invisible until their own turn through the loop.
+        for identity, verdict in recovered_for_round.items():
+            if identity not in seeded:
+                outcome.verdicts.append(verdict)
+                seeded[identity] = verdict
 
         if not judge_specs:
             # Every remaining claim was written by every friend. Nothing is
@@ -501,8 +519,9 @@ def _settle_round(
     id to the judges that never reported on it this round."""
     roster = [friend_key(s) for s in specs]
     for claim in contested:
-        state = review.claim_state(
+        state = vd.state_for(
             claim,
+            [verdict for verdict in outcome.verdicts if verdict.claim_id == claim.id],
             roster,
             round_no,
             max_rounds,
