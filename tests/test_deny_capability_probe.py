@@ -234,3 +234,20 @@ def test_resume_reprobes_frozen_provider_without_discovery_policy(registry, tmp_
         )
 
     assert probes == [f"codex:{shim}"]
+
+
+def test_resume_capability_validation_does_not_rediscover_current_host(monkeypatch, registry):
+    from adversarial_friends import readiness
+
+    def host_detection_is_forbidden(*_args, **_kwargs):
+        raise AssertionError("resume capability validation rediscovered the current host")
+
+    monkeypatch.setattr(readiness, "detect_host", host_detection_is_forbidden)
+
+    validate_resume_capabilities(
+        [FriendSpec("codex-ops-0", "codex", "ops", None, None, "doc", 30)],
+        {"codex": registry["codex"]},
+        AuthorityPolicy.deny_all(),
+        which=lambda _binary: "/bin/codex",
+        capability_probe=lambda *_args: DenyProbeResult(True, "verified"),
+    )

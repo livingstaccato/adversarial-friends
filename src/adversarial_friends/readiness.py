@@ -222,7 +222,7 @@ def assess_all(
     """
     environ = os.environ if env is None else env
     probe_fn = http_transport.probe if probe is None else probe
-    host = detect_host(environ, host_provider=host_provider)
+    host = detect_host(environ, host_provider=host_provider) if selection_policy else None
     rows: dict[str, FriendReadiness] = {}
 
     for name, adapter in sorted(registry.items()):
