@@ -208,6 +208,17 @@ def legacy_successful_friend_ids(rows: list[dict[str, Any]], critique_round: int
     return [name for name in ordered_names if _success_status(status_by_name[name])]
 
 
+def any_friend_succeeded(rows: list[dict[str, Any]]) -> bool:
+    """Whether any persisted result was usable, advisory or independent.
+
+    Participation authority is filtered separately.  This fact drives the
+    report-mode distinction between "an advisory review answered" and
+    "nothing answered at all", so excluding host rows here would erase
+    useful audit evidence during resume.
+    """
+    return any(_success_status(str(row["status"])) for row in rows)
+
+
 def normalize_resume_report_state(meta: dict[str, Any]) -> dict[str, object]:
     """Validate saved values consumed by carry-over and its eventual report."""
     normalized: dict[str, object] = {}

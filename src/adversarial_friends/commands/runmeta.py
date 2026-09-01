@@ -35,6 +35,7 @@ from ..trust import MODEL_RE, validate_roster_entry
 from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
 from . import resumevalidation
 from .checkpoint import (
+    any_friend_succeeded,
     legacy_successful_friend_ids,
     normalize_friend_rows,
     normalize_repeat_tracker,
@@ -42,6 +43,7 @@ from .checkpoint import (
     validate_lifecycle_and_snapshot,
 )
 from .exits import decide_exit
+from .legacyroles import reduce_legacy_host_checkpoint
 from .runmeta_migration import (
     CURRENT_SCHEMA_VERSION as CURRENT_SCHEMA_VERSION,
     migrate_meta as migrate_meta,
@@ -398,7 +400,10 @@ def _checkpoint_elapsed(meta: dict[str, Any]) -> float:
 
 
 def _checkpoint_successes(
-    meta: dict[str, Any], friends: list[dict[str, Any]], critique_round: int
+    meta: dict[str, Any],
+    friends: list[dict[str, Any]],
+    critique_round: int,
+    roster_roles: dict[str, tuple[bool, bool]],
 ) -> list[str]:
     if "successful_friend_ids" not in meta:
         successes = legacy_successful_friend_ids(friends, critique_round)
@@ -414,7 +419,11 @@ def _checkpoint_successes(
     recorded_count = meta.get("succeeded_friends", len(successes))
     if type(recorded_count) is not int or recorded_count != len(successes):
         raise UsageError("cannot resume: saved succeeded_friends must match successful_friend_ids")
-    return successes
+    if any(friend not in roster_roles for friend in successes):
+        raise UsageError(
+            "cannot resume: saved successful_friend_ids contains a friend outside the roster"
+        )
+    return [friend for friend in successes if roster_roles[friend][0]]
 
 
 def _checkpoint_themes(meta: dict[str, Any]) -> tuple[list[ThemeProposal], bool]:
@@ -475,12 +484,8 @@ def _normalized_checkpoint(
     critique_round = (resume_iteration - 1) * max_rounds + 1
     if any(row["round"] > critique_round for row in friends):
         raise UsageError("cannot resume: saved friends contain a row after the pending round")
-    successes = _checkpoint_successes(meta, friends, critique_round)
+    successes = _checkpoint_successes(meta, friends, critique_round, roster_roles)
     theme_proposals, produced_new_themes = _checkpoint_themes(meta)
-    if any(friend not in roster_names for friend in successes):
-        raise UsageError(
-            "cannot resume: saved successful_friend_ids contains a friend outside the roster"
-        )
     required = meta.get("required_friends", require_friends)
     if required is not None and (
         type(required) is not int or not 1 <= required <= MAX_JSON_SAFE_INTEGER
@@ -559,6 +564,17 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         raise UsageError("cannot resume: external_tool_grants disagrees with the saved invocation")
     host_context_known, detected_host, effective_include_self = _frozen_host_context(meta, saved)
     raw_roster = meta.get("roster", [])
+    legacy_host_role_migration = (
+        host_context_known
+        and detected_host is not None
+        and isinstance(raw_roster, list)
+        and any(
+            isinstance(entry, dict)
+            and entry.get("cli") == detected_host
+            and ("independent" not in entry or "host_self_review" not in entry)
+            for entry in raw_roster
+        )
+    )
     roster_entries = _validated_roster_entries(
         raw_roster,
         detected_host=detected_host,
@@ -594,6 +610,13 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
         max_rounds=saved.get("max_rounds", 1),
         require_friends=saved.get("require_friends"),
     )
+    # The normalized metadata is the sole input to carried_outcome and the
+    # resumed report.  Keeping only _resume_roster normalized would let those
+    # readers reconstruct omitted legacy fields with FriendSpec's independent
+    # default and silently restore the host's judging authority.
+    meta["roster"] = [dict(entry) for entry in roster_entries]
+    if saved.get("mode", "report") in JUDGING_MODES and legacy_host_role_migration:
+        meta = reduce_legacy_host_checkpoint(meta, roster_entries, run_dir)
     validate_lifecycle_and_snapshot(meta, run_dir=run_dir, legacy=raw_version == 1)
     if host_context_known:
         meta["detected_host"] = detected_host
@@ -619,6 +642,7 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored._resume_rounds_run = meta["rounds_run"]
     restored._resume_active_elapsed_s = meta["active_elapsed_s"]
     restored._resume_successful_friend_ids = meta["successful_friend_ids"]
+    restored._resume_any_success = any_friend_succeeded(meta["friends"])
     restored._resume_theme_proposals = [
         ThemeProposal.from_dict(value) for value in meta["theme_proposals"]
     ]

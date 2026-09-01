@@ -267,8 +267,9 @@ def run_critique(
             continue
         outcome.any_success = True
         outcome.independent_any_success = outcome.independent_any_success or spec.independent
-        outcome.succeeded_friends += 1
-        outcome.successful_friend_ids.append(spec.name)
+        if spec.independent:
+            outcome.succeeded_friends += 1
+            outcome.successful_friend_ids.append(spec.name)
         incoming = []
         # `or []`, not a .get default: `findings` is nullable in the schema
         # (strict mode requires every property in `required`, so a friend

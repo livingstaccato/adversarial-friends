@@ -43,6 +43,7 @@ from ..snapshots import (
 from ..themes import ThemeProposal
 from ..verdicts import next_streak, round_is_dry
 from ..verdictschema import schema_path as verdict_schema_path
+from .checkpoint import any_friend_succeeded
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import (
@@ -264,7 +265,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         successful_friend_ids = list(getattr(args, "_resume_successful_friend_ids", []))
         theme_proposals: list[ThemeProposal] = list(getattr(args, "_resume_theme_proposals", []))
         produced_new_themes = bool(getattr(args, "_resume_produced_new_themes", False))
-        any_success = bool(successful_friend_ids)
+        any_success = bool(getattr(args, "_resume_any_success", False))
         # None: no fresh critique round yet -- decide_exit's
         # --require-friends check fails open on None rather than guess.
         succeeded_friends: int | None = (
@@ -431,7 +432,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     # reconstruction drops claims a merge retired, so
                     # counting the live set re-issues ids already spent.
                     counter = resumed.counter
-                    any_success = bool(successful_friend_ids)
+                    any_success = any_success or bool(successful_friend_ids)
                     succeeded_friends = len(successful_friend_ids)
                     iterations_run = iteration
                     rounds_reached = max(rounds_reached, base_round)
@@ -617,7 +618,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 successful_friend_ids = list(halt.successful_friend_ids)
                 theme_proposals.extend(halt.theme_proposals)
                 produced_new_themes = halt.produced_new_themes
-                any_success = bool(successful_friend_ids)
+                any_success = any_success or any_friend_succeeded(halt.friends_meta)
                 succeeded_friends = len(successful_friend_ids)
             write_halt(
                 args,
