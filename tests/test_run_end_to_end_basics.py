@@ -6,14 +6,79 @@ its siblings test_run_end_to_end_isolation.py and
 test_run_end_to_end_lenses.py) share.
 """
 
+from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import subprocess
 import sys
+import threading
 import time
+from typing import ClassVar
 
 from e2e_helpers import AF, FAKE, _env, _git_commit, _git_repo, run_af
+import pytest
 
-from adversarial_friends import cli, dispatch
+from adversarial_friends import adapters, cli, dispatch
+from adversarial_friends.commands import setup as run_setup_module
+from adversarial_friends.paths import ADAPTER_DIR
+
+
+class _OllamaStub(BaseHTTPRequestHandler):
+    """A real HTTP boundary for Ollama CLI tests, without a local model."""
+
+    captured: ClassVar[dict] = {}
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        type(self).captured = json.loads(self.rfile.read(length).decode("utf-8"))
+        findings = {
+            "findings": [
+                {
+                    "severity": "high",
+                    "claim": "the guard is missing",
+                    "location": "spec.md:1",
+                    "evidence": "the contract has no guard",
+                    "failure_scenario": "an unchecked request reaches the handler",
+                    "suggested_fix": "validate the request before dispatch",
+                }
+            ]
+        }
+        payload = json.dumps({"response": json.dumps(findings), "done": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *_args):
+        pass
+
+
+@pytest.fixture
+def stubbed_ollama(monkeypatch, tmp_path):
+    """Point the real HTTP transport at an isolated Ollama-shaped server."""
+    server = HTTPServer(("127.0.0.1", 0), _OllamaStub)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    registry = adapters.load_adapters(ADAPTER_DIR)
+    endpoint = f"http://127.0.0.1:{server.server_port}/api/generate"
+    ollama = replace(registry["ollama"], endpoint=endpoint)
+    monkeypatch.setattr(run_setup_module, "load_adapters", lambda _path: {"ollama": ollama})
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    _OllamaStub.captured = {}
+    try:
+        yield _OllamaStub
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_report_run_produces_ledger_and_report(tmp_path):
@@ -101,7 +166,9 @@ def test_unknown_cli_in_friend_flag_exits_2_not_3(tmp_path):
     assert "no-such-cli" in result.stderr
 
 
-def test_ollama_without_a_model_is_diagnosed_while_ready_explicit_friend_runs(tmp_path):
+def test_ollama_without_a_model_is_diagnosed_while_ready_explicit_friend_runs(
+    tmp_path, stubbed_ollama
+):
     """ollama has no default model and its own error for an omitted one
     explains nothing, so the runner refuses before dispatch and names the
     remedy. Supersedes the old "HTTP transport is not implemented" rejection:
@@ -112,24 +179,50 @@ def test_ollama_without_a_model_is_diagnosed_while_ready_explicit_friend_runs(tm
     """
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
-    result = run_af(tmp_path, artifact, "--friend", "ollama:ops", "--friend", "fake:good")
-    assert result.returncode == 0, result.stderr
+    result = cli.main(
+        [
+            "run",
+            str(artifact),
+            "--mode",
+            "report",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "ollama:ops",
+            "--friend",
+            "fake:good",
+        ]
+    )
+    assert result == 0
     run_dir = next((tmp_path / "runs").iterdir())
     meta = json.loads((run_dir / "run.json").read_text())
     assert [friend["name"] for friend in meta["friends"]] == ["fake-good-1"]
     assert any("no model is configured" in note for note in meta["downgrades"])
 
 
-def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path):
+def test_ollama_friend_carries_the_model_from_the_third_slot(tmp_path, stubbed_ollama):
     """`cli:lens:model` is the only way to name a model from the CLI, and
     ollama is the adapter that cannot run without one."""
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
-    run_af(tmp_path, artifact, "--friend", "ollama:security:qwen3:0.6b")
+    result = cli.main(
+        [
+            "run",
+            str(artifact),
+            "--mode",
+            "report",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "ollama:security:qwen3:0.6b",
+        ]
+    )
+    assert result == 0
     runs = sorted((tmp_path / "runs").iterdir())
     meta = json.loads((runs[0] / "run.json").read_text())
     assert meta["friends"][0]["model"] == "qwen3:0.6b"
     assert meta["friends"][0]["name"] == "ollama-security-0"
+    assert stubbed_ollama.captured["model"] == "qwen3:0.6b"
 
 
 def test_a_preset_reaches_run_json(tmp_path):
