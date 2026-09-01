@@ -24,6 +24,20 @@ def _spec(name: str, lens: str) -> FriendSpec:
     return FriendSpec(name, "fake", lens, None, None, "doc", 30)
 
 
+def _host_spec() -> FriendSpec:
+    return FriendSpec(
+        "codex-ops-0",
+        "codex",
+        "ops",
+        None,
+        None,
+        "doc",
+        30,
+        independent=False,
+        host_self_review=True,
+    )
+
+
 def _claim() -> Claim:
     return Claim(
         id="c-0001@1",
@@ -39,6 +53,86 @@ def _claim() -> Claim:
         failure_scenario="failure",
         suggested_fix="fix",
     )
+
+
+def _rewrite_audit_version(store: RunStore, spec: FriendSpec, version: int) -> dict[str, object]:
+    path = store.friend_audit_path(2, spec.name)
+    data = json.loads(path.read_text())
+    if version == 2:
+        persist_judging_batch(store, 2, spec, data["row"], [], [], [])
+        data = json.loads(path.read_text())
+    return data
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_judging_sidecar_recovery_injects_frozen_advisory_host_role(tmp_path, version):
+    spec = _host_spec()
+    store = RunStore(tmp_path, f"run-host-role-v{version}")
+    store.write_sensitive(store.friend_prompt_path(2, spec.name), "judge prompt")
+    persist_result(
+        store,
+        2,
+        spec,
+        Capability(False, True, "none"),
+        SpawnResult(
+            argv=["codex"],
+            exit_code=0,
+            stdout="{}",
+            stderr="",
+            duration_s=0.1,
+            timed_out=False,
+            result=NormalizeResult({}, [], True),
+            failure_reason=None,
+            orphans_suspected=False,
+        ),
+        "exec",
+        ExternalToolPolicy.DENY,
+    )
+    data = _rewrite_audit_version(store, spec, version)
+    data["row"].pop("independent")
+    data["row"].pop("host_self_review")
+    store.write_sensitive_atomic(
+        store.friend_audit_path(2, spec.name), json.dumps(data, sort_keys=True)
+    )
+
+    recovered = rounds_mod.recover_result_audit(store, 2, spec)
+
+    assert recovered["independent"] is False
+    assert recovered["host_self_review"] is True
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_judging_sidecar_recovery_rejects_role_conflicting_with_frozen_host(tmp_path, version):
+    spec = _host_spec()
+    store = RunStore(tmp_path, f"run-host-role-conflict-v{version}")
+    store.write_sensitive(store.friend_prompt_path(2, spec.name), "judge prompt")
+    persist_result(
+        store,
+        2,
+        spec,
+        Capability(False, True, "none"),
+        SpawnResult(
+            argv=["codex"],
+            exit_code=0,
+            stdout="{}",
+            stderr="",
+            duration_s=0.1,
+            timed_out=False,
+            result=NormalizeResult({}, [], True),
+            failure_reason=None,
+            orphans_suspected=False,
+        ),
+        "exec",
+        ExternalToolPolicy.DENY,
+    )
+    data = _rewrite_audit_version(store, spec, version)
+    data["row"]["independent"] = True
+    store.write_sensitive_atomic(
+        store.friend_audit_path(2, spec.name), json.dumps(data, sort_keys=True)
+    )
+
+    with pytest.raises(UsageError, match="independent conflicts with the frozen roster"):
+        rounds_mod.recover_result_audit(store, 2, spec)
 
 
 def test_judging_retry_reuses_durable_verdicts_and_dispatches_only_missing_work(

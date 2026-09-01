@@ -175,6 +175,11 @@ def detect_host(env: Mapping[str, str], *, host_provider: str | None = None) -> 
     return None
 
 
+def effective_host_inclusion(host: str | None, requested: bool | None = None) -> bool:
+    """Apply the normal run default while preserving an explicit override."""
+    return requested if requested is not None else host == "codex"
+
+
 def can_be_host_provider(provider: object) -> bool:
     """Whether the host-detection contract can identify this real provider.
 

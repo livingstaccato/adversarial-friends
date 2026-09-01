@@ -34,7 +34,14 @@ def _asset(source: str, target: str, payload: bytes) -> WorkspaceAsset:
     return WorkspaceAsset(source=source, target=target, sha256=_digest(payload))
 
 
-def _adapter(name: str, assets: tuple[WorkspaceAsset, ...] = ()) -> Adapter:
+def _adapter(
+    name: str,
+    assets: tuple[WorkspaceAsset, ...] = (),
+    *,
+    external_tools: str = "none",
+    external_tool_sources: tuple[str, ...] = (),
+    deny_external_tools_argv: tuple[str, ...] = (),
+) -> Adapter:
     return Adapter(
         name=name,
         binary=name,
@@ -46,6 +53,9 @@ def _adapter(name: str, assets: tuple[WorkspaceAsset, ...] = ()) -> Adapter:
         model_flag="",
         internal_timeout_flag="",
         effort_kind="none",
+        external_tools=external_tools,
+        external_tool_sources=external_tool_sources,
+        deny_external_tools_argv=deny_external_tools_argv,
         workspace_assets=assets,
     )
 
@@ -431,7 +441,13 @@ def test_staging_failure_refuses_only_affected_friend_before_dispatch_and_cleans
     source_root = tmp_path / "package-assets"
     source_root.mkdir()
     (source_root / "payload").write_bytes(b"changed")
-    bad_adapter = _adapter("bad", (WorkspaceAsset("payload", ".friend/payload", _digest(payload)),))
+    bad_adapter = _adapter(
+        "bad",
+        (WorkspaceAsset("payload", ".friend/payload", _digest(payload)),),
+        external_tools="deny-argv",
+        external_tool_sources=("managed plugins",),
+        deny_external_tools_argv=("--disable-plugins",),
+    )
     good_adapter = _adapter("good")
     specs = [
         FriendSpec("bad-ops-0", "bad", "ops", None, None, "doc", 30),
@@ -476,8 +492,18 @@ def test_staging_failure_refuses_only_affected_friend_before_dispatch_and_cleans
     assert [result[0].name for result in batch.results] == ["bad-ops-0", "good-ops-0"]
     bad = batch.results[0]
     assert bad[2].failure_reason.startswith("workspace asset staging refused:")
-    assert bad[3] is None and bad[1].external_tools == "unknown"
+    assert bad[3] is ExternalToolPolicy.DENY
+    assert bad[1].external_tools == "denied"
+    assert bad[1].external_tool_sources == ("managed plugins",)
+    assert bad[1].deny_external_tools_argv == ("--disable-plugins",)
     assert bad[1].workspace_assets[0].status == "failed-digest-mismatch"
+    row = persist_result(store, 1, bad[0], bad[1], bad[2], "exec", bad[3])
+    assert row["external_tool_policy"] == "deny"
+    assert row["external_tools"] == "denied"
+    assert row["external_tool_sources"] == ["managed plugins"]
+    assert row["deny_external_tools_argv"] == ["--disable-plugins"]
+    recovered = rounds_mod.recover_result_audit(store, 1, specs[0])
+    assert recovered == row
     assert batch.results[1][2].result.succeeded
     assert good_cwd is not None and not good_cwd.exists()
 

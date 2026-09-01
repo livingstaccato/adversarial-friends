@@ -6,6 +6,7 @@ Split out of cli.py.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -17,7 +18,13 @@ from ..adapters import Adapter, Capability, FriendSpec, build_argv, load_adapter
 from ..authority import AuthorityPolicy, enforce
 from ..claimschema import schema_path
 from ..paths import ADAPTER_DIR
-from ..readiness import FriendReadiness, ReadinessState, assess_all
+from ..readiness import (
+    FriendReadiness,
+    ReadinessState,
+    assess_all,
+    detect_host,
+    effective_host_inclusion,
+)
 from ..runstore import default_root
 
 
@@ -175,10 +182,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
     authority_policy = AuthorityPolicy.deny_all()
+    include_self = effective_host_inclusion(detect_host(os.environ))
     readiness = assess_all(
         registry,
         policy,
         which=shutil.which,
+        include_self=include_self,
         authority_policy=authority_policy,
     )
     collected: list[str] = []

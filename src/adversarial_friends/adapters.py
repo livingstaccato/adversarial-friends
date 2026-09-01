@@ -10,7 +10,7 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
-from .authority import ExternalToolPolicy, enforce
+from .authority import AuthorityDecision, ExternalToolPolicy, enforce
 from .envelopes import Envelope, parse_envelope
 from .errors import UsageError
 from .workspaceassets import WorkspaceAsset, WorkspaceAssetAudit, parse_workspace_assets
@@ -178,6 +178,18 @@ _MAX_CAPABILITY_PROBE_ARGS = 32
 _MAX_CAPABILITY_PROBE_ARG_CHARS = 256
 _MAX_CAPABILITY_PROBE_MARKERS = 16
 _SAFE_CAPABILITY_PROBE_ACTIONS = {"--help", "--version", "help", "version"}
+
+
+def capability_from_authority(adapter: Adapter, authority: AuthorityDecision) -> Capability:
+    """Project adapter declarations and an enforced decision into audit capability."""
+    return Capability(
+        schema=bool(adapter.schema_flag),
+        readonly=bool(adapter.readonly_argv),
+        effort=adapter.effort_kind,
+        external_tools=authority.status,
+        external_tool_sources=authority.sources,
+        deny_external_tools_argv=authority.argv,
+    )
 
 
 def _validate_capability_probe(path: Path, probe_argv: list[str], probe_markers: list[str]) -> None:
@@ -369,14 +381,7 @@ def build_argv(
     # may append an untrusted trailing argument or a prompt flag/value pair.
     argv += authority.argv
 
-    capability = Capability(
-        schema=schema_emitted,
-        readonly=readonly_emitted,
-        effort=adapter.effort_kind,
-        external_tools=authority.status,
-        external_tool_sources=authority.sources,
-        deny_external_tools_argv=authority.argv,
-    )
+    capability = capability_from_authority(adapter, authority)
 
     if adapter.prompt_mode == "stdin":
         return argv, prompt, capability

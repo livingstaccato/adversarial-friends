@@ -21,6 +21,7 @@ from .readiness import (
     ReadinessState,
     assess_all,
     detect_host as detect_host,
+    effective_host_inclusion,
 )
 from .trust import validate_roster_entry
 
@@ -96,7 +97,7 @@ def resolve(
     authority_policy: AuthorityPolicy | None = None,
 ) -> list[FriendSpec]:
     host = detect_host(env, host_provider=host_provider)
-    effective_include_self = include_self if include_self is not None else host == "codex"
+    effective_include_self = effective_host_inclusion(host, include_self)
     # NOTE for whoever wires a --roster file flag through `overrides`:
     # `if overrides:` (not `if overrides is not None:`) means an explicit,
     # caller-supplied *empty* list is indistinguishable from "no overrides

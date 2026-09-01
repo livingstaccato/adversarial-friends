@@ -24,8 +24,8 @@ import threading
 from typing import Any
 
 from . import isolation
-from .adapters import Adapter, Capability, FriendSpec
-from .authority import DENY_ALL, AuthorityPolicy, ExternalToolPolicy
+from .adapters import Adapter, Capability, FriendSpec, capability_from_authority
+from .authority import DENY_ALL, AuthorityPolicy, ExternalToolPolicy, enforce
 from .ceilings import DEFAULT_MAX_CONCURRENCY
 from .claimschema import CLAIM_CONTRACT
 from .contracts import PayloadContract
@@ -284,15 +284,18 @@ def dispatch_round(
                 try:
                     asset_audit: tuple[WorkspaceAssetAudit, ...] = ()
                     if spec.cli != "fake" and registry[spec.cli].workspace_assets:
+                        adapter = registry[spec.cli]
+                        provider_policy = authority_policy.for_provider(spec.cli)
+                        authority = enforce(adapter, provider_policy)
+                        capability = capability_from_authority(adapter, authority)
                         try:
                             asset_audit = stage_workspace_assets(
-                                registry[spec.cli].workspace_assets,
-                                cwd_for[spec.name],
+                                adapter.workspace_assets, cwd_for[spec.name]
                             )
                         except WorkspaceAssetStagingError as exc:
-                            capability = replace(_UNKNOWN_CAPABILITY, workspace_assets=exc.audits)
+                            capability = replace(capability, workspace_assets=exc.audits)
                             outcome = replace(_exception_outcome([], exc), failure_reason=str(exc))
-                            result = spec, capability, outcome, None
+                            result = spec, capability, outcome, provider_policy
                             report.friend_finished(spec.name, _outcome_word(outcome, contract))
                             return _DispatchAttempt(result)
                     result = _dispatch(
@@ -600,7 +603,11 @@ def recover_result_audit(store: RunStore, round_no: int, spec: FriendSpec) -> di
         raise UsageError("persisted friend audit has an invalid shape")
     if data["version"] not in {1, 2} or data["round"] != round_no or data["name"] != spec.name:
         raise UsageError("persisted friend audit has the wrong identity")
-    rows = normalize_friend_rows([data["row"]], {spec.name})
+    rows = normalize_friend_rows(
+        [data["row"]],
+        {spec.name},
+        {spec.name: (spec.independent, spec.host_self_review)},
+    )
     captures = data["captures"]
     capture_names = {"prompt", "raw", "meta", "err"}
     if data["version"] == 2:

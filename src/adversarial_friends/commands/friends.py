@@ -28,7 +28,13 @@ from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
-from ..readiness import DenyProbeResult, ReadinessState, assess_all, detect_host
+from ..readiness import (
+    DenyProbeResult,
+    ReadinessState,
+    assess_all,
+    detect_host,
+    effective_host_inclusion,
+)
 from ..roster import DEGRADED_MODES, apply_capacity, mark_host_role, resolve
 
 
@@ -138,7 +144,7 @@ def resolve_friends(
     enabled, disabled, host_provider, lenses = _validated_selection_args(args, registry)
     host = detect_host(os.environ, host_provider=host_provider)
     requested_self = getattr(args, "include_self", None)
-    include_host = requested_self if requested_self is not None else host == "codex"
+    include_host = effective_host_inclusion(host, requested_self)
     provider_policy = providerconfig.load(registry, os.environ)
     if enabled or disabled:
         settings = dict(provider_policy.providers)

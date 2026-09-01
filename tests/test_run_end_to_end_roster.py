@@ -491,10 +491,9 @@ def test_init_uses_configured_http_model(monkeypatch, tmp_path):
     assert "CHANGE-ME" not in text
 
 
-def test_init_excludes_detected_host_provider(monkeypatch, tmp_path):
-    from adversarial_friends import providerconfig
+def test_init_includes_detected_codex_host_provider_by_normal_default(monkeypatch, tmp_path):
+    from adversarial_friends import providerconfig, readiness as readiness_module
     from adversarial_friends.commands import init as init_module
-    from adversarial_friends.errors import NoFriendsError
     from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
@@ -510,7 +509,40 @@ def test_init_excludes_detected_host_provider(monkeypatch, tmp_path):
         "which",
         lambda name: "/bin/codex" if name == "codex" else None,
     )
+    for marker in readiness_module.HOST_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
     monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    target = tmp_path / "roster.toml"
+    args = type("Args", (), {"out": str(target), "force": False})()
+
+    init_module.cmd_init(args)
+
+    assert 'cli = "codex"' in target.read_text()
+
+
+def test_init_excludes_detected_non_codex_host_provider_by_normal_default(monkeypatch, tmp_path):
+    from adversarial_friends import providerconfig, readiness as readiness_module
+    from adversarial_friends.commands import init as init_module
+    from adversarial_friends.errors import NoFriendsError
+    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+
+    registry = init_module.load_adapters(init_module.ADAPTER_DIR)
+    monkeypatch.setattr(
+        providerconfig,
+        "load",
+        lambda *_args, **_kwargs: ProviderPolicy(
+            {name: ProviderSetting(enabled=name == "claude") for name in registry}
+        ),
+    )
+    monkeypatch.setattr(
+        init_module.shutil,
+        "which",
+        lambda name: "/bin/claude" if name == "claude" else None,
+    )
+    for marker in readiness_module.HOST_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
+    monkeypatch.setenv("CLAUDECODE", "session")
     monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
     target = tmp_path / "roster.toml"
     args = type("Args", (), {"out": str(target), "force": False})()

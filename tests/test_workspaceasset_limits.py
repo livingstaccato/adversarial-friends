@@ -41,6 +41,7 @@ def _adapter(name: str, assets: tuple[WorkspaceAsset, ...] = ()) -> Adapter:
         model_flag="",
         internal_timeout_flag="",
         effort_kind="none",
+        external_tools="none",
         workspace_assets=assets,
     )
 

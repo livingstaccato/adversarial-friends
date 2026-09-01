@@ -13,6 +13,7 @@ is one someone edited by hand.
 """
 
 import argparse
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -23,7 +24,7 @@ from ..authority import AuthorityPolicy
 from ..errors import NoFriendsError, UsageError
 from ..paths import ADAPTER_DIR
 from ..prompt import available_lenses
-from ..readiness import ReadinessState, assess_all
+from ..readiness import ReadinessState, assess_all, detect_host, effective_host_inclusion
 from ..rosterfile import default_roster_path, render
 
 
@@ -38,10 +39,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
     authority_policy = AuthorityPolicy.deny_all()
+    include_self = effective_host_inclusion(detect_host(os.environ))
     readiness = assess_all(
         registry,
         policy,
         which=shutil.which,
+        include_self=include_self,
         authority_policy=authority_policy,
     )
     eligible = {ReadinessState.READY, ReadinessState.REACHABLE_UNCONFIGURED}

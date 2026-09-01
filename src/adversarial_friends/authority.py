@@ -124,6 +124,7 @@ def enforce(adapter: "Adapter", policy: ExternalToolPolicy) -> AuthorityDecision
         )
     reason = (
         f"{adapter.name} cannot deny external tools with this installed adapter; "
-        "pass --allow-external-tools to opt in explicitly"
+        f"pass --allow-external-tools={adapter.name} to allow this provider, "
+        "or --allow-external-tools='*' to allow every provider"
     )
     raise PolicyError(reason)
