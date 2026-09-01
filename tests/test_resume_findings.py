@@ -21,7 +21,7 @@ import pytest
 
 from adversarial_friends import orchestrator
 from adversarial_friends.ids import format_claim_id
-from adversarial_friends.ledger import Alias, Claim
+from adversarial_friends.ledger import Alias, Claim, Verdict
 from adversarial_friends.merge import canonical_claims, next_claim_number
 from adversarial_friends.reviewstate import ReviewState
 from adversarial_friends.verdicts import judges_for
@@ -117,6 +117,68 @@ def test_a_halt_with_no_recorded_dryness_is_treated_as_failed():
     from adversarial_friends.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(), 1) == 0
+
+
+def test_carried_discard_signature_excludes_advisory_host_verdicts():
+    from adversarial_friends.commands.haltstate import carried_outcome
+    from adversarial_friends.verdicts import UNPROVEN, verdict_set_signature
+
+    claim = _claim(1)
+    peer = Verdict(
+        claim.id,
+        "claude/security",
+        2,
+        "unproven",
+        "medium",
+        "partial",
+        "peer reasoning",
+        None,
+        None,
+    )
+    host = Verdict(
+        claim.id,
+        "codex/ops",
+        2,
+        "refuted",
+        "high",
+        "verified",
+        "host reasoning",
+        "counterexample",
+        None,
+    )
+    review = ReviewState.replay([claim, peer, host])
+    meta = {
+        "claim_states": {claim.id: UNPROVEN},
+        "roster": [
+            {
+                "name": "codex-ops",
+                "cli": "codex",
+                "lens": "ops",
+                "model": None,
+                "effort": None,
+                "scope": "doc",
+                "timeout": 30,
+                "independent": False,
+                "host_self_review": True,
+            },
+            {
+                "name": "claude-security",
+                "cli": "claude",
+                "lens": "security",
+                "model": None,
+                "effort": None,
+                "scope": "doc",
+                "timeout": 30,
+                "independent": True,
+                "host_self_review": False,
+            },
+        ],
+    }
+
+    carried = carried_outcome(review, meta)
+
+    assert carried is not None
+    assert carried.signatures[claim.id] == verdict_set_signature([peer], claim.id)
 
 
 def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):

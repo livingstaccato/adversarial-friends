@@ -94,7 +94,8 @@ _SECURITY_GRANTS: dict[str, tuple[type, object]] = {
 
 _OPTIONAL_STRINGS = {"preset", "host_provider", "model", "effort", "roster"}
 _STRING_SETTINGS = {"mode", "merge"}
-_BOOL_SETTINGS = {"attributed", "include_self", "keep"}
+_BOOL_SETTINGS = {"attributed", "keep"}
+_OPTIONAL_BOOLS = {"include_self"}
 _LIST_SETTINGS = {"enable_provider", "disable_provider", "lens"}
 _OPTIONAL_INTS = {
     "max_friends",
@@ -210,6 +211,8 @@ def _validate_saved_setting(name: str, value: object) -> None:
         raise _resume_type_error(name, value)
     if name in _BOOL_SETTINGS and not isinstance(value, bool):
         raise _resume_type_error(name, value)
+    if name in _OPTIONAL_BOOLS and value is not None and not isinstance(value, bool):
+        raise _resume_type_error(name, value)
     if name in _LIST_SETTINGS and (
         not isinstance(value, list) or not all(isinstance(item, str) for item in value)
     ):
@@ -280,7 +283,22 @@ def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
                 raise UsageError(
                     f"cannot resume: saved roster field {field_name!r} must be a string or null"
                 )
-        validate_roster_entry(candidate)
+        for field_name in ("independent", "host_self_review"):
+            if field_name in candidate and type(candidate[field_name]) is not bool:
+                raise UsageError(
+                    f"cannot resume: saved roster field {field_name!r} must be a boolean"
+                )
+        if candidate.get("host_self_review") is True and candidate.get("independent", True):
+            raise UsageError(
+                "cannot resume: saved roster host_self_review cannot also be independent"
+            )
+        validate_roster_entry(
+            {
+                key: item
+                for key, item in candidate.items()
+                if key not in {"independent", "host_self_review"}
+            }
+        )
         validated.append(candidate)
     return validated
 

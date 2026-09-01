@@ -7,7 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from adversarial_friends.commands.runmeta import CURRENT_SCHEMA_VERSION, migrate_meta
+from adversarial_friends.adapters import FriendSpec
+from adversarial_friends.commands.runmeta import (
+    CURRENT_SCHEMA_VERSION,
+    _validated_roster_entries,
+    migrate_meta,
+)
 from adversarial_friends.errors import UsageError
 
 FIXTURES = Path(__file__).with_name("fixtures")
@@ -154,6 +159,76 @@ def test_legacy_denial_migrates_to_an_empty_audit_grant_set():
     migrated = migrate_meta(raw)
 
     assert migrated["external_tool_grants"] == []
+
+
+def test_old_saved_roster_rows_default_to_independent_non_host():
+    entry = {
+        "name": "codex-ops",
+        "cli": "codex",
+        "lens": "ops",
+        "model": None,
+        "effort": None,
+        "scope": "doc",
+        "timeout": 30,
+    }
+
+    restored = FriendSpec(**_validated_roster_entries([entry])[0])
+
+    assert restored.independent is True
+    assert restored.host_self_review is False
+
+
+def test_saved_roster_preserves_host_role_audit_fields():
+    entry = {
+        "name": "codex-ops",
+        "cli": "codex",
+        "lens": "ops",
+        "model": None,
+        "effort": None,
+        "scope": "doc",
+        "timeout": 30,
+        "independent": False,
+        "host_self_review": True,
+    }
+
+    restored = FriendSpec(**_validated_roster_entries([entry])[0])
+
+    assert restored.independent is False
+    assert restored.host_self_review is True
+
+
+@pytest.mark.parametrize("field", ["independent", "host_self_review"])
+def test_saved_roster_rejects_non_boolean_host_role_fields(field):
+    entry = {
+        "name": "codex-ops",
+        "cli": "codex",
+        "lens": "ops",
+        "model": None,
+        "effort": None,
+        "scope": "doc",
+        "timeout": 30,
+        field: "false",
+    }
+
+    with pytest.raises(UsageError, match=field):
+        _validated_roster_entries([entry])
+
+
+def test_saved_roster_rejects_host_role_claimed_independent():
+    entry = {
+        "name": "codex-ops",
+        "cli": "codex",
+        "lens": "ops",
+        "model": None,
+        "effort": None,
+        "scope": "doc",
+        "timeout": 30,
+        "independent": True,
+        "host_self_review": True,
+    }
+
+    with pytest.raises(UsageError, match=r"host_self_review.*independent"):
+        _validated_roster_entries([entry])
 
 
 def _resume_args(run_dir: Path) -> SimpleNamespace:

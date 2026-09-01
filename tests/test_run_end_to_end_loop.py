@@ -11,9 +11,10 @@ not collide in the run directory or the ledger), the dry-round streak, and
 the ceilings, rather than about the artifact changing.
 """
 
+from dataclasses import replace
 import json
 
-from e2e_helpers import run_af
+from e2e_helpers import _env, run_af
 
 
 def _artifact(tmp_path):
@@ -133,6 +134,48 @@ def test_genuinely_new_theme_resets_a_prior_dry_streak(tmp_path):
     assert meta["produced_new_themes"] is True
     assert meta["dry_streak"] == 0
     assert meta["converged"] is False
+
+
+def test_advisory_host_novelty_cannot_block_independent_convergence(monkeypatch, tmp_path):
+    from adversarial_friends import cli
+    from adversarial_friends.commands import friends as friends_module
+
+    for name, value in _env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    original = friends_module._specs_from_flags
+
+    def marked_specs(*args, **kwargs):
+        specs = original(*args, **kwargs)
+        specs[0] = replace(specs[0], independent=False, host_self_review=True)
+        return specs
+
+    monkeypatch.setattr(friends_module, "_specs_from_flags", marked_specs)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--mode",
+            "loop",
+            "--out",
+            str(tmp_path / "runs"),
+            "--max-rounds",
+            "2",
+            "--max-loop-iterations",
+            "3",
+            "--friend",
+            "fake:judge_theme_new_late_a",
+            "--friend",
+            "fake:judge_uphold_a",
+            "--friend",
+            "fake:judge_uphold_b",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+    meta = _run_json(tmp_path)
+    assert meta["converged"] is True
+    assert meta["dry_streak"] == 2
 
 
 def test_a_single_unconverged_iteration_is_the_loop_ceiling(tmp_path):

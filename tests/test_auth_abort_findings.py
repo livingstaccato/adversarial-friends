@@ -11,6 +11,7 @@ Each test here fails against the previous behaviour: dispatch_round raising
 instead of returning `(results, auth_abort)` is checked, not assumed.
 """
 
+from dataclasses import replace
 from pathlib import Path
 import threading
 
@@ -175,6 +176,66 @@ def test_dispatch_round_returns_every_result_instead_of_raising_on_an_auth_failu
     # Both friends were recorded -- proof the loop did not stop at the
     # first auth hit and skip whatever came after it.
     assert set(tracker.snapshot()["last"]) == {"good-friend", "broken-friend"}
+
+
+def test_advisory_host_auth_failure_is_audited_without_aborting_independent_run(
+    monkeypatch, tmp_path
+):
+    good = _spec("good-friend")
+    host = replace(
+        _spec("host-friend", cli="brokencli"),
+        independent=False,
+        host_self_review=True,
+    )
+    outcomes = {good.name: _ok_result("the guard is missing"), host.name: _auth_failed_result()}
+
+    def _fake_dispatch(spec, *_args, **_kwargs):
+        return spec, rounds_mod._UNKNOWN_CAPABILITY, outcomes[spec.name], ExternalToolPolicy.DENY
+
+    monkeypatch.setattr(rounds_mod, "_dispatch", _fake_dispatch)
+    artifact = tmp_path / "artifact.md"
+    artifact.write_text("spec text", encoding="utf-8")
+    prompt_for = {}
+    for spec in (good, host):
+        path = tmp_path / f"{spec.name}.prompt"
+        path.write_text("prompt", encoding="utf-8")
+        prompt_for[spec.name] = path
+    registry = {
+        "brokencli": Adapter(
+            name="brokencli",
+            binary="brokencli",
+            base_argv=[],
+            prompt_mode="stdin",
+            prompt_flag="",
+            readonly_argv=[],
+            schema_flag="",
+            model_flag="",
+            internal_timeout_flag="",
+            effort_kind="none",
+            auth=AuthMarkers(exit_codes=(41,)),
+        )
+    }
+    tracker = RepeatTracker()
+    store = RunStore(tmp_path / "run", "run-host-auth")
+    store.lock()
+
+    batch = rounds_mod.dispatch_round(
+        [good, host],
+        1,
+        prompt_for,
+        store,
+        registry,
+        None,
+        Path("schema.json"),
+        artifact,
+        None,
+        None,
+        threading.Event(),
+        tracker=tracker,
+    )
+
+    assert batch.auth_abort is None
+    assert set(tracker.snapshot()["last"]) == {"good-friend", "host-friend"}
 
 
 # --- run_critique: persists and merges before surfacing the abort ----------

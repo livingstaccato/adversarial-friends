@@ -14,7 +14,7 @@ import time
 from typing import Any
 import uuid
 
-from ..adapters import friend_key
+from ..adapters import independent_friend_keys
 from ..ceilings import (
     Budget,
     derive_max_calls,
@@ -449,7 +449,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                         streak,
                         all_claims,
                         cross,
-                        [friend_key(spec) for spec in partition_dispatchable(specs, tracker)[0]],
+                        independent_friend_keys(partition_dispatchable(specs, tracker)[0]),
                     ):
                         loop_converged = True
                         break
@@ -498,10 +498,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 theme_proposals.extend(critique.theme_proposals)
                 produced_new_themes = critique.produced_new_themes
                 halted_dry = round_is_dry(
-                    not critique.produced_new_themes,
-                    critique.any_success and not critique.any_failed,
+                    not critique.produced_new_independent_themes,
+                    critique.independent_any_success and not critique.independent_any_failed,
                 )
-                halted_failed = critique.any_failed or not critique.any_success
+                halted_failed = (
+                    critique.independent_any_failed or not critique.independent_any_success
+                )
 
                 if critique.dispatch_error is not None:
                     dispatch_error = _dispatch_error_detail(critique.dispatch_error)
@@ -586,9 +588,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 dry = halted_dry
                 streak = next_streak(streak, failed=halted_failed, dry=dry)
                 active_specs, _policy_skips = partition_dispatchable(specs, tracker)
-                if loop_is_done(
-                    streak, all_claims, cross, [friend_key(spec) for spec in active_specs]
-                ):
+                if loop_is_done(streak, all_claims, cross, independent_friend_keys(active_specs)):
                     loop_converged = True
                     break
                 if budget.exhausted_by:

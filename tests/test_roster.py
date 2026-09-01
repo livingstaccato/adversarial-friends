@@ -1,6 +1,7 @@
 import pytest
 
 from adversarial_friends import adapters, roster
+from adversarial_friends.cliargs import build_parser
 from adversarial_friends.errors import NoFriendsError, UsageError
 from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 
@@ -50,7 +51,7 @@ def test_no_host_detected_when_env_is_bare():
     assert roster.detect_host({}) is None
 
 
-def test_host_cli_is_excluded_by_default(registry):
+def test_non_codex_host_cli_is_excluded_by_default(registry):
     friends = roster.resolve(registry, LENSES, {**NO_HTTP, "CLAUDECODE": "1"}, which_all)
     assert all(f.cli != "claude" for f in friends)
 
@@ -62,12 +63,62 @@ def test_include_self_keeps_the_host(registry):
     assert any(f.cli == "claude" for f in friends)
 
 
-def test_current_codex_host_is_excluded_unless_include_self(registry):
+def test_current_codex_host_is_included_by_default_unless_excluded(registry):
     env = {**NO_HTTP, "CODEX_SESSION_ID": "session"}
-    excluded = roster.resolve(registry, LENSES, env, which_all)
-    included = roster.resolve(registry, LENSES, env, which_all, include_self=True)
+    included = roster.resolve(registry, LENSES, env, which_all)
+    excluded = roster.resolve(registry, LENSES, env, which_all, include_self=False)
     assert all(friend.cli != "codex" for friend in excluded)
     assert any(friend.cli == "codex" for friend in included)
+
+
+def test_self_selection_parser_is_mutually_exclusive_and_tri_state():
+    parser = build_parser()
+
+    assert parser.parse_args(["run", "spec.md"]).include_self is None
+    assert parser.parse_args(["run", "spec.md", "--include-self"]).include_self is True
+    assert parser.parse_args(["run", "spec.md", "--exclude-self"]).include_self is False
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run", "spec.md", "--include-self", "--exclude-self"])
+
+
+def test_codex_host_friend_is_advisory_and_non_independent(registry):
+    friends = roster.resolve(
+        registry,
+        LENSES,
+        {**NO_HTTP, "CODEX_SESSION_ID": "session"},
+        which_all,
+    )
+
+    codex = next(friend for friend in friends if friend.cli == "codex")
+    assert codex.host_self_review is True
+    assert codex.independent is False
+    assert all(
+        friend.independent and not friend.host_self_review
+        for friend in friends
+        if friend.cli != "codex"
+    )
+
+
+def test_explicit_override_matching_host_is_always_marked(registry):
+    friends = roster.resolve(
+        registry,
+        LENSES,
+        NO_HTTP,
+        which_all,
+        include_self=True,
+        host_provider="codex",
+        overrides=[{"name": "codex-ops", "cli": "codex", "lens": "ops"}],
+    )
+
+    assert friends[0].host_self_review is True
+    assert friends[0].independent is False
+
+
+def test_friend_spec_audit_fields_are_backward_compatible_defaults():
+    spec = adapters.FriendSpec("friend", "fake", "ops", None, None, "doc", 30)
+
+    assert spec.independent is True
+    assert spec.host_self_review is False
 
 
 def test_explicit_host_provider_marks_wrapper_host(registry):

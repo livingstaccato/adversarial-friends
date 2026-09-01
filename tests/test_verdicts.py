@@ -12,7 +12,7 @@ successors, §7.3 termination -- lives in test_verdicts_lifecycle.py.
 from test_merge import chained_alias_records
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
-from adversarial_friends import verdicts
+from adversarial_friends import adapters, verdicts
 from adversarial_friends.merge import canonical_claims
 
 
@@ -39,6 +39,26 @@ def test_quorum_is_two_when_enough_judges_exist():
 
 def test_quorum_falls_back_to_one_judge():
     assert verdicts.quorum_for(["a"]) == 1
+
+
+def test_host_verdict_is_advisory_and_cannot_reach_quorum():
+    specs = [
+        adapters.FriendSpec("author", "fake", "author", None, None, "doc", 30),
+        adapters.FriendSpec("peer-a", "fake", "peer-a", None, None, "doc", 30),
+        adapters.FriendSpec("peer-b", "fake", "peer-b", None, None, "doc", 30),
+        adapters.FriendSpec(
+            "host", "fake", "host", None, None, "doc", 30, independent=False, host_self_review=True
+        ),
+    ]
+    c = claim(origin=("fake/author",))
+    roster = adapters.independent_friend_keys(specs)
+    cast = [
+        verdict("fake/peer-a", "refuted"),
+        verdict("fake/host", "refuted"),
+    ]
+
+    assert roster == ["fake/author", "fake/peer-a", "fake/peer-b"]
+    assert verdicts.state_for(c, cast, roster, 2, 3) == verdicts.UNPROVEN
 
 
 # --- The H1 regression: settled-refuted must be reachable ------------------

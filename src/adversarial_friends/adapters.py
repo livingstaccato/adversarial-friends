@@ -167,6 +167,8 @@ class FriendSpec:
     effort: str | None
     scope: str  # repo | doc
     timeout: int
+    independent: bool = True
+    host_self_review: bool = False
 
 
 _MAX_CAPABILITY_PROBE_ARGS = 32
@@ -425,6 +427,16 @@ def friend_key(spec: FriendSpec) -> str:
     cleared.
     """
     return _friend_key_values(spec.cli, spec.lens, spec.model, spec.effort)
+
+
+def independent_friend_keys(specs: list[FriendSpec]) -> list[str]:
+    """Unique ledger identities allowed to affect judging outcomes."""
+    keys: list[str] = []
+    for spec in specs:
+        key = friend_key(spec)
+        if spec.independent and key not in keys:
+            keys.append(key)
+    return keys
 
 
 def _friend_key_values(cli: str, lens: str, model: str | None, effort: str | None) -> str:

@@ -212,7 +212,7 @@ def test_roster_files_filter_disabled_providers_before_dispatch(monkeypatch, tmp
     assert executable_probes == []
 
 
-def test_roster_file_excludes_detected_host_unless_include_self(monkeypatch, tmp_path):
+def test_codex_host_roster_is_included_by_default_unless_excluded(monkeypatch, tmp_path):
     from adversarial_friends.cliargs import build_parser
     from adversarial_friends.errors import NoFriendsError
     from adversarial_friends.readiness import HOST_ENV_MARKERS
@@ -226,15 +226,111 @@ def test_roster_file_excludes_detected_host_unless_include_self(monkeypatch, tmp
     monkeypatch.setenv("CODEX_SESSION_ID", "session")
     monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
 
-    excluded = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--roster", str(roster)])
+    included = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--roster", str(roster)])
+    resolved = friends_module.resolve_friends(included, registry, None, [])
+    assert [spec.name for spec in resolved.specs] == ["codex-ops"]
+    assert resolved.specs[0].host_self_review is True
+    assert resolved.specs[0].independent is False
+
+    excluded = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--roster", str(roster), "--exclude-self"]
+    )
     with pytest.raises(NoFriendsError, match=r"codex-ops.*detected host provider"):
         friends_module.resolve_friends(excluded, registry, None, [])
 
+
+def test_explicit_host_friend_is_marked_even_though_flags_bypass_discovery(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--friend", "codex:ops"])
+
+    resolved = friends_module.resolve_friends(args, registry, None, [])
+
+    assert resolved.specs[0].host_self_review is True
+    assert resolved.specs[0].independent is False
+
+
+def test_explicit_exclude_self_overrides_explicit_codex_friend(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.errors import NoFriendsError
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"codex"}, executables={"codex"}
+    )
+    probes: list[str] = []
+    monkeypatch.setattr(
+        friends_module.shutil,
+        "which",
+        lambda name: probes.append(name) or f"/bin/{name}",
+    )
+    monkeypatch.setenv("CODEX_SESSION_ID", "session")
+    args = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--friend", "codex:ops", "--exclude-self"]
+    )
+
+    with pytest.raises(NoFriendsError, match="no usable friends"):
+        friends_module.resolve_friends(args, registry, None, [])
+    assert probes == []
+
+
+def test_non_codex_explicit_host_defaults_excluded_but_include_wins(monkeypatch, tmp_path):
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.errors import NoFriendsError
+
+    registry, friends_module = _selection_fixture(
+        monkeypatch, enabled={"claude"}, executables={"claude"}
+    )
+    monkeypatch.setenv("CLAUDECODE", "1")
+    defaulted = build_parser().parse_args(
+        ["run", str(_artifact(tmp_path)), "--friend", "claude:ops"]
+    )
+    with pytest.raises(NoFriendsError, match="no usable friends"):
+        friends_module.resolve_friends(defaulted, registry, None, [])
+
     included = build_parser().parse_args(
-        ["run", str(_artifact(tmp_path)), "--roster", str(roster), "--include-self"]
+        ["run", str(_artifact(tmp_path)), "--friend", "claude:ops", "--include-self"]
     )
     resolved = friends_module.resolve_friends(included, registry, None, [])
-    assert [spec.name for spec in resolved.specs] == ["codex-ops"]
+    assert resolved.specs[0].host_self_review is True
+    assert resolved.specs[0].independent is False
+
+
+def test_judging_mode_requires_two_independent_friends_beside_host(tmp_path):
+    from adversarial_friends.adapters import FriendSpec
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands.friends import roster_for_run
+    from adversarial_friends.errors import NoFriendsError
+
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--mode", "crossexam"])
+    args._resume_meta = {}
+    args._resume_roster = [
+        FriendSpec("host", "fake", "ops", None, None, "doc", 30, False, True),
+        FriendSpec("peer", "fake", "security", None, None, "doc", 30),
+    ]
+
+    with pytest.raises(NoFriendsError, match="two independent friends"):
+        roster_for_run(args, {}, ["fake"], [])
+
+
+def test_report_mode_allows_host_as_its_only_friend(tmp_path):
+    from adversarial_friends.adapters import FriendSpec
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands.friends import roster_for_run
+
+    args = build_parser().parse_args(["run", str(_artifact(tmp_path))])
+    args._resume_meta = {}
+    args._resume_roster = [FriendSpec("host", "fake", "ops", None, None, "doc", 30, False, True)]
+    downgrades: list[str] = []
+
+    _resolved, specs = roster_for_run(args, {}, ["fake"], downgrades)
+
+    assert [spec.name for spec in specs] == ["host"]
+    assert any("single reviewer's opinion" in note for note in downgrades)
 
 
 def test_unready_roster_entries_do_not_consume_capacity_or_trigger_duplicate_probes(

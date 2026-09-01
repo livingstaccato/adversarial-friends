@@ -24,7 +24,9 @@ _OPTIONAL_STRINGS = frozenset(
         "diagnostics_path",
     }
 )
-_OPTIONAL_BOOLS = frozenset({"write_protected", "readonly", "os_confined"})
+_OPTIONAL_BOOLS = frozenset(
+    {"write_protected", "readonly", "os_confined", "independent", "host_self_review"}
+)
 _OPTIONAL_STRING_LISTS = frozenset({"external_tool_sources", "deny_external_tools_argv"})
 _CLAIM_STATES = TERMINAL_STATES | {CONTESTED, UNPROVEN, INCOMPLETE}
 MAX_AUDIT_TEXT_CHARS = 8192

@@ -251,7 +251,8 @@ def _gate_lines(run_meta: dict[str, Any]) -> list[str]:
 
     ceiling = run_meta.get("ceiling_hit")
     failed_or_skipped = any(
-        str(friend.get("status", "")).startswith(("failed: ", "skipped: "))
+        friend.get("independent", True)
+        and str(friend.get("status", "")).startswith(("failed: ", "skipped: "))
         for friend in run_meta.get("friends", [])
     )
     partial = bool(
@@ -292,6 +293,14 @@ def _render_verdict_sections(
     in this tool is entitled to decide it for them.
     """
     lines: list[str] = ["## Cross-examination", ""]
+    if any(friend.get("host_self_review", False) for friend in run_meta.get("friends", [])):
+        lines.extend(
+            [
+                "Host self-review verdicts are retained for audit but are advisory: "
+                "they are excluded from settlement and quorum.",
+                "",
+            ]
+        )
     if run_meta.get("ceiling_hit"):
         lines.append(
             f"**{_escape_block(str(run_meta['ceiling_hit']))}** — this run stopped at a "
@@ -431,17 +440,25 @@ def render(
     lines.append("## Friends")
     lines.append("")
     lines.append(
-        "| friend | model | effort | transport | write-protected | "
+        "| friend | role | independent | model | effort | transport | write-protected | "
         "declared scope | OS-confined | status |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for friend in run_meta["friends"]:
         transport = friend.get("transport", "exec")
         write_protected = friend.get("write_protected", friend.get("readonly", False))
         declared_scope = friend.get("declared_scope", friend.get("scope", "unknown"))
         os_confined = friend.get("os_confined", False)
+        independent = friend.get("independent", True)
+        role = (
+            "host-self-review (advisory)"
+            if friend.get("host_self_review", False)
+            else "independent reviewer"
+        )
         lines.append(
             f"| {_escape_cell(friend['name'])} | "
+            f"{_escape_cell(role)} | "
+            f"{_escape_cell(independent)} | "
             f"{_escape_cell(friend['model'] or 'inherited')} | "
             f"{_escape_cell(friend['effort'] or 'inherited')} | "
             f"{_escape_cell(transport)} | "
@@ -451,7 +468,7 @@ def render(
             f"{_escape_status_cell(friend['status'])} |"
         )
     if not run_meta["friends"]:
-        lines.append("| _(no friends were spawned)_ |  |  |  |  |  |  |  |")
+        lines.append("| _(no friends were spawned)_ |  |  |  |  |  |  |  |  |  |")
     read_exposed: list[str] = []
     exposed_seen: set[str] = set()
     for friend in run_meta["friends"]:

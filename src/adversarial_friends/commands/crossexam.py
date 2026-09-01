@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 from .. import verdicts as vd
-from ..adapters import Adapter, FriendSpec, friend_key
+from ..adapters import Adapter, FriendSpec, friend_key, independent_friend_keys
 from ..authority import DENY_ALL, AuthorityPolicy
 from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
@@ -477,7 +477,8 @@ def run_rounds(
                 f"round {round_no}: every judge with claims left to judge is "
                 f"disabled ({names}); no judging round could be run."
             )
-            outcome.incomplete = True
+            if any(spec.independent for spec in withheld):
+                outcome.incomplete = True
             _settle_round(
                 outcome,
                 contested,
@@ -496,7 +497,7 @@ def run_rounds(
             break
 
         round_verdicts: list[Verdict] = []
-        any_failed = bool(withheld)
+        any_failed = any(spec.independent for spec in withheld)
         for spec, capability, result, provider_policy in results:
             transport = "fake" if spec.cli == "fake" else registry[spec.cli].transport
             row = persist_result(
@@ -512,7 +513,7 @@ def run_rounds(
             if result.failure_reason is not None:
                 # §7.2's M12: a round in which a required friend fails marks
                 # the RUN incomplete, regardless of per-claim states.
-                any_failed = True
+                any_failed = any_failed or spec.independent
                 _never_reported(missing, spec, pending_for[spec.name])
                 continue
             cast = _parse_verdicts(result.result.payload or {}, friend_key(spec), round_no)
@@ -536,7 +537,7 @@ def run_rounds(
             # `unproven`, which is what keeps them out of the discard rule.
             omitted = shown - {v.claim_id for v in cast}
             if omitted:
-                any_failed = True
+                any_failed = any_failed or spec.independent
                 _never_reported(missing, spec, [contested_ids[c] for c in omitted])
                 outcome.downgrades.append(
                     f"round {round_no}: {spec.name} was shown {len(shown)} claim(s) "
@@ -608,7 +609,8 @@ def _settle_round(
     """Recompute every contested claim's state and grow the claim list with
     any successors a unanimous amendment produced. `missing` maps a claim
     id to the judges that never reported on it this round."""
-    roster = [friend_key(s) for s in specs]
+    roster = independent_friend_keys(specs)
+    independent_judges = set(roster)
     for claim in contested:
         state = vd.state_for(
             claim,
@@ -616,14 +618,16 @@ def _settle_round(
             roster,
             round_no,
             max_rounds,
-            required_missing=bool(missing.get(claim.id)),
+            required_missing=bool(missing.get(claim.id, set()) & independent_judges),
         )
 
         if state == vd.UNPROVEN:
             # §7.2's discard rule. A claim whose evidence names a path that
             # does not exist draws the same non-dispositive verdicts every
             # round, identically, at full cost until max_rounds.
-            signature = vd.verdict_set_signature(outcome.verdicts, claim.id)
+            signature = vd.verdict_set_signature(
+                (v for v in outcome.verdicts if v.judge in independent_judges), claim.id
+            )
             if vd.should_discard(outcome.signatures.get(claim.id), signature):
                 state = vd.DISCARDED
             outcome.signatures[claim.id] = signature
@@ -645,7 +649,11 @@ def _settle_round(
             # fixed in state_for and verdict_set_signature, missed here.
             amendments = [
                 v
-                for v in vd.latest_per_judge(v for v in outcome.verdicts if v.claim_id == claim.id)
+                for v in vd.latest_per_judge(
+                    v
+                    for v in outcome.verdicts
+                    if v.claim_id == claim.id and v.judge in independent_judges
+                )
                 if v.verdict == "amended"
             ]
             # Every id the ledger already holds, so a re-amended claim in a

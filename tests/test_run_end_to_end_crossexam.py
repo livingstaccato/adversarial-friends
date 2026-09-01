@@ -9,9 +9,10 @@ See e2e_helpers for why every subprocess here runs under a constructed PATH
 and can never reach a real, metered agent CLI.
 """
 
+from dataclasses import replace
 import json
 
-from e2e_helpers import run_af
+from e2e_helpers import _env, run_af
 
 
 def _artifact(tmp_path):
@@ -66,6 +67,98 @@ def test_verdicts_reach_the_ledger(tmp_path):
     _crossexam(tmp_path, "fake:judge_uphold_a", "fake:judge_uphold_b")
     kinds = [r["type"] for r in _ledger(tmp_path)]
     assert "verdict" in kinds
+
+
+def test_advisory_host_verdict_is_persisted_but_cannot_settle(monkeypatch, tmp_path):
+    from adversarial_friends import cli
+    from adversarial_friends.commands import friends as friends_module
+
+    for name, value in _env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    original = friends_module._specs_from_flags
+
+    def marked_specs(*args, **kwargs):
+        specs = original(*args, **kwargs)
+        specs[0] = replace(specs[0], independent=False, host_self_review=True)
+        return specs
+
+    monkeypatch.setattr(friends_module, "_specs_from_flags", marked_specs)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--mode",
+            "crossexam",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_refute_a",
+            "--friend",
+            "fake:judge_refute_b",
+            "--friend",
+            "fake:judge_refute_c",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+    records = _ledger(tmp_path)
+    host_key = "fake/judge_refute_a"
+    assert any(
+        record.get("type") == "verdict" and record["judge"] == host_key for record in records
+    )
+    states = _run_json(tmp_path)["claim_states"]
+    independent_claims = [
+        record["id"]
+        for record in records
+        if record.get("type") == "claim" and host_key not in record["origin"]
+    ]
+    assert independent_claims
+    assert all(states[claim_id] == "deadlocked" for claim_id in independent_claims)
+    host_rows = [row for row in _run_json(tmp_path)["friends"] if row["name"].endswith("-0")]
+    assert host_rows and all(
+        row["host_self_review"] is True and row["independent"] is False for row in host_rows
+    )
+
+
+def test_advisory_host_omission_does_not_make_judging_incomplete(monkeypatch, tmp_path):
+    from adversarial_friends import cli
+    from adversarial_friends.commands import friends as friends_module
+
+    for name, value in _env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    original = friends_module._specs_from_flags
+
+    def marked_specs(*args, **kwargs):
+        specs = original(*args, **kwargs)
+        specs[0] = replace(specs[0], independent=False, host_self_review=True)
+        return specs
+
+    monkeypatch.setattr(friends_module, "_specs_from_flags", marked_specs)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(_artifact(tmp_path)),
+            "--mode",
+            "crossexam",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_nothing",
+            "--friend",
+            "fake:judge_uphold_a",
+            "--friend",
+            "fake:judge_uphold_b",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+    assert _run_json(tmp_path)["incomplete"] is False
+    assert any(
+        record.get("type") == "verdict" and record["judge"] == "fake/judge_uphold_a"
+        for record in _ledger(tmp_path)
+    )
 
 
 def test_a_judge_never_judges_its_own_claim(tmp_path):

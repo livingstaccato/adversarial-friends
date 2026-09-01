@@ -61,6 +61,8 @@ def meta(**over):
                 "name": "codex-ops",
                 "model": "gpt-5.6-sol",
                 "effort": "high",
+                "independent": False,
+                "host_self_review": True,
                 "readonly": True,
                 "scope": "repo",
                 "status": "ok",
@@ -69,6 +71,8 @@ def meta(**over):
                 "name": "opencode-security",
                 "model": None,
                 "effort": "unverified",
+                "independent": True,
+                "host_self_review": False,
                 "readonly": False,
                 "scope": "doc",
                 "status": "failed: exit 1",
@@ -96,6 +100,26 @@ def test_report_accepts_one_replayed_review_state():
 def test_report_header_states_model_and_effort_per_friend():
     out = render([claim("c-0001@1")], [], meta())
     assert "gpt-5.6-sol" in out and "high" in out
+
+
+def test_report_labels_host_self_review_as_advisory_and_non_independent():
+    out = render([claim("c-0001@1")], [], meta())
+    host_row = next(line for line in out.splitlines() if line.startswith("| codex-ops |"))
+
+    assert "host-self-review (advisory)" in host_row
+    assert "False" in host_row
+    assert "independent reviewer" in out
+
+
+def test_cross_exam_report_explains_advisory_host_verdicts_do_not_settle():
+    out = render_review(
+        ReviewState.replay([claim("c-0001@1")]),
+        meta(mode="crossexam", rounds_run=2),
+        {"c-0001@1": "unproven"},
+    )
+
+    assert "host self-review verdicts" in out.lower()
+    assert "excluded from settlement and quorum" in out.lower()
 
 
 def test_artifact_filename_cannot_forge_markdown_sections():
@@ -185,6 +209,30 @@ def test_terminal_clear_gate_report_explicitly_names_empty_blockers():
     )
     assert "Decision: `clear`" in out
     assert "Blocking claims: _(none)_" in out
+
+
+def test_advisory_host_failure_does_not_make_gate_evidence_partial():
+    friends = [
+        {**meta()["friends"][0], "status": "failed: exit 1"},
+        {**meta()["friends"][1], "status": "ok"},
+    ]
+    out = render(
+        [],
+        [],
+        meta(
+            mode="gate",
+            lifecycle_state="terminal",
+            stop_reason="completed",
+            exit_code=0,
+            converged=True,
+            gate_decision="clear",
+            gate_blocking_claims=[],
+            friends=friends,
+        ),
+    )
+
+    gate = out.split("## Gate decision", 1)[1].split("## Friends", 1)[0]
+    assert "Evidence caveat: _(none)_" in gate
 
 
 def test_gate_report_names_ceiling_and_partial_evidence_caveat():
@@ -404,7 +452,7 @@ def test_friend_model_none_reports_inherited():
 def test_empty_friends_list_does_not_crash():
     m = meta(friends=[])
     out = render([claim("c-0001@1")], [], m)
-    assert "| friend | model | effort | transport | write-protected |" in out
+    assert "| friend | role | independent | model | effort | transport | write-protected |" in out
 
 
 def test_render_does_not_mutate_inputs():

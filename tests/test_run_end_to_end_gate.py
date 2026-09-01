@@ -16,6 +16,7 @@ Two fixture details matter and are easy to get wrong:
   produces a run with `snapshot_sha: null` -- same vacuous outcome.
 """
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -105,6 +106,45 @@ def test_a_refuted_claim_does_not_block(tmp_path):
     assert _run_json(tmp_path)["gate_blocking_claims"] == []
     assert _run_json(tmp_path)["gate_decision"] == "clear"
     assert result.returncode == 0, result.stderr
+
+
+def test_advisory_host_refutation_cannot_clear_gate(monkeypatch, tmp_path):
+    from adversarial_friends import cli
+    from adversarial_friends.commands import friends as friends_module
+
+    repo = _repo(tmp_path)
+    for name, value in _env().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    original = friends_module._specs_from_flags
+
+    def marked_specs(*args, **kwargs):
+        specs = original(*args, **kwargs)
+        specs[0] = replace(specs[0], independent=False, host_self_review=True)
+        return specs
+
+    monkeypatch.setattr(friends_module, "_specs_from_flags", marked_specs)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(repo / "spec.md"),
+            "--mode",
+            "gate",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_refute_a:repo",
+            "--friend",
+            "fake:judge_refute_b:repo",
+            "--friend",
+            "fake:judge_refute_c:repo",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 1
+    meta = _run_json(tmp_path)
+    assert meta["gate_decision"] == "blocked"
+    assert "deadlocked" in meta["claim_states"].values()
 
 
 def test_the_blocking_claims_are_named_on_stderr(tmp_path):

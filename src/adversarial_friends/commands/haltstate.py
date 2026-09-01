@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .. import verdicts as vd
+from ..adapters import FriendSpec, independent_friend_keys
 from ..ceilings import Budget
 from ..failures import RepeatTracker
 from ..report import render
@@ -55,8 +56,14 @@ def carried_outcome(review: ReviewState, meta: dict[str, Any]) -> "CrossexamOutc
     outcome.notes = list(meta.get("amendment_notes") or [])
     outcome.incomplete = bool(meta.get("incomplete"))
     outcome.verdicts = list(review.verdicts)
+    independent_judges = set(
+        independent_friend_keys([FriendSpec(**entry) for entry in meta.get("roster", [])])
+    )
     outcome.signatures = {
-        claim_id: vd.verdict_set_signature(outcome.verdicts, claim_id)
+        claim_id: vd.verdict_set_signature(
+            (verdict for verdict in outcome.verdicts if verdict.judge in independent_judges),
+            claim_id,
+        )
         for claim_id, state in outcome.states.items()
         if state == vd.UNPROVEN
     }

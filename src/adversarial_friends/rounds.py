@@ -91,6 +91,8 @@ def persist_skip(store: RunStore, round_no: int, skipped: SkippedFriend) -> dict
     )
     return {
         "name": skipped.spec.name,
+        "independent": skipped.spec.independent,
+        "host_self_review": skipped.spec.host_self_review,
         "model": skipped.spec.model,
         "effort": skipped.spec.effort,
         "transport": "not-dispatched",
@@ -411,7 +413,11 @@ def dispatch_round(
             # operator what to fix. Raised only on a DECLARED marker -- an
             # unrecognised failure is never guessed into an abort, because
             # a false auth classification ends the whole run.
-            if auth_abort is None and classify(outcome, registry.get(spec.cli)) == AUTH:
+            if (
+                auth_abort is None
+                and spec.independent
+                and classify(outcome, registry.get(spec.cli)) == AUTH
+            ):
                 auth_abort = auth_abort_message(spec.name, registry.get(spec.cli))
     return DispatchRoundOutcome(results, auth_abort, round_error)
 
@@ -473,6 +479,8 @@ def persist_result(
         status += " [orphans suspected]"
     row = {
         "name": spec.name,
+        "independent": spec.independent,
+        "host_self_review": spec.host_self_review,
         "model": spec.model,
         "effort": spec.effort,
         "transport": transport,
@@ -520,6 +528,8 @@ def recover_result_audit(store: RunStore, round_no: int, spec: FriendSpec) -> di
     if not store.owned_regular_exists(path):
         return {
             "name": spec.name,
+            "independent": spec.independent,
+            "host_self_review": spec.host_self_review,
             "model": spec.model,
             "effort": spec.effort,
             "transport": "legacy-unknown",

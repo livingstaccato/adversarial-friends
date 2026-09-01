@@ -28,8 +28,8 @@ from ..errors import NoFriendsError, UsageError
 from ..ids import validate_friend_name
 from ..presets import default_preset, effort_for, no_effort_note, unverifiable_note
 from ..prompt import available_lenses
-from ..readiness import DenyProbeResult, ReadinessState, assess_all
-from ..roster import DEGRADED_MODES, apply_capacity, resolve
+from ..readiness import DenyProbeResult, ReadinessState, assess_all, detect_host
+from ..roster import DEGRADED_MODES, apply_capacity, mark_host_role, resolve
 
 
 @dataclass
@@ -134,6 +134,9 @@ def resolve_friends(
     preset = args.preset or default_preset(args.mode)
     roster_source: str | None = None
     enabled, disabled, host_provider, lenses = _validated_selection_args(args, registry)
+    host = detect_host(os.environ, host_provider=host_provider)
+    requested_self = getattr(args, "include_self", None)
+    include_host = requested_self if requested_self is not None else host == "codex"
     provider_policy = providerconfig.load(registry, os.environ)
     if enabled or disabled:
         settings = dict(provider_policy.providers)
@@ -165,6 +168,8 @@ def resolve_friends(
     explicit = bool(args.friend)
     if explicit:
         specs = _specs_from_flags(args.friend, args.timeout, registry, bool(fake_cmd))
+        if host is not None and not include_host:
+            specs = [spec for spec in specs if spec.cli != host]
         if args.roster:
             downgrades.append(
                 "both --friend and --roster were given; --friend replaces the "
@@ -285,6 +290,11 @@ def resolve_friends(
             for s in specs
         ]
 
+    # Explicit --friend values bypass discovery, but not host-role audit.
+    # Apply this once more to every path so roster files and discovery stay
+    # idempotent while explicit selections receive the same marking.
+    specs = mark_host_role(specs, host)
+
     validate_roster_uniqueness(specs, judging=args.mode != "report")
     for spec in specs:
         if spec.cli != "fake":
@@ -336,7 +346,8 @@ def roster_for_run(
             if adapter is not None:
                 enforce(adapter, authority_policy.for_provider(spec.cli))
 
-    if len(specs) < 2:
+    independent_specs = [spec for spec in specs if spec.independent]
+    if len(independent_specs) < 2:
         # §8.3. --friend REPLACES the roster rather than augmenting
         # discovery (see cliargs._specs_from_flags), so a single --friend
         # flag -- or discovery itself resolving to one friend -- produces a
@@ -351,17 +362,19 @@ def roster_for_run(
         # for every mode until a crossexam of this file found the exit-0
         # gate and the DEGRADED_MODES constant that was wired to nothing.
         if args.mode not in DEGRADED_MODES:
+            names = ", ".join(spec.name for spec in independent_specs) or "none"
             raise NoFriendsError(
-                f"only one friend ({specs[0].name}) resolved, and mode "
-                f"{args.mode!r} needs at least two independent friends "
+                f"only {len(independent_specs)} independent friend(s) ({names}) "
+                f"resolved, and mode {args.mode!r} needs at least two independent friends "
                 "(§8.3). Install a second agent CLI, add a local model "
                 "(`--friend ollama:<lens>:<model>`), or use --mode report "
                 "for a single reviewer's opinion."
             )
-        downgrades.append(
-            f"only one friend ({specs[0].name}) resolved for this run; "
-            "cross-examination needs at least two independent friends, so "
-            "this report reflects a single reviewer's opinion, not "
-            "disagreement between several."
-        )
+        if len(specs) == 1:
+            downgrades.append(
+                f"only one friend ({specs[0].name}) resolved for this run; "
+                "cross-examination needs at least two independent friends, so "
+                "this report reflects a single reviewer's opinion, not "
+                "disagreement between several."
+            )
     return resolved, specs

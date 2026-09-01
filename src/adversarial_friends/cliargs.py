@@ -44,7 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="cli:lens[:model], repeatable; overrides discovery",
     )
-    run_p.add_argument("--include-self", action="store_true")
+    self_selection = run_p.add_mutually_exclusive_group()
+    self_selection.add_argument("--include-self", dest="include_self", action="store_true")
+    self_selection.add_argument("--exclude-self", dest="include_self", action="store_false")
+    run_p.set_defaults(include_self=None)
     run_p.add_argument(
         "--host-provider",
         default=None,

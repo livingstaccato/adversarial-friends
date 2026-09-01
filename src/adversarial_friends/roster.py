@@ -41,6 +41,16 @@ def apply_capacity(
     return specs[:max_friends], specs[max_friends:]
 
 
+def mark_host_role(specs: list[FriendSpec], host: str | None) -> list[FriendSpec]:
+    """Mark every selected instance of the orchestrating provider advisory."""
+    if host is None:
+        return specs
+    return [
+        replace(spec, independent=False, host_self_review=True) if spec.cli == host else spec
+        for spec in specs
+    ]
+
+
 # Set to any non-empty value to keep HTTP friends out of auto-discovery
 # without stopping the server. `--friend ollama:lens:model` still works --
 # this only governs whether a reachable endpoint is *enlisted automatically*.
@@ -75,7 +85,7 @@ def resolve(
     lenses: list[str],
     env: Mapping[str, str],
     which: Callable[[str], str | None] = shutil.which,
-    include_self: bool = False,
+    include_self: bool | None = None,
     overrides: list[dict[str, Any]] | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     probe: Callable[[str], bool] | None = None,
@@ -85,6 +95,8 @@ def resolve(
     enforce: Callable[[Adapter], object] | None = None,
     authority_policy: AuthorityPolicy | None = None,
 ) -> list[FriendSpec]:
+    host = detect_host(env, host_provider=host_provider)
+    effective_include_self = include_self if include_self is not None else host == "codex"
     # NOTE for whoever wires a --roster file flag through `overrides`:
     # `if overrides:` (not `if overrides is not None:`) means an explicit,
     # caller-supplied *empty* list is indistinguishable from "no overrides
@@ -150,7 +162,7 @@ def resolve(
         env=env,
         which=which,
         probe=probe,
-        include_self=include_self,
+        include_self=effective_include_self,
         host_provider=host_provider,
         enforce=enforce,
         authority_policy=authority_policy,
@@ -172,7 +184,7 @@ def resolve(
                 "no usable friends from roster after readiness filtering: " + "; ".join(rejected)
             )
         selected, _dropped = apply_capacity(specs, max_friends)
-        return selected
+        return mark_host_role(selected, host)
 
     available = [name for name, row in readiness.items() if row.ready]
     if not available:
@@ -204,4 +216,4 @@ def resolve(
             )
         )
     selected, _dropped = apply_capacity(specs, max_friends)
-    return selected
+    return mark_host_role(selected, host)

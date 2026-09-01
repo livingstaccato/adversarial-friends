@@ -53,6 +53,8 @@ class CritiqueOutcome:
     calls: int = 0
     any_success: bool = False
     any_failed: bool = False
+    independent_any_success: bool = False
+    independent_any_failed: bool = False
     # Set when a friend hit a deterministic auth failure this round. Every
     # result this round produced is still persisted and merged below --
     # only the caller's decision to schedule another round is affected.
@@ -74,6 +76,7 @@ class CritiqueOutcome:
     produced_only_aliases: bool = True
     # Theme novelty is advisory and independent of exact ledger identity.
     produced_new_themes: bool = False
+    produced_new_independent_themes: bool = False
     theme_proposals: list[ThemeProposal] = field(default_factory=list)
 
 
@@ -260,8 +263,10 @@ def run_critique(
                     }
                 )
             outcome.any_failed = True
+            outcome.independent_any_failed = outcome.independent_any_failed or spec.independent
             continue
         outcome.any_success = True
+        outcome.independent_any_success = outcome.independent_any_success or spec.independent
         outcome.succeeded_friends += 1
         outcome.successful_friend_ids.append(spec.name)
         incoming = []
@@ -290,6 +295,9 @@ def run_critique(
         novel_theme_ids, proposals = classify_novel(all_claims, incoming)
         if novel_theme_ids:
             outcome.produced_new_themes = True
+            outcome.produced_new_independent_themes = (
+                outcome.produced_new_independent_themes or spec.independent
+            )
         outcome.theme_proposals.extend(proposals)
         kept, aliases, _updated_existing = exact_merge(all_claims, incoming, round_no=round_no)
         if kept:
