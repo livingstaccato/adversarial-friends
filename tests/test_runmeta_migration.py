@@ -678,6 +678,52 @@ def test_known_legacy_loop_halt_recomputes_independent_state_and_streak_inputs(t
     assert resumed_streak(restored, restored._resume_streak) == 0
 
 
+def test_legacy_loop_health_ignores_failed_host_when_independent_reviewers_succeed(
+    tmp_path,
+):
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_judging_meta("loop")
+    _make_second_loop_halt(meta)
+    meta["dry_streak"] = 0
+    for row in meta["friends"]:
+        if row["name"] == "codex-ops":
+            row["status"] = "failed: exit 1"
+    run_dir = _run_dir(tmp_path, meta)
+    _write_outstanding_request(run_dir, 4)
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    assert restored._resume_meta["dry_streak"] == 1
+    assert restored._resume_meta["halted_round_dry"] is True
+    assert restored._resume_meta["halted_round_failed"] is False
+
+
+def test_legacy_loop_health_rejects_host_only_success_when_independents_are_skipped(
+    tmp_path,
+):
+    from adversarial_friends.commands.haltstate import resumed_streak
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_judging_meta("loop")
+    _make_second_loop_halt(meta)
+    meta["dry_streak"] = 1
+    for row in meta["friends"]:
+        if row["round"] == 1 and row["name"] != "codex-ops":
+            row["status"] = "failed: exit 1"
+        if row["round"] == 4 and row["name"] != "codex-ops":
+            row["status"] = "skipped: repeated failure"
+    run_dir = _run_dir(tmp_path, meta)
+    _write_outstanding_request(run_dir, 4)
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    assert restored._resume_meta["dry_streak"] == 0
+    assert restored._resume_meta["halted_round_dry"] is False
+    assert restored._resume_meta["halted_round_failed"] is True
+    assert resumed_streak(restored, restored._resume_streak) == 0
+
+
 def test_known_legacy_judging_fails_closed_without_durable_replay_evidence(tmp_path):
     from adversarial_friends.commands.runmeta import _restore_args
 

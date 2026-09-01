@@ -198,6 +198,8 @@ def _round_health(
 ) -> tuple[bool, bool]:
     statuses: list[str] = []
     for spec in specs:
+        if not spec.independent:
+            continue
         status = audit.get((round_no, spec.name))
         if status is None:
             raise _cannot_replay(
