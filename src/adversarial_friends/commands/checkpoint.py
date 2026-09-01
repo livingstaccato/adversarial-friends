@@ -1,11 +1,11 @@
 """Strict normalization for attacker-editable resume checkpoint metadata."""
 
-import json
 from pathlib import Path
 from typing import Any
 
 from ..dispatch import STDERR_TAIL_CHARS, _stderr_tail, failure_summary
 from ..errors import UsageError
+from ..jsonio import load_json_object
 from ..orchestrator import QUESTION_EXTRACT, QUESTION_MERGE, REQUEST_NAME, RESPONSE_NAME
 from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..snapshots import SnapshotIdentity, history_from_meta
@@ -257,16 +257,19 @@ def _legacy_halt_is_outstanding(meta: dict[str, Any], run_dir: Path) -> bool:
     if not request_path.is_file() or (round_dir / f"{RESPONSE_NAME}.applied").exists():
         return False
     try:
-        request = json.loads(request_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, RecursionError):
+        request = load_json_object(request_path, label="orchestrator request")
+    except UsageError:
         return False
     return type(request) is dict and request.get("question") in {QUESTION_MERGE, QUESTION_EXTRACT}
 
 
 def validate_lifecycle_and_snapshot(meta: dict[str, Any], *, run_dir: Path, legacy: bool) -> None:
     lifecycle = meta.get("lifecycle_state")
-    if not legacy and lifecycle != "waiting-for-orchestrator":
-        raise UsageError("cannot resume: saved lifecycle_state must be waiting-for-orchestrator")
+    if not legacy and lifecycle not in {"waiting-for-orchestrator", "response-applied"}:
+        raise UsageError(
+            "cannot resume: saved lifecycle_state must be waiting-for-orchestrator "
+            "or response-applied"
+        )
     if legacy and lifecycle not in (None, "waiting-for-orchestrator"):
         raise UsageError("cannot resume: saved lifecycle_state must be waiting-for-orchestrator")
     if legacy and not _legacy_halt_is_outstanding(meta, run_dir):

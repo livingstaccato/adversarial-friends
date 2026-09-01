@@ -186,3 +186,18 @@ def test_malformed_record_names_its_line(tmp_path):
     path.write_text('{"type": "claim", "id": "c-0001@1"}\n')
     with pytest.raises(UsageError, match=r"claims\.jsonl:1: malformed 'claim' record"):
         list(Ledger(path).records())
+
+
+def test_ledger_never_follows_a_symlink_for_read_or_append(tmp_path):
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("sentinel\n", encoding="utf-8")
+    link = tmp_path / "claims.jsonl"
+    link.symlink_to(outside)
+    ledger = Ledger(link)
+
+    with pytest.raises(OSError):
+        ledger.append(make_claim())
+    with pytest.raises(OSError):
+        list(ledger.records())
+
+    assert outside.read_text(encoding="utf-8") == "sentinel\n"

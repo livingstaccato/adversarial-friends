@@ -22,8 +22,10 @@ leaves behind.
 """
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
+import stat
 import subprocess
 import threading
 
@@ -31,6 +33,8 @@ import pytest
 
 from adversarial_friends import isolation, orchestrator
 from adversarial_friends.ceilings import Budget
+from adversarial_friends.commands import resume as resume_mod
+from adversarial_friends.commands.crossexam import CrossexamOutcome
 from adversarial_friends.commands.resume import resume_round_one
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ids import format_claim_id
@@ -268,6 +272,254 @@ def test_a_clean_merge_retry_reports_no_earlier_attempt(tmp_path):
 
     assert [a.duplicate for a in resumed.aliases] == ["c-0002@1"]
     assert not any("already applied by an earlier" in d for d in resumed.downgrades)
+
+
+def test_response_application_checkpoint_is_durable_before_rename(tmp_path, monkeypatch):
+    store = _store(tmp_path, "run-checkpoint-before-rename")
+    store.ledger.append(_claim(1, "defect A"))
+    store.ledger.append(_claim(2, "defect A reworded"))
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [_claim(1), _claim(2)])
+    response = {
+        "version": 1,
+        "merges": [{"canonical": "c-0001@1", "duplicate": "c-0002@1", "rationale": "same"}],
+    }
+    response_path = orchestrator.response_path(round_dir)
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+    expected_hash = "sha256:" + hashlib.sha256(response_path.read_bytes()).hexdigest()
+
+    original_rename = Path.rename
+
+    def fail_response_rename(self, target):
+        if self == response_path:
+            raise RuntimeError("injected rename failure")
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_response_rename)
+    with pytest.raises(RuntimeError, match="injected rename failure"):
+        _call_resume_round_one(store, 2)
+
+    checkpoint = json.loads((store.run_dir / "run.json").read_text(encoding="utf-8"))
+    assert checkpoint["lifecycle_state"] == "response-applied"
+    assert checkpoint["applied_response"] == {
+        "version": 1,
+        "round": 2,
+        "question": "merge",
+        "sha256": expected_hash,
+        "records": 1,
+    }
+    assert response_path.exists()
+    assert not response_path.with_suffix(".json.applied").exists()
+
+
+def test_retry_recovers_matching_applied_response_after_rename(tmp_path):
+    store = _store(tmp_path, "run-recover-applied")
+    store.ledger.append(_claim(1, "defect A"))
+    store.ledger.append(_claim(2, "defect A reworded"))
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [_claim(1), _claim(2)])
+    orchestrator.response_path(round_dir).write_text(
+        json.dumps({"version": 1, "merges": []}), encoding="utf-8"
+    )
+    response_path = orchestrator.response_path(round_dir)
+    payload = response_path.read_bytes()
+    applied_path = response_path.with_suffix(".json.applied")
+    response_path.rename(applied_path)
+    store.write_run_json(
+        {
+            "lifecycle_state": "response-applied",
+            "applied_response": {
+                "version": 1,
+                "round": 2,
+                "question": "merge",
+                "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                "records": 0,
+            },
+        }
+    )
+    args = _args(mode="report")
+    args._resume_meta = json.loads((store.run_dir / "run.json").read_text())
+
+    resumed = resume_round_one(
+        args,
+        store,
+        ReviewState.replay(store.ledger.records()),
+        [],
+        {},
+        None,
+        None,
+        "",
+        None,
+        None,
+        threading.Event(),
+        Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0),
+        2,
+        lambda _p: None,
+    )
+
+    assert resumed.aliases == []
+    assert applied_path.read_bytes() == payload
+
+
+def test_tampered_applied_response_is_refused_without_mutation(tmp_path):
+    store = _store(tmp_path, "run-tampered-applied")
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [])
+    applied_path = round_dir / "RESPONSE.json.applied"
+    applied_path.write_text('{"version": 1, "merges": []}', encoding="utf-8")
+    store.write_run_json(
+        {
+            "lifecycle_state": "response-applied",
+            "applied_response": {
+                "version": 1,
+                "round": 2,
+                "question": "merge",
+                "sha256": "sha256:" + "0" * 64,
+                "records": 0,
+            },
+        }
+    )
+    before = {
+        "run": (store.run_dir / "run.json").read_bytes(),
+        "applied": applied_path.read_bytes(),
+        "ledger": (
+            (store.run_dir / "claims.jsonl").read_bytes()
+            if (store.run_dir / "claims.jsonl").exists()
+            else b""
+        ),
+    }
+    args = _args(mode="report")
+    args._resume_meta = json.loads(before["run"])
+
+    with pytest.raises(UsageError, match=r"applied response.*hash"):
+        resume_round_one(
+            args,
+            store,
+            ReviewState.replay(store.ledger.records()),
+            [],
+            {},
+            None,
+            None,
+            "",
+            None,
+            None,
+            threading.Event(),
+            Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0),
+            2,
+            lambda _p: None,
+        )
+
+    assert (store.run_dir / "run.json").read_bytes() == before["run"]
+    assert applied_path.read_bytes() == before["applied"]
+    ledger = store.run_dir / "claims.jsonl"
+    assert (ledger.read_bytes() if ledger.exists() else b"") == before["ledger"]
+
+
+def test_hostile_request_is_refused_without_applying_or_rewriting_response(tmp_path):
+    store = _store(tmp_path, "run-hostile-request")
+    store.ledger.append(_claim(1))
+    round_dir = store.round_dir(2)
+    outside = tmp_path / "outside-request.json"
+    outside.write_text('{"question": "merge"}', encoding="utf-8")
+    orchestrator.request_path(round_dir).symlink_to(outside)
+    response = orchestrator.response_path(round_dir)
+    response.write_text('{"version": 1, "merges": []}', encoding="utf-8")
+    before = response.read_bytes()
+
+    with pytest.raises(UsageError, match=r"orchestrator request.*regular file"):
+        _call_resume_round_one(store, 2)
+
+    assert response.read_bytes() == before
+    assert not response.with_suffix(".json.applied").exists()
+    assert not (store.run_dir / "run.json").exists()
+
+
+def test_valid_resume_repairs_supported_legacy_run_permissions(tmp_path):
+    store = _store(tmp_path, "run-permission-repair")
+    round_dir = store.round_dir(2)
+    _write_extract_request(round_dir)
+    _write_extract_response(round_dir, ["private finding"])
+    for path in [store.run_dir, round_dir]:
+        path.chmod(0o755)
+    for path in store.run_dir.rglob("*"):
+        if path.is_file():
+            path.chmod(0o644)
+
+    _call_resume_round_one(store, 2)
+
+    assert stat.S_IMODE(store.run_dir.lstat().st_mode) == 0o700
+    for path in store.run_dir.rglob("*"):
+        if path.is_symlink():
+            continue
+        expected = 0o700 if path.is_dir() else 0o600
+        assert stat.S_IMODE(path.lstat().st_mode) == expected
+
+
+def test_judging_exception_leaves_an_authenticated_replayable_transition(tmp_path, monkeypatch):
+    store = _store(tmp_path, "run-judging-interrupted")
+    store.ledger.append(_claim(1))
+    round_dir = store.round_dir(2)
+    orchestrator.write_request(round_dir, store.run_id, 2, [_claim(1)])
+    response = orchestrator.response_path(round_dir)
+    response.write_text('{"version": 1, "merges": []}', encoding="utf-8")
+    args = _args(mode="crossexam")
+
+    monkeypatch.setattr(
+        resume_mod,
+        "run_rounds",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected judging interruption")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="judging interruption"):
+        resume_round_one(
+            args,
+            store,
+            ReviewState.replay(store.ledger.records()),
+            [],
+            {},
+            None,
+            None,
+            "",
+            None,
+            None,
+            threading.Event(),
+            Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0),
+            2,
+            lambda _p: None,
+        )
+
+    applied = response.with_suffix(".json.applied")
+    checkpoint = json.loads((store.run_dir / "run.json").read_text(encoding="utf-8"))
+    assert checkpoint["lifecycle_state"] == "response-applied"
+    assert applied.exists() and not response.exists()
+
+    monkeypatch.setattr(
+        resume_mod,
+        "run_rounds",
+        lambda _specs, claims, *_args, **_kwargs: CrossexamOutcome(claims=list(claims)),
+    )
+    retry_args = _args(mode="crossexam")
+    retry_args._resume_meta = checkpoint
+    resumed = resume_round_one(
+        retry_args,
+        store,
+        ReviewState.replay(store.ledger.records()),
+        [],
+        {},
+        None,
+        None,
+        "",
+        None,
+        None,
+        threading.Event(),
+        Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0),
+        2,
+        lambda _p: None,
+    )
+
+    assert resumed.cross is not None
+    assert [record.id for record in store.ledger.claims()] == ["c-0001@1"]
 
 
 def test_missing_snapshot_refusal_leaves_all_resume_state_untouched(tmp_path):

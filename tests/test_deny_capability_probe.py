@@ -1,0 +1,181 @@
+import dataclasses
+
+import pytest
+
+from adversarial_friends.adapters import load_adapters
+from adversarial_friends.authority import ExternalToolPolicy
+from adversarial_friends.errors import UsageError
+from adversarial_friends.paths import ADAPTER_DIR
+from adversarial_friends.providerconfig import ProviderPolicy
+from adversarial_friends.readiness import (
+    DenyProbeResult,
+    ReadinessState,
+    assess_all,
+    probe_deny_argv,
+)
+
+
+@pytest.fixture
+def registry():
+    return load_adapters(ADAPTER_DIR)
+
+
+def _probe_adapter(registry, name="codex"):
+    return dataclasses.replace(
+        registry[name],
+        deny_external_tools_probe_argv=("--deny", "--help"),
+        deny_external_tools_probe_markers=("--deny",),
+    )
+
+
+def _shim(path, body):
+    path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        '["--deny", "run"]',
+        '["--deny", "--help\\nmodel prompt"]',
+        "[" + ", ".join(['"x"'] * 33) + "]",
+        '["' + "x" * 257 + '", "--help"]',
+    ],
+)
+def test_deny_capability_probe_is_bounded_and_cannot_invoke_a_model(tmp_path, probe):
+    (tmp_path / "bad.toml").write_text(
+        "\n".join(
+            [
+                'name = "bad"',
+                'external_tools = "deny-argv"',
+                'deny_external_tools_argv = ["--deny"]',
+                f"deny_external_tools_probe_argv = {probe}",
+                'deny_external_tools_probe_markers = ["--deny"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UsageError, match="capability probe"):
+        load_adapters(tmp_path)
+
+
+def test_deny_capability_probe_markers_are_bounded(tmp_path):
+    (tmp_path / "bad.toml").write_text(
+        "\n".join(
+            [
+                'name = "bad"',
+                'external_tools = "deny-argv"',
+                'deny_external_tools_argv = ["--deny"]',
+                'deny_external_tools_probe_argv = ["--deny", "--help"]',
+                f'deny_external_tools_probe_markers = ["{"x" * 257}"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UsageError, match="capability probe markers"):
+        load_adapters(tmp_path)
+
+
+def test_deny_argv_probe_accepts_only_a_successful_bounded_marker_match(tmp_path, registry):
+    adapter = _probe_adapter(registry)
+    supported = _shim(tmp_path / "supported", 'printf "%s\\n" "--deny supported"')
+    rejected = _shim(tmp_path / "rejected", 'printf "%s\\n" "unknown option" >&2; exit 2')
+    hostile = _shim(tmp_path / "hostile", 'printf "%070000d" 0')
+
+    assert probe_deny_argv(adapter, str(supported)).supported
+    assert not probe_deny_argv(adapter, str(rejected)).supported
+    result = probe_deny_argv(adapter, str(hostile))
+    assert not result.supported
+    assert len(result.reason) <= 300
+
+
+def test_deny_argv_probe_times_out_without_model_or_network_fallback(tmp_path, registry):
+    adapter = _probe_adapter(registry)
+    slow = _shim(tmp_path / "slow", "sleep 2")
+
+    result = probe_deny_argv(adapter, str(slow), timeout_s=0.02)
+
+    assert not result.supported
+    assert "timed out" in result.reason
+
+
+def test_readiness_blocks_rejected_deny_flags_and_caches_process_snapshot(tmp_path, registry):
+    adapter = _probe_adapter(registry)
+    counter = tmp_path / "count"
+    shim = _shim(
+        tmp_path / "counter",
+        f'printf x >> "{counter}"; printf "%s\\n" "unknown option" >&2; exit 2',
+    )
+
+    first = assess_all(
+        {"codex": adapter},
+        ProviderPolicy({}),
+        env={},
+        which=lambda _binary: str(shim),
+        external_tool_policy=ExternalToolPolicy.DENY,
+    )
+    second = assess_all(
+        {"codex": adapter},
+        ProviderPolicy({}),
+        env={},
+        which=lambda _binary: str(shim),
+        external_tool_policy=ExternalToolPolicy.DENY,
+    )
+
+    assert first["codex"].state is ReadinessState.POLICY_BLOCKED
+    assert second["codex"].state is ReadinessState.POLICY_BLOCKED
+    assert counter.read_text() == "x"
+
+
+def test_disabled_and_host_excluded_automatic_providers_are_not_capability_probed(registry):
+    adapter = _probe_adapter(registry)
+    probes = []
+    disabled_policy = ProviderPolicy(
+        {"codex": dataclasses.replace(ProviderPolicy({}).setting("codex"), enabled=False)}
+    )
+
+    disabled = assess_all(
+        {"codex": adapter},
+        disabled_policy,
+        which=lambda _binary: "/bin/codex",
+        external_tool_policy=ExternalToolPolicy.DENY,
+        capability_probe=lambda *_args: probes.append("disabled"),
+    )
+    hosted = assess_all(
+        {"codex": adapter},
+        ProviderPolicy({}),
+        env={"CODEX_SESSION_ID": "present"},
+        which=lambda _binary: "/bin/codex",
+        external_tool_policy=ExternalToolPolicy.DENY,
+        capability_probe=lambda *_args: probes.append("host"),
+    )
+
+    assert disabled["codex"].state is ReadinessState.DISABLED
+    assert hosted["codex"].state is ReadinessState.HOST_EXCLUDED
+    assert probes == []
+
+
+def test_explicit_provider_override_still_requires_capability_verification(registry):
+    adapter = _probe_adapter(registry)
+    probes: list[str] = []
+    disabled_policy = ProviderPolicy(
+        {"codex": dataclasses.replace(ProviderPolicy({}).setting("codex"), enabled=False)}
+    )
+
+    rows = assess_all(
+        {"codex": adapter},
+        disabled_policy,
+        env={"CODEX_SESSION_ID": "present"},
+        which=lambda _binary: "/bin/codex",
+        external_tool_policy=ExternalToolPolicy.DENY,
+        selection_policy=False,
+        capability_probe=lambda *_args: (
+            probes.append("codex") or DenyProbeResult(False, "unsupported explicit provider")
+        ),
+    )
+
+    assert rows["codex"].state is ReadinessState.POLICY_BLOCKED
+    assert probes == ["codex"]

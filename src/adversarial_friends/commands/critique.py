@@ -113,7 +113,7 @@ def build_prompts(
             if warning is not None:
                 downgrades.append(warning)
         prompt_path = store.friend_prompt_path(round_no, spec.name)
-        prompt_path.write_text(prompt_text, encoding="utf-8")
+        store.write_sensitive(prompt_path, prompt_text)
         prompt_for[spec.name] = prompt_path
         advisory_for[spec.name] = advisory
     return prompt_for, advisory_for, downgrades

@@ -24,6 +24,7 @@ from ..adapters import Adapter, FriendSpec, friend_key
 from ..authority import ExternalToolPolicy
 from ..ceilings import BUDGET_EXHAUSTED, Budget, within_deadline
 from ..dispatch import argv_size_warning
+from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..judgeprompt import build_judge_prompt
 from ..ledger import Claim, Verdict
@@ -88,6 +89,32 @@ class CrossexamOutcome:
     dispatch_error: BaseException | None = None
 
 
+def _verdict_identity(verdict: Verdict) -> tuple[str, str, int]:
+    return verdict.claim_id, verdict.judge, verdict.round
+
+
+def _durable_verdict_index(
+    review: ReviewState, first_round: int
+) -> dict[tuple[str, str, int], Verdict]:
+    """Index already-fsynced votes, refusing ambiguous same-round history."""
+    indexed: dict[tuple[str, str, int], Verdict] = {}
+    for verdict in review.verdicts:
+        # Earlier rounds belong to the saved `prior` block. In particular,
+        # an artifact revision deliberately passes prior=None to reset its
+        # conclusions; seeding pre-revision votes here would undo that reset.
+        if verdict.round < first_round:
+            continue
+        identity = _verdict_identity(verdict)
+        prior = indexed.get(identity)
+        if prior is not None and prior != verdict:
+            raise UsageError(
+                "cannot recover judging: ledger has conflicting verdicts for "
+                f"{verdict.claim_id} from {verdict.judge} in round {verdict.round}"
+            )
+        indexed[identity] = verdict
+    return indexed
+
+
 def run_rounds(
     specs: list[FriendSpec],
     claims: list[Claim],
@@ -140,6 +167,7 @@ def run_rounds(
     """
     outcome = CrossexamOutcome(claims=list(claims))
     announced = announced_skips if announced_skips is not None else set()
+    durable_verdicts = _durable_verdict_index(review, first_round)
     if prior is not None:
         # Everything the next block needs to keep telling the truth about
         # what already happened: the arguments themselves, the notes, the
@@ -149,6 +177,16 @@ def run_rounds(
         outcome.notes = list(prior.notes)
         outcome.signatures = dict(prior.signatures)
         outcome.incomplete = prior.incomplete
+    seeded = {_verdict_identity(verdict): verdict for verdict in outcome.verdicts}
+    for identity, verdict in durable_verdicts.items():
+        prior_verdict = seeded.get(identity)
+        if prior_verdict is not None and prior_verdict != verdict:
+            raise UsageError(
+                "cannot recover judging: saved progress conflicts with the durable ledger"
+            )
+        if prior_verdict is None:
+            outcome.verdicts.append(verdict)
+            seeded[identity] = verdict
 
     # A claim starts unjudged. `contested` is the non-terminal set, so
     # seeding every claim as contested is what puts it in round 2's slice.
@@ -194,12 +232,28 @@ def run_rounds(
                 )
                 announced.add(item.spec.name)
         judge_specs: list[FriendSpec] = []
+        pending_for: dict[str, list[Claim]] = {}
         prompt_for: dict[str, Path] = {}
         prompt_text_for: dict[str, str] = {}
         prompt_downgrades_for: dict[str, list[str]] = {}
         contested_ids = {c.id: c for c in contested}
+        recovered_judges = {
+            judge
+            for claim_id, judge, recovered_round in durable_verdicts
+            if recovered_round == round_no and claim_id in contested_ids
+        }
+        recovered_judges.intersection_update(friend_key(spec) for spec in active)
+        if recovered_judges:
+            # The saved checkpoint predates this judging work. Charge each
+            # durable judge exactly once so retry cannot regain call budget.
+            budget.spend(len(recovered_judges))
         for spec in active:
-            slice_ = _slice_for(spec, contested)
+            judge = friend_key(spec)
+            slice_ = [
+                claim
+                for claim in _slice_for(spec, contested)
+                if (claim.id, judge, round_no) not in durable_verdicts
+            ]
             if not slice_:
                 continue
             # Built per judge, not per round: each one must be told what the
@@ -221,6 +275,7 @@ def run_rounds(
                     prompt_downgrades_for.setdefault(spec.name, []).append(size_note)
             path = store.friend_prompt_path(round_no, spec.name)
             judge_specs.append(spec)
+            pending_for[spec.name] = slice_
             prompt_for[spec.name] = path
             prompt_text_for[spec.name] = prompt_text
 
@@ -228,7 +283,8 @@ def run_rounds(
             # Every remaining claim was written by every friend. Nothing is
             # left that anyone is independent enough to judge, so further
             # rounds would cost a fan-out and decide nothing.
-            if active:
+            had_independent_work = any(_slice_for(spec, contested) for spec in active)
+            if active and not had_independent_work:
                 outcome.downgrades.append(
                     f"round {round_no}: no friend is independent of any remaining "
                     "claim, so no judging round could be run."
@@ -241,6 +297,10 @@ def run_rounds(
             _settle_round(
                 outcome, contested, active, store, review, round_no, max_rounds, {}, final_block
             )
+            if had_independent_work:
+                outcome.rounds_run = round_no
+                round_no += 1
+                continue
             break
 
         if budget.would_exceed_calls(len(judge_specs)):
@@ -258,7 +318,7 @@ def run_rounds(
             budget.exhaust(f"--max-wall-clock leaves no usable time for round {round_no}")
             break
         for spec in judge_specs:
-            prompt_for[spec.name].write_text(prompt_text_for[spec.name], encoding="utf-8")
+            store.write_sensitive(prompt_for[spec.name], prompt_text_for[spec.name])
 
         results: list[RoundResult] = []
         try:
@@ -312,7 +372,7 @@ def run_rounds(
         # the previous version of this file.
         missing: dict[str, set[str]] = {}
         for spec in withheld:
-            _never_reported(missing, spec, _slice_for(spec, contested))
+            _never_reported(missing, spec, pending_for[spec.name])
         if not results and withheld and not abort_event.is_set():
             names = ", ".join(s.name for s in withheld)
             outcome.downgrades.append(
@@ -356,7 +416,7 @@ def run_rounds(
                 # §7.2's M12: a round in which a required friend fails marks
                 # the RUN incomplete, regardless of per-claim states.
                 any_failed = True
-                _never_reported(missing, spec, _slice_for(spec, contested))
+                _never_reported(missing, spec, pending_for[spec.name])
                 continue
             cast = _parse_verdicts(result.result.payload or {}, friend_key(spec), round_no)
             # §6.5's rewrite, applied before anything counts the verdict: an
@@ -366,7 +426,7 @@ def run_rounds(
             cast = [vd.downgrade_unverifiable(v) for v in cast]
             # A judge may only rule on what it was actually shown. Anything
             # else is a verdict on a claim it never saw -- or on its own.
-            shown = {c.id for c in _slice_for(spec, contested)}
+            shown = {c.id for c in pending_for[spec.name]}
             # A judge is told to return one verdict per claim in its slice.
             # One that silently returns fewer still passes validation, and
             # the claims it skipped would look merely `unproven` -- which
@@ -480,17 +540,39 @@ def _settle_round(
             ]
             # Every id the ledger already holds, so a re-amended claim in a
             # loop cannot mint a successor id that already exists.
-            successor, note = vd.build_successor(
-                claim, amendments, round_no, taken={c.id for c in outcome.claims}
-            )
+            existing_successors = [
+                saved
+                for saved in review.claims_by_id.values()
+                if saved.supersedes == claim.id and saved.round == round_no
+            ]
+            if len(existing_successors) > 1:
+                raise UsageError(
+                    f"cannot recover judging: multiple successors of {claim.id} "
+                    f"were persisted for round {round_no}"
+                )
+            taken = {c.id for c in outcome.claims}
+            taken.difference_update(saved.id for saved in existing_successors)
+            expected_successor, note = vd.build_successor(claim, amendments, round_no, taken=taken)
+            if existing_successors:
+                successor = existing_successors[0]
+                if successor != expected_successor:
+                    raise UsageError(
+                        f"cannot recover judging: persisted successor of {claim.id} "
+                        "disagrees with the durable verdicts"
+                    )
+            else:
+                successor = expected_successor
             if note:
                 outcome.notes.append(note)
             # The successor is a real claim and goes in the ledger like any
             # other, or `supersedes` on it points at a version the ledger
             # records while the successor itself exists nowhere.
-            store.ledger.append(successor)
-            review.apply(successor)
-            outcome.claims.append(successor)
+            if not existing_successors:
+                store.ledger.append(successor)
+                review.apply(successor)
+                outcome.claims.append(successor)
+            elif all(saved.id != successor.id for saved in outcome.claims):
+                outcome.claims.append(successor)
             # Created by the run's last judging round, so nothing will judge
             # it: it stays non-terminal and the run says so. The rule this
             # replaced rewrote a final-round `amended` to `upheld` so that

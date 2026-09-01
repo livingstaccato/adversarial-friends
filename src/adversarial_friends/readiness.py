@@ -4,12 +4,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import os
+from pathlib import Path
 import shutil
+import signal
+import subprocess
+import threading
 
 from . import http_transport
 from .adapters import Adapter
 from .authority import ExternalToolPolicy, enforce as enforce_authority
 from .errors import UsageError
+from .procio import _pump_output
 from .providerconfig import ProviderPolicy
 
 HOST_ENV_MARKERS: dict[str, str] = {
@@ -22,6 +27,120 @@ HOST_ENV_MARKERS: dict[str, str] = {
     "OPENCODE_SERVER_PASSWORD": "opencode",
 }
 NO_HTTP_DISCOVERY_ENV = "AF_NO_HTTP_DISCOVERY"
+DENY_PROBE_TIMEOUT_S = 2.0
+DENY_PROBE_OUTPUT_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True)
+class DenyProbeResult:
+    supported: bool
+    reason: str
+
+
+_DENY_PROBE_CACHE: dict[tuple[object, ...], DenyProbeResult] = {}
+
+
+def _probe_key(adapter: Adapter, executable: str) -> tuple[object, ...]:
+    try:
+        info = Path(executable).stat()
+    except OSError as exc:
+        return (adapter.name, executable, "unstatable", type(exc).__name__)
+    return (
+        adapter.name,
+        executable,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        adapter.deny_external_tools_probe_argv,
+        adapter.deny_external_tools_probe_markers,
+    )
+
+
+def _bounded_probe_detail(text: str) -> str:
+    compact = " ".join(text.split())
+    return compact[-240:] if compact else "no diagnostic output"
+
+
+def probe_deny_argv(
+    adapter: Adapter, executable: str, *, timeout_s: float = DENY_PROBE_TIMEOUT_S
+) -> DenyProbeResult:
+    """Verify deny flags with a bounded, declarative help/version invocation."""
+    key = _probe_key(adapter, executable)
+    cached = _DENY_PROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    if not adapter.deny_external_tools_probe_argv or not adapter.deny_external_tools_probe_markers:
+        result = DenyProbeResult(False, "deny-argv capability probe is not declared")
+        _DENY_PROBE_CACHE[key] = result
+        return result
+    try:
+        process = subprocess.Popen(
+            [executable, *adapter.deny_external_tools_probe_argv],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        result = DenyProbeResult(False, f"deny-argv capability probe could not start: {exc}")
+        _DENY_PROBE_CACHE[key] = result
+        return result
+    assert process.stdout is not None and process.stderr is not None
+    stop = threading.Event()
+    overflow = threading.Event()
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    pumps = [
+        threading.Thread(
+            target=_pump_output,
+            args=(stream, chunks, stop, DENY_PROBE_OUTPUT_BYTES // 2, overflow),
+            daemon=True,
+        )
+        for stream, chunks in (
+            (process.stdout, stdout_chunks),
+            (process.stderr, stderr_chunks),
+        )
+    ]
+    for pump in pumps:
+        pump.start()
+    timed_out = False
+    try:
+        process.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            process.kill()
+        process.wait()
+    finally:
+        stop.set()
+        for pump in pumps:
+            pump.join(3.0)
+    output = "".join(stdout_chunks + stderr_chunks)
+    if timed_out:
+        result = DenyProbeResult(
+            False, f"deny-argv capability probe timed out after {timeout_s:g}s"
+        )
+    elif overflow.is_set():
+        result = DenyProbeResult(False, "deny-argv capability probe output exceeded 65536 bytes")
+    elif process.returncode != 0:
+        result = DenyProbeResult(
+            False,
+            f"deny-argv capability probe exited {process.returncode}: {_bounded_probe_detail(output)}",
+        )
+    else:
+        missing = [
+            marker for marker in adapter.deny_external_tools_probe_markers if marker not in output
+        ]
+        result = (
+            DenyProbeResult(False, f"deny-argv capability probe omitted marker {missing[0]!r}")
+            if missing
+            else DenyProbeResult(True, "deny-argv capability verified")
+        )
+    _DENY_PROBE_CACHE[key] = result
+    return result
 
 
 class ReadinessState(StrEnum):
@@ -77,6 +196,7 @@ def assess_all(
     enforce: Callable[[Adapter], object] | None = None,
     external_tool_policy: ExternalToolPolicy | None = None,
     selection_policy: bool = True,
+    capability_probe: Callable[[Adapter, str], DenyProbeResult] | None = None,
 ) -> dict[str, FriendReadiness]:
     """Assess providers once, optionally ignoring automatic-selection policy.
 
@@ -107,6 +227,18 @@ def assess_all(
                 ReadinessState.DISABLED,
                 f"disabled by {NO_HTTP_DISCOVERY_ENV}",
                 adapter.endpoint,
+                setting.model,
+            )
+            continue
+        if selection_policy and not include_self and name == host:
+            where = declared_where
+            if adapter.transport != "http" and adapter.binary:
+                where = which(adapter.binary) or declared_where
+            rows[name] = _row(
+                name,
+                ReadinessState.HOST_EXCLUDED,
+                "excluded because it is the detected host provider",
+                where,
                 setting.model,
             )
             continue
@@ -153,15 +285,21 @@ def assess_all(
                 continue
             where = executable
 
-        if selection_policy and not include_self and name == host:
-            rows[name] = _row(
-                name,
-                ReadinessState.HOST_EXCLUDED,
-                "excluded because it is the detected host provider",
-                where,
-                setting.model,
-            )
-            continue
+        if (
+            external_tool_policy is ExternalToolPolicy.DENY
+            and adapter.external_tools == "deny-argv"
+        ):
+            probe_deny = probe_deny_argv if capability_probe is None else capability_probe
+            capability = probe_deny(adapter, where)
+            if not capability.supported:
+                rows[name] = _row(
+                    name,
+                    ReadinessState.POLICY_BLOCKED,
+                    capability.reason,
+                    where,
+                    setting.model,
+                )
+                continue
         if enforce is not None:
             try:
                 enforce(adapter)

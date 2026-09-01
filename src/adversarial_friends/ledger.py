@@ -111,8 +111,13 @@ class Ledger:
     def append(self, record: Record) -> None:
         encoded = (json.dumps(record_to_dict(record), sort_keys=True) + "\n").encode("utf-8")
         created = not self.path.exists()
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        fd = os.open(
+            self.path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
         try:
+            os.fchmod(fd, 0o600)
             view = memoryview(encoded)
             while view:
                 written = os.write(fd, view)
@@ -132,7 +137,8 @@ class Ledger:
     def records(self) -> Iterator[Record]:
         if not self.path.exists():
             return
-        with self.path.open(encoding="utf-8") as handle:
+        descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, encoding="utf-8") as handle:
             for line_no, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:

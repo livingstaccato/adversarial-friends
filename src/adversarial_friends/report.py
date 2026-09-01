@@ -30,6 +30,7 @@ wrapping the field in a code block of its own.
 from collections import Counter
 import re
 from typing import Any
+import unicodedata
 
 from .dispatch import _strip_terminal_controls
 from .ledger import Claim, Verdict
@@ -323,6 +324,32 @@ def _render_verdict_sections(
     return lines
 
 
+_ARTIFACT_LABEL_BYTES = 240
+
+
+def _artifact_label(value: object) -> str:
+    """A bounded single-line inline-code label, never Markdown structure."""
+    cleaned: list[str] = []
+    for char in str(value):
+        if char.isspace():
+            cleaned.append(" ")
+        elif unicodedata.category(char).startswith("C"):
+            continue
+        else:
+            cleaned.append({"`": "&#96;", "#": "&#35;", "<": "&lt;", ">": "&gt;"}.get(char, char))
+    compact = " ".join("".join(cleaned).split()) or "unnamed artifact"
+    bounded: list[str] = []
+    size = 0
+    for char in compact:
+        encoded = char.encode("utf-8")
+        if size + len(encoded) > _ARTIFACT_LABEL_BYTES - 3:
+            bounded.append("…")
+            break
+        bounded.append(char)
+        size += len(encoded)
+    return f"`{''.join(bounded)}`"
+
+
 def render(
     review: ReviewState,
     run_meta: dict[str, Any],
@@ -331,7 +358,7 @@ def render(
     claims = review.claims
     aliases = review.aliases
     verdicts = review.verdicts
-    lines: list[str] = [f"# Adversarial review — {run_meta['artifact']}", ""]
+    lines: list[str] = [f"# Adversarial review — {_artifact_label(run_meta['artifact'])}", ""]
     lines.append(f"Mode: `{run_meta['mode']}` · preset: `{run_meta['preset']}`")
     lines.append("")
     lifecycle_state = run_meta.get("lifecycle_state")

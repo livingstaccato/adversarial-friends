@@ -12,11 +12,11 @@ operator's real index or working tree.
 
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 
 from .errors import AfError
+from .secureio import secure_copy, secure_mkdir
 
 # Suppress post-checkout hooks on worktree add. Hooks are not transferred by
 # git clone, so this is defense in depth rather than a live hole -- but a
@@ -153,9 +153,9 @@ def doc_scope_dir(dest: Path, artifact: Path) -> Path:
     directory with no path back to the source tree.
     """
     dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
+    secure_mkdir(dest, parents=True, exist_ok=True)
     target = dest / Path(artifact).name
     if target.exists():
         raise AfError(f"doc scope destination already occupied: {target}")
-    shutil.copy2(artifact, target)
+    secure_copy(artifact, target)
     return dest

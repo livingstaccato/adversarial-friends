@@ -14,6 +14,8 @@ effort_kind = "native"
 # parses successfully. These options are emitted before any prompt.
 external_tools = "deny-argv"
 deny_external_tools_argv = ["--ignore-user-config", "--disable", "apps", "--disable", "plugins"]
+deny_external_tools_probe_argv = ["exec", "--ignore-user-config", "--disable", "apps", "--disable", "plugins", "--help"]
+deny_external_tools_probe_markers = ["--ignore-user-config", "--disable"]
 external_tool_sources = ["user config", "apps", "plugins", "MCP servers"]
 # --json emits an NDJSON event stream, not a single object. Captured from
 # codex 0.149.0 on 2026-08-23: thread.started, turn.started, item.completed,

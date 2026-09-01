@@ -10,6 +10,15 @@ from adversarial_friends.paths import ADAPTER_DIR
 from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
 
 
+@pytest.fixture(autouse=True)
+def _verified_deny_probe(monkeypatch):
+    monkeypatch.setattr(
+        readiness,
+        "probe_deny_argv",
+        lambda *_args: readiness.DenyProbeResult(True, "verified test shim"),
+    )
+
+
 def _artifact(tmp_path):
     artifact = tmp_path / "spec.md"
     artifact.write_text("# contract\n")

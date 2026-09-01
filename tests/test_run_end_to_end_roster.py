@@ -568,3 +568,14 @@ def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
     assert "runs under OS confinement" not in text
     assert "no filesystem access" in text
     assert registry["ollama"].transport == "http"
+
+
+@pytest.fixture(autouse=True)
+def _verified_deny_probe(monkeypatch):
+    from adversarial_friends import readiness
+
+    monkeypatch.setattr(
+        readiness,
+        "probe_deny_argv",
+        lambda *_args: readiness.DenyProbeResult(True, "verified test shim"),
+    )

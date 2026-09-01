@@ -142,6 +142,10 @@ class Adapter:
     external_tools: str = "unknown"  # none | deny-argv | uncontrolled | unknown
     deny_external_tools_argv: tuple[str, ...] = ()
     external_tool_sources: tuple[str, ...] = ()
+    # A no-model argv that proves this installed executable accepts the deny
+    # flags, plus bounded markers expected in its help/version output.
+    deny_external_tools_probe_argv: tuple[str, ...] = ()
+    deny_external_tools_probe_markers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -165,6 +169,32 @@ class FriendSpec:
     timeout: int
 
 
+_MAX_CAPABILITY_PROBE_ARGS = 32
+_MAX_CAPABILITY_PROBE_ARG_CHARS = 256
+_MAX_CAPABILITY_PROBE_MARKERS = 16
+_SAFE_CAPABILITY_PROBE_ACTIONS = {"--help", "--version", "help", "version"}
+
+
+def _validate_capability_probe(path: Path, probe_argv: list[str], probe_markers: list[str]) -> None:
+    """Keep adapter probes bounded and structurally incapable of a model call."""
+    if (
+        len(probe_argv) > _MAX_CAPABILITY_PROBE_ARGS
+        or any(
+            len(value) > _MAX_CAPABILITY_PROBE_ARG_CHARS
+            or any(character in value for character in ("\x00", "\n", "\r"))
+            for value in probe_argv
+        )
+        or probe_argv[-1] not in _SAFE_CAPABILITY_PROBE_ACTIONS
+    ):
+        raise UsageError(f"{path}: deny capability probe must be bounded and end in help/version")
+    if len(probe_markers) > _MAX_CAPABILITY_PROBE_MARKERS or any(
+        len(marker) > _MAX_CAPABILITY_PROBE_ARG_CHARS
+        or any(character in marker for character in ("\x00", "\n", "\r"))
+        for marker in probe_markers
+    ):
+        raise UsageError(f"{path}: deny capability probe markers must be bounded")
+
+
 def load_adapters(directory: Path) -> dict[str, Adapter]:
     directory = Path(directory)
     if not directory.is_dir():
@@ -185,6 +215,8 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
         external_tools = data.get("external_tools", "unknown")
         deny_argv = data.get("deny_external_tools_argv", [])
         tool_sources = data.get("external_tool_sources", [])
+        probe_argv = data.get("deny_external_tools_probe_argv", [])
+        probe_markers = data.get("deny_external_tools_probe_markers", [])
         if not isinstance(external_tools, str) or external_tools not in {
             "unknown",
             "none",
@@ -200,13 +232,31 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             isinstance(value, str) and value for value in tool_sources
         ):
             raise UsageError(f"{path}: external_tool_sources must be a list of strings")
+        if not isinstance(probe_argv, list) or not all(
+            isinstance(value, str) for value in probe_argv
+        ):
+            raise UsageError(f"{path}: deny_external_tools_probe_argv must be a list of strings")
+        if not isinstance(probe_markers, list) or not all(
+            isinstance(value, str) and value for value in probe_markers
+        ):
+            raise UsageError(f"{path}: deny_external_tools_probe_markers must be a list of strings")
         if external_tools == "deny-argv" and not deny_argv:
             raise UsageError(
                 f"{path}: external_tools='deny-argv' requires deny_external_tools_argv"
             )
+        if external_tools == "deny-argv" and (not probe_argv or not probe_markers):
+            raise UsageError(
+                f"{path}: external_tools='deny-argv' requires a capability probe and markers"
+            )
+        if probe_argv:
+            _validate_capability_probe(path, probe_argv, probe_markers)
         if external_tools != "deny-argv" and deny_argv:
             raise UsageError(
                 f"{path}: deny_external_tools_argv is only valid with external_tools='deny-argv'"
+            )
+        if external_tools != "deny-argv" and (probe_argv or probe_markers):
+            raise UsageError(
+                f"{path}: deny capability probe is only valid with external_tools='deny-argv'"
             )
         registry[name] = Adapter(
             name=name,
@@ -234,6 +284,8 @@ def load_adapters(directory: Path) -> dict[str, Adapter]:
             external_tools=external_tools,
             deny_external_tools_argv=tuple(deny_argv),
             external_tool_sources=tuple(tool_sources),
+            deny_external_tools_probe_argv=tuple(probe_argv),
+            deny_external_tools_probe_markers=tuple(probe_markers),
         )
     return registry
 

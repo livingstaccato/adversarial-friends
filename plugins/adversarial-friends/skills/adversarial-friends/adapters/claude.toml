@@ -31,6 +31,17 @@ deny_external_tools_argv = [
   "--disable-slash-commands",
   "--no-chrome",
 ]
+deny_external_tools_probe_argv = [
+  "--safe-mode",
+  "--restricted",
+  "--strict-mcp-config",
+  "--tools",
+  "",
+  "--disable-slash-commands",
+  "--no-chrome",
+  "--help",
+]
+deny_external_tools_probe_markers = ["--safe-mode", "--restricted", "--strict-mcp-config"]
 external_tool_sources = ["built-in tools", "skills", "plugins", "MCP servers", "Chrome integration"]
 # --output-format json wraps the answer in claude's own envelope. Captured
 # from claude 2.1.240 on 2026-08-23: a single JSON object with

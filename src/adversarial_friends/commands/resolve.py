@@ -18,7 +18,6 @@ why unverifiable evidence can record risk or rejection but cannot support
 """
 
 import argparse
-import json
 import os
 from pathlib import Path
 import sys
@@ -26,6 +25,7 @@ from typing import Any
 
 from ..errors import UsageError
 from ..ids import parse_claim_id
+from ..jsonio import load_json_object
 from ..ledger import Ledger, Resolution
 from ..resolutions import (
     UNVERIFIABLE,
@@ -62,8 +62,7 @@ def _load_meta(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "run.json"
     if not path.is_file():
         raise UsageError(f"{run_dir} is not a run directory: no run.json")
-    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return data
+    return load_json_object(path, label="saved run metadata")
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:

@@ -83,9 +83,9 @@ def partition_dispatchable(
 def persist_skip(store: RunStore, round_no: int, skipped: SkippedFriend) -> dict[str, Any]:
     """Persist one deliberate non-dispatch as a first-class audit row."""
     _, _, meta_path = store.friend_paths(round_no, skipped.spec.name)
-    meta_path.write_text(
+    store.write_sensitive(
+        meta_path,
         f"status=skipped\nreason={skipped.reason}\n",
-        encoding="utf-8",
     )
     return {
         "name": skipped.spec.name,
@@ -163,7 +163,9 @@ def _round_summary(results: list[RoundResult], contract: PayloadContract) -> str
 def _isolation_root(store: RunStore, round_no: int, keep: bool) -> Iterator[Path]:
     if keep:
         root = store.run_dir / "isolation" / f"round-{round_no}"
-        root.mkdir(parents=True, exist_ok=True)
+        from .secureio import secure_mkdir
+
+        secure_mkdir(root, parents=True, exist_ok=True)
         yield root
         return
     with tempfile.TemporaryDirectory(prefix=f"af-isolation-r{round_no}-") as path:
@@ -424,8 +426,9 @@ def persist_result(
     anywhere.
     """
     raw_path, _json_path, meta_path = store.friend_paths(round_no, spec.name)
-    raw_path.write_text(outcome.stdout, encoding="utf-8")
-    meta_path.write_text(
+    store.write_sensitive(raw_path, outcome.stdout)
+    store.write_sensitive(
+        meta_path,
         f"argv={outcome.argv}\nexit={outcome.exit_code}\n"
         f"duration_s={outcome.duration_s:.2f}\ntimed_out={outcome.timed_out}\n"
         f"orphans_suspected={outcome.orphans_suspected}\n"
@@ -441,10 +444,9 @@ def persist_result(
         f"external_tools={capability.external_tools}\n"
         f"external_tool_sources={list(capability.external_tool_sources)}\n"
         f"deny_external_tools_argv={list(capability.deny_external_tools_argv)}\n",
-        encoding="utf-8",
     )
     err_path = store.friend_err_path(round_no, spec.name)
-    err_path.write_text(outcome.stderr, encoding="utf-8")
+    store.write_sensitive(err_path, outcome.stderr)
 
     diagnostics = _stderr_tail(outcome.stderr) if outcome.stderr.strip() else ""
     diagnostics_path = f"round-{round_no}/{spec.name}.err"

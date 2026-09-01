@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import PayloadContract
+from .secureio import secure_write_text
 
 SEVERITIES = ("high", "medium", "low")
 REQUIRED_FIELDS = (
@@ -67,7 +68,7 @@ CLAIM_OUTPUT_SCHEMA: dict[str, Any] = {
 def schema_path(directory: Path) -> Path:
     """Materialize the schema so adapters with a native schema flag can use it."""
     path = Path(directory) / "claim-output.schema.json"
-    path.write_text(json.dumps(CLAIM_OUTPUT_SCHEMA, indent=2), encoding="utf-8")
+    secure_write_text(path, json.dumps(CLAIM_OUTPUT_SCHEMA, indent=2))
     return path
 
 

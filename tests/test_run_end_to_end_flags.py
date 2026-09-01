@@ -760,3 +760,14 @@ def test_a_downgrade_is_recorded_once_not_twice(tmp_path):
     downgrades = meta["downgrades"]
     duplicated = [d for d in set(downgrades) if downgrades.count(d) > 1]
     assert not duplicated, f"downgrade recorded more than once: {duplicated}"
+
+
+@pytest.fixture(autouse=True)
+def _verified_deny_probe(monkeypatch):
+    from adversarial_friends import readiness
+
+    monkeypatch.setattr(
+        readiness,
+        "probe_deny_argv",
+        lambda *_args: readiness.DenyProbeResult(True, "verified test shim"),
+    )

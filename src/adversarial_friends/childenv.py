@@ -29,6 +29,8 @@ from collections.abc import Mapping
 import os
 from pathlib import Path
 
+from .secureio import secure_mkdir
+
 # Variables any process needs to start and behave sanely. None of these
 # carries a credential; each was included because dropping it changes
 # behaviour rather than exposure.
@@ -108,7 +110,7 @@ def private_dirs(private_root: Path) -> dict[str, str]:
     scratch = private_root / "tmp"
     data = private_root / "state"
     for path in (scratch, data):
-        path.mkdir(parents=True, exist_ok=True)
+        secure_mkdir(path, parents=True, exist_ok=True)
     return {
         "TMPDIR": str(scratch),
         "TEMP": str(scratch),

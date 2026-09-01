@@ -31,12 +31,17 @@ MAX_JSON_DEPTH = 64
 # ordinary metadata (including the deliberately wide tracker tests) ample
 # while making the work bound deterministic in every supported Python.
 MAX_JSON_NODES = 8_192
+# One scalar remains small enough to diagnose and copy safely; the aggregate
+# bound keeps a wide 8,192-node object from multiplying that allowance. Both
+# are proportional to the 32 MiB captured-output ceiling.
+MAX_JSON_STRING_BYTES = 4 * 1024 * 1024
+MAX_JSON_SCALAR_BYTES = 32 * 1024 * 1024
 
 
 def json_node_count(value: object, path: str = "metadata") -> int:
     """Validate JSON-safe structure and return its expanded node count."""
     nodes = [0]
-    _freeze_json(value, path, set(), 0, nodes)
+    _freeze_json(value, path, set(), 0, nodes, [0])
     return nodes[0]
 
 
@@ -58,23 +63,33 @@ def _freeze_json(
     active: set[int],
     depth: int,
     nodes: list[int],
+    scalar_bytes: list[int],
 ) -> object:
     """Freeze canonical JSON, duplicating repeated acyclic containers by value."""
     nodes[0] += 1
     if nodes[0] > MAX_JSON_NODES:
         raise ValueError(f"{path} exceeds the maximum expanded JSON node count")
     value_type = type(value)
-    if value is None or value_type is bool or value_type is str:
+    if value_type is str:
+        _count_scalar_bytes(cast(str, value), path, scalar_bytes)
+        return value
+    if value is None or value_type is bool:
+        scalar_bytes[0] += 4 if value is None or value is True else 5
+        _check_scalar_total(path, scalar_bytes)
         return value
     if value_type is int:
         integer = cast(int, value)
         if not -MAX_JSON_SAFE_INTEGER <= integer <= MAX_JSON_SAFE_INTEGER:
             raise ValueError(f"{path} integer is outside the interoperable JSON range")
+        scalar_bytes[0] += len(str(integer))
+        _check_scalar_total(path, scalar_bytes)
         return integer
     if value_type is float:
         number = cast(float, value)
         if not math.isfinite(number):
             raise ValueError(f"{path} must contain only finite JSON numbers")
+        scalar_bytes[0] += len(repr(number))
+        _check_scalar_total(path, scalar_bytes)
         return number
     if value_type is not dict and value_type is not list and value_type is not tuple:
         raise ValueError(f"{path} contains unsupported value type {value_type.__name__}")
@@ -91,21 +106,39 @@ def _freeze_json(
             for key, item in cast(dict[object, object], value).items():
                 if type(key) is not str:
                     raise ValueError(f"{path} must contain only exact string mapping keys")
-                frozen[key] = _freeze_json(item, f"{path}.{key}", active, depth + 1, nodes)
+                _count_scalar_bytes(key, f"{path} key", scalar_bytes)
+                frozen[key] = _freeze_json(
+                    item, f"{path}.{key}", active, depth + 1, nodes, scalar_bytes
+                )
             return MappingProxyType(frozen)
         items = cast(list[object] | tuple[object, ...], value)
         return tuple(
-            _freeze_json(item, f"{path}[{index}]", active, depth + 1, nodes)
+            _freeze_json(item, f"{path}[{index}]", active, depth + 1, nodes, scalar_bytes)
             for index, item in enumerate(items)
         )
     finally:
         active.remove(identity)
 
 
+def _check_scalar_total(path: str, scalar_bytes: list[int]) -> None:
+    if scalar_bytes[0] > MAX_JSON_SCALAR_BYTES:
+        raise ValueError(f"{path} exceeds the aggregate scalar byte limit")
+
+
+def _count_scalar_bytes(value: str, path: str, scalar_bytes: list[int]) -> None:
+    if len(value) > MAX_JSON_STRING_BYTES:
+        raise ValueError(f"{path} exceeds the per-string byte limit")
+    size = len(value.encode("utf-8"))
+    if size > MAX_JSON_STRING_BYTES:
+        raise ValueError(f"{path} exceeds the per-string byte limit")
+    scalar_bytes[0] += size
+    _check_scalar_total(path, scalar_bytes)
+
+
 def _freeze_json_mapping(value: object, path: str) -> Mapping[str, object]:
     if type(value) is not dict:
         raise ValueError(f"{path} must be an exact built-in dict")
-    frozen = _freeze_json(value, path, set(), 0, [0])
+    frozen = _freeze_json(value, path, set(), 0, [0], [0])
     if type(frozen) is not MappingProxyType:  # pragma: no cover - freeze invariant
         raise ValueError(f"{path} could not be frozen as a JSON mapping")
     return cast(Mapping[str, object], frozen)

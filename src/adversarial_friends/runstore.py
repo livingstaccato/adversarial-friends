@@ -11,13 +11,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
+import stat
 from typing import IO, Any
 
 from .errors import UsageError
 from .ids import validate_friend_name
 from .ledger import Ledger
 from .outcomes import json_node_count
+from .secureio import (
+    repair_private_tree,
+    secure_copy,
+    secure_mkdir,
+    secure_write_text,
+)
 from .trust import contain_path
 
 
@@ -44,7 +50,11 @@ class RunStore:
             # holds a ledger, an artifact copy, and a round-1 REQUEST -- the
             # refusal below exists to stop two DIFFERENT runs sharing a
             # directory, which is the opposite case.
-            if not self.run_dir.is_dir():
+            try:
+                run_info = self.run_dir.lstat()
+            except OSError:
+                run_info = None
+            if run_info is None or not stat.S_ISDIR(run_info.st_mode):
                 raise UsageError(f"cannot resume: no such run directory: {self.run_dir}")
             self.ledger = Ledger(self.run_dir / "claims.jsonl")
             return
@@ -57,7 +67,7 @@ class RunStore:
             # friend output too. Refuse instead of mixing two runs together.
             raise UsageError(f"run directory already exists: {self.run_dir}")
         try:
-            self.run_dir.mkdir(parents=True)
+            secure_mkdir(self.run_dir, parents=True)
         except OSError as exc:
             # E.g. an ancestor path component (commonly --out itself)
             # already exists as a plain file rather than a directory.
@@ -83,7 +93,14 @@ class RunStore:
         `finally` a chance to run. The handle is kept on the instance for
         exactly that lifetime.
         """
-        self._lock_handle = (self.run_dir / ".lock").open("w", encoding="utf-8")
+        lock_path = self.run_dir / ".lock"
+        descriptor = os.open(
+            lock_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.fchmod(descriptor, 0o600)
+        self._lock_handle = os.fdopen(descriptor, "w", encoding="utf-8")
         try:
             fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -99,7 +116,7 @@ class RunStore:
 
     def round_dir(self, round_no: int) -> Path:
         path = self.run_dir / f"round-{round_no}"
-        path.mkdir(parents=True, exist_ok=True)
+        secure_mkdir(path, parents=True, exist_ok=True)
         return path
 
     def friend_prompt_path(self, round_no: int, friend_name: str) -> Path:
@@ -129,10 +146,11 @@ class RunStore:
 
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"
-        target_dir.mkdir(parents=True, exist_ok=True)
+        secure_mkdir(target_dir, parents=True, exist_ok=True)
         target = target_dir / Path(source).name
-        shutil.copy2(source, target)
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        secure_copy(source, target)
+        with target.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
         return target, f"sha256:{digest}"
 
     def _write_atomic(self, path: Path, text: str) -> Path:
@@ -157,11 +175,7 @@ class RunStore:
         and the write has already succeeded by that point.
         """
         tmp = path.with_name(f".{path.name}.tmp")
-        with tmp.open("w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            with contextlib.suppress(OSError):
-                os.fsync(handle.fileno())
+        secure_write_text(tmp, text)
         tmp.replace(path)
         with contextlib.suppress(OSError):
             fd = os.open(self.run_dir, os.O_RDONLY)
@@ -172,12 +186,7 @@ class RunStore:
         return path
 
     def _stage_text(self, path: Path, text: str) -> Path:
-        with path.open("w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            with contextlib.suppress(OSError):
-                os.fsync(handle.fileno())
-        return path
+        return secure_write_text(path, text)
 
     def _fsync_run_dir(self) -> None:
         with contextlib.suppress(OSError):
@@ -242,3 +251,10 @@ class RunStore:
 
     def write_report(self, text: str) -> Path:
         return self._write_atomic(self.run_dir / "report.md", text)
+
+    def write_sensitive(self, path: Path, text: str) -> Path:
+        """Write a known run-owned text artifact with mode 0600."""
+        return secure_write_text(contain_path(self.run_dir, path), text)
+
+    def repair_permissions(self) -> None:
+        repair_private_tree(self.run_dir)

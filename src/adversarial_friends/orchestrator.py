@@ -29,7 +29,9 @@ from typing import Any
 
 from .claimschema import validate_payload
 from .errors import AfError, UsageError
+from .jsonio import load_json_object
 from .ledger import Alias, Claim
+from .secureio import secure_write_text
 from .themes import ThemeProposal
 
 REQUEST_NAME = "REQUEST.json"
@@ -133,22 +135,20 @@ def write_request(round_dir: Path, run_id: str, round_no: int, claims: list[Clai
         ],
         "merges": [],
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    secure_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
     return path
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise UsageError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise UsageError(f"{path} must contain a JSON object, got {type(data).__name__}")
-    return data
+    return load_json_object(path, label="orchestrator response")
 
 
 def read_response(
-    round_dir: Path, known_ids: set[str], tolerate_duplicates: frozenset[str] = frozenset()
+    round_dir: Path,
+    known_ids: set[str],
+    tolerate_duplicates: frozenset[str] = frozenset(),
+    *,
+    response_file: Path | None = None,
 ) -> list[MergeDecision]:
     """Parse and validate RESPONSE.json against the claims that exist.
 
@@ -177,7 +177,7 @@ def read_response(
     records for the round being resumed, so a tolerated id is one this
     exact response is already known to have applied, not a guess.
     """
-    path = response_path(round_dir)
+    path = response_path(round_dir) if response_file is None else Path(response_file)
     if not path.is_file():
         raise UsageError(
             f"no {RESPONSE_NAME} in {round_dir}. This run halted for merge "
@@ -321,11 +321,13 @@ def write_extract_request(
             for e in unparseable
         ],
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    secure_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
     return path
 
 
-def read_extract_response(round_dir: Path) -> list[dict[str, Any]]:
+def read_extract_response(
+    round_dir: Path, *, response_file: Path | None = None
+) -> list[dict[str, Any]]:
     """Parse RESPONSE.json's `findings` and validate them as claims.
 
     Validated with the SAME contract a friend's own output goes through, not
@@ -333,7 +335,7 @@ def read_extract_response(round_dir: Path) -> list[dict[str, Any]]:
     schema -- a hand-extracted claim missing `failure_scenario` is
     unsubstantiated for exactly the reasons §6.1 gives, whoever wrote it.
     """
-    path = response_path(round_dir)
+    path = response_path(round_dir) if response_file is None else Path(response_file)
     if not path.is_file():
         raise UsageError(
             f"no {RESPONSE_NAME} in {round_dir}. This run halted for claim "

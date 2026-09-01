@@ -85,6 +85,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from .secureio import secure_write_text
+
 SANDBOX_EXEC = "sandbox-exec"
 BWRAP = "bwrap"
 
@@ -337,7 +339,7 @@ def wrap(
     if mechanism == SANDBOX_EXEC:
         if profile_path is None:
             raise ValueError("sandbox-exec needs a path to write its profile to")
-        profile_path.write_text(darwin_profile(policy), encoding="utf-8")
+        secure_write_text(profile_path, darwin_profile(policy))
         return [SANDBOX_EXEC, "-f", str(profile_path), *argv]
     if mechanism == BWRAP:
         return [*linux_argv(policy), *argv]

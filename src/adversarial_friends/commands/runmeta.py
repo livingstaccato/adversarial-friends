@@ -22,6 +22,7 @@ from ..ceilings import BUDGET_EXHAUSTED, Budget
 from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..failures import RepeatTracker
+from ..jsonio import load_json_object
 from ..ledger import Claim
 from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
@@ -441,11 +442,9 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     if not meta_path.is_file():
         raise UsageError(f"cannot resume: {run_dir} has no run.json")
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, RecursionError) as exc:
-        raise UsageError(f"cannot resume: {meta_path} is not valid run metadata") from exc
-    if not isinstance(meta, dict):
-        raise UsageError(f"cannot resume: {meta_path} must contain a JSON object")
+        meta = load_json_object(meta_path, label="saved run metadata")
+    except UsageError as exc:
+        raise UsageError(f"cannot resume: {exc}") from exc
     raw_version = meta.get("schema_version", 1)
     meta = migrate_meta(meta)
     resumevalidation.validate_metadata_bound(meta)

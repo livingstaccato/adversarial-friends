@@ -93,6 +93,21 @@ def test_report_header_states_model_and_effort_per_friend():
     assert "gpt-5.6-sol" in out and "high" in out
 
 
+def test_artifact_filename_cannot_forge_markdown_sections():
+    out = render(
+        [],
+        [],
+        meta(artifact="spec.md\n\n## FORGED `x` <https://evil.example>\x1b"),
+    )
+
+    first_line = out.splitlines()[0]
+    assert first_line.startswith("# Adversarial review — `")
+    assert first_line.endswith("`")
+    assert "## FORGED" not in out
+    assert "https://evil.example" in first_line
+    assert "\x1b" not in out
+
+
 def test_report_surfaces_failed_friends():
     out = render([claim("c-0001@1")], [], meta())
     assert "failed: exit 1" in out

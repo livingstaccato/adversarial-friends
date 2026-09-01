@@ -27,6 +27,7 @@ from typing import Any
 
 from .contracts import PayloadContract
 from .ids import CLAIM_ID_RE
+from .secureio import secure_write_text
 from .verdicts import DISPOSITIVE, VALID_VERDICTS
 
 CONFIDENCES = ("high", "medium", "low")
@@ -87,7 +88,7 @@ VERDICT_OUTPUT_SCHEMA: dict[str, Any] = {
 def schema_path(directory: Path) -> Path:
     """Materialize the schema so adapters with a native schema flag can use it."""
     path = Path(directory) / "verdict-output.schema.json"
-    path.write_text(json.dumps(VERDICT_OUTPUT_SCHEMA, indent=2), encoding="utf-8")
+    secure_write_text(path, json.dumps(VERDICT_OUTPUT_SCHEMA, indent=2))
     return path
 
 

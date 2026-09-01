@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from adversarial_friends import runstore as runstore_module
 from adversarial_friends.errors import UsageError
 from adversarial_friends.outcomes import MAX_JSON_NODES
 from adversarial_friends.runstore import RunStore
@@ -148,14 +149,14 @@ def test_oversized_terminal_metadata_is_refused_before_staging(tmp_path):
 def test_terminal_staging_failure_preserves_both_prior_artifacts(monkeypatch, tmp_path):
     store = RunStore(tmp_path, "run-stage-failure")
     expected = _waiting_artifacts(store)
-    original_open = Path.open
+    original_write = runstore_module.secure_write_text
 
-    def fail_report_stage(path, *args, **kwargs):
+    def fail_report_stage(path, text):
         if path.name == ".report.md.terminal-new":
             raise OSError("simulated report staging failure")
-        return original_open(path, *args, **kwargs)
+        return original_write(path, text)
 
-    monkeypatch.setattr(Path, "open", fail_report_stage)
+    monkeypatch.setattr(runstore_module, "secure_write_text", fail_report_stage)
     with pytest.raises(OSError, match="report staging"):
         store.write_terminal_artifacts({"lifecycle_state": "terminal"}, "# terminal\n")
     _assert_waiting_artifacts(store, expected)
