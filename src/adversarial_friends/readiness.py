@@ -174,6 +174,22 @@ def detect_host(env: Mapping[str, str], *, host_provider: str | None = None) -> 
     return None
 
 
+def can_be_host_provider(provider: object) -> bool:
+    """Whether the host-detection contract can identify this real provider.
+
+    Explicit host selection deliberately supports every provider in the
+    registry, including providers such as Agy that have no automatic
+    environment marker. ``fake`` is test-only and cannot be selected through
+    the validated ``--host-provider`` path.
+    """
+    return (
+        type(provider) is str
+        and bool(provider)
+        and provider != "fake"
+        and detect_host({}, host_provider=provider) == provider
+    )
+
+
 def _row(
     provider: str,
     state: ReadinessState,

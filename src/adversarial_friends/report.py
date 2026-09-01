@@ -450,11 +450,12 @@ def render(
         declared_scope = friend.get("declared_scope", friend.get("scope", "unknown"))
         os_confined = friend.get("os_confined", False)
         independent = friend.get("independent", True)
-        role = (
-            "host-self-review (advisory)"
-            if friend.get("host_self_review", False)
-            else "independent reviewer"
-        )
+        if friend.get("host_self_review", False):
+            role = "host-self-review (advisory)"
+        elif not independent:
+            role = "legacy role unknown (advisory)"
+        else:
+            role = "independent reviewer"
         lines.append(
             f"| {_escape_cell(friend['name'])} | "
             f"{_escape_cell(role)} | "

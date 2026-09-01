@@ -8,12 +8,16 @@ from types import SimpleNamespace
 import pytest
 
 from adversarial_friends.adapters import FriendSpec
+from adversarial_friends.authority import DENY_ALL
 from adversarial_friends.commands.runmeta import (
     CURRENT_SCHEMA_VERSION,
+    _base_meta,
     _validated_roster_entries,
     migrate_meta,
 )
 from adversarial_friends.errors import UsageError
+from adversarial_friends.reviewstate import ReviewState
+from adversarial_friends.snapshots import SnapshotIdentity
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -161,7 +165,7 @@ def test_legacy_denial_migrates_to_an_empty_audit_grant_set():
     assert migrated["external_tool_grants"] == []
 
 
-def test_old_saved_roster_rows_default_to_independent_non_host():
+def test_old_possible_host_roster_rows_default_to_non_independent_unknown_role():
     entry = {
         "name": "codex-ops",
         "cli": "codex",
@@ -174,7 +178,7 @@ def test_old_saved_roster_rows_default_to_independent_non_host():
 
     restored = FriendSpec(**_validated_roster_entries([entry])[0])
 
-    assert restored.independent is True
+    assert restored.independent is False
     assert restored.host_self_review is False
 
 
@@ -231,6 +235,35 @@ def test_saved_roster_rejects_host_role_claimed_independent():
         _validated_roster_entries([entry])
 
 
+def test_fresh_metadata_freezes_detected_host_and_effective_self_inclusion(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    snapshot = SnapshotIdentity(
+        None,
+        None,
+        None,
+        str(artifact),
+        "sha256:" + "1" * 64,
+    )
+
+    meta = _base_meta(
+        SimpleNamespace(mode="report", merge="exact", friend=[]),
+        artifact,
+        snapshot.artifact_hash,
+        [],
+        [],
+        [],
+        snapshot,
+        [snapshot],
+        DENY_ALL,
+        detected_host="codex",
+        effective_include_self=True,
+    )
+
+    assert meta["detected_host"] == "codex"
+    assert meta["effective_include_self"] is True
+
+
 def _resume_args(run_dir: Path) -> SimpleNamespace:
     return SimpleNamespace(
         resume=str(run_dir),
@@ -276,6 +309,139 @@ def _resume_meta() -> dict[str, object]:
         }
     )
     return meta
+
+
+def _legacy_host_resume_meta(mode: str, *, frozen_host: bool) -> dict[str, object]:
+    meta = _resume_meta()
+    meta["repo_root"] = None
+    meta["snapshot_sha"] = None
+    meta["invocation"].update(
+        {
+            "mode": mode,
+            "include_self": None,
+            "host_provider": None,
+        }
+    )
+    meta["mode"] = mode
+    meta["roster"] = [
+        {
+            "name": "codex-ops",
+            "cli": "codex",
+            "lens": "ops",
+            "model": None,
+            "effort": None,
+            "scope": "doc",
+            "timeout": 900,
+        },
+        {
+            "name": "fake-security",
+            "cli": "fake",
+            "lens": "security",
+            "model": None,
+            "effort": None,
+            "scope": "doc",
+            "timeout": 900,
+        },
+    ]
+    meta["friends"] = [
+        {
+            "name": "codex-ops",
+            "model": None,
+            "effort": None,
+            "round": 1,
+            "status": "ok",
+        },
+        {
+            "name": "fake-security",
+            "model": None,
+            "effort": None,
+            "round": 1,
+            "status": "ok",
+        },
+    ]
+    if frozen_host:
+        meta["detected_host"] = "codex"
+        meta["effective_include_self"] = True
+    return meta
+
+
+def test_legacy_host_roles_are_restored_from_frozen_host_and_audit_rows_follow(tmp_path):
+    from adversarial_friends.commands.runmeta import _restore_args
+    from adversarial_friends.report import render
+
+    run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=True))
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    host = restored._resume_roster[0]
+    assert host.host_self_review is True
+    assert host.independent is False
+    assert restored._resume_roster[1].independent is True
+    host_row = restored._resume_meta["friends"][0]
+    assert host_row["host_self_review"] is True
+    assert host_row["independent"] is False
+    report = render(ReviewState(), restored._resume_meta)
+    rendered_host = next(line for line in report.splitlines() if line.startswith("| codex-ops |"))
+    assert "host-self-review (advisory)" in rendered_host
+    assert "False" in rendered_host
+
+
+@pytest.mark.parametrize("mode", ["crossexam", "gate", "loop"])
+def test_legacy_frozen_host_cannot_satisfy_judging_admission(monkeypatch, tmp_path, mode):
+    from adversarial_friends.commands import friends as friends_module
+    from adversarial_friends.commands.runmeta import _restore_args
+    from adversarial_friends.errors import NoFriendsError
+
+    run_dir = _run_dir(tmp_path, _legacy_host_resume_meta(mode, frozen_host=True))
+    restored = _restore_args(_resume_args(run_dir))
+    monkeypatch.setattr(friends_module, "validate_resume_capabilities", lambda *args: None)
+
+    with pytest.raises(NoFriendsError, match="two independent friends"):
+        friends_module.roster_for_run(restored, {}, None, [])
+
+
+@pytest.mark.parametrize("mode", ["crossexam", "gate", "loop"])
+@pytest.mark.parametrize("host_cli", ["codex", "agy"])
+def test_ambiguous_legacy_host_role_fails_closed_for_judging_resume(tmp_path, mode, host_cli):
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_host_resume_meta(mode, frozen_host=False)
+    meta["roster"][0]["cli"] = host_cli
+    run_dir = _run_dir(tmp_path, meta)
+
+    with pytest.raises(UsageError, match=r"frozen host-role metadata.*rerun"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_saved_friend_audit_role_must_match_frozen_roster(tmp_path):
+    from adversarial_friends.commands.runmeta import _restore_args
+
+    meta = _legacy_host_resume_meta("report", frozen_host=True)
+    meta["friends"][0].update({"independent": True, "host_self_review": False})
+    run_dir = _run_dir(tmp_path, meta)
+
+    with pytest.raises(UsageError, match=r"friends\[0\].*frozen roster"):
+        _restore_args(_resume_args(run_dir))
+
+
+def test_ambiguous_legacy_report_labels_possible_host_role_unknown(tmp_path):
+    from adversarial_friends.commands.runmeta import _restore_args
+    from adversarial_friends.report import render
+
+    run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=False))
+
+    restored = _restore_args(_resume_args(run_dir))
+
+    host = restored._resume_roster[0]
+    assert host.independent is False
+    assert host.host_self_review is False
+    host_row = restored._resume_meta["friends"][0]
+    assert host_row["independent"] is False
+    assert host_row["host_self_review"] is False
+    report = render(ReviewState(), restored._resume_meta)
+    rendered_host = next(line for line in report.splitlines() if line.startswith("| codex-ops |"))
+    assert "legacy role unknown (advisory)" in rendered_host
+    assert "independent reviewer" not in rendered_host
 
 
 @pytest.mark.parametrize(

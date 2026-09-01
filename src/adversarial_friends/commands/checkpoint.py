@@ -1,5 +1,6 @@
 """Strict normalization for attacker-editable resume checkpoint metadata."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +122,11 @@ def _validate_status(index: int, row: dict[str, Any], status: str) -> None:
     raise _friend_error(index, "diagnostic fields are unsupported for this status")
 
 
-def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[str, Any]]:
+def normalize_friend_rows(
+    value: object,
+    roster_names: set[str],
+    roster_roles: Mapping[str, tuple[bool, bool]] | None = None,
+) -> list[dict[str, Any]]:
     """Validate every saved row before it can reach resume logic or report rendering."""
     if type(value) is not list:
         raise UsageError("cannot resume: saved friends must be a list")
@@ -166,6 +171,15 @@ def normalize_friend_rows(value: object, roster_names: set[str]) -> list[dict[st
             raise _friend_error(index, "has ambiguous write-protection fields")
         if "declared_scope" in row and "scope" in row and row["declared_scope"] != row["scope"]:
             raise _friend_error(index, "has ambiguous scope fields")
+        if roster_roles is not None:
+            independent, host_self_review = roster_roles[name]
+            for field, expected in (
+                ("independent", independent),
+                ("host_self_review", host_self_review),
+            ):
+                if field in row and row[field] != expected:
+                    raise _friend_error(index, f"{field} conflicts with the frozen roster")
+                row[field] = expected
         _validate_status(index, row, status)
         normalized.append(row)
     return normalized

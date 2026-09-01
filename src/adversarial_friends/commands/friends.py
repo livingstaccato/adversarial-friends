@@ -37,6 +37,8 @@ class ResolvedRoster:
     specs: list[FriendSpec]
     preset: str
     source: str | None = None
+    detected_host: str | None = None
+    effective_include_self: bool | None = None
 
 
 def validate_resume_capabilities(
@@ -299,7 +301,13 @@ def resolve_friends(
     for spec in specs:
         if spec.cli != "fake":
             enforce(registry[spec.cli], authority_policy.for_provider(spec.cli))
-    return ResolvedRoster(specs=specs, preset=preset, source=roster_source)
+    return ResolvedRoster(
+        specs=specs,
+        preset=preset,
+        source=roster_source,
+        detected_host=host,
+        effective_include_self=include_host,
+    )
 
 
 def roster_for_run(
@@ -327,6 +335,8 @@ def roster_for_run(
             specs=specs,
             preset=args.preset or default_preset(args.mode),
             source=resume_meta.get("roster_source"),
+            detected_host=resume_meta.get("detected_host"),
+            effective_include_self=resume_meta.get("effective_include_self"),
         )
         validate_resume_capabilities(specs, registry, authority_policy)
     else:

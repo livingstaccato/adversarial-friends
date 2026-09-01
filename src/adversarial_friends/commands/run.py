@@ -214,6 +214,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 theme_proposals=theme_proposals,
                 produced_new_themes=produced_new_themes,
                 prior_external_tool_policy=(resume_meta or {}).get("external_tool_policy"),
+                detected_host=resolved.detected_host,
+                effective_include_self=resolved.effective_include_self,
             )
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:

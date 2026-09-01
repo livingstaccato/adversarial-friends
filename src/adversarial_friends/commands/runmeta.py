@@ -25,6 +25,7 @@ from ..jsonio import load_json_object
 from ..ledger import Claim
 from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
+from ..readiness import can_be_host_provider
 from ..report import render
 from ..reviewstate import ReviewState
 from ..runstore import RunStore, default_root
@@ -139,6 +140,8 @@ def _base_meta(
     theme_proposals: list[ThemeProposal] | None = None,
     produced_new_themes: bool = False,
     prior_external_tool_policy: object = None,
+    detected_host: str | None = None,
+    effective_include_self: bool | None = None,
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -192,6 +195,9 @@ def _base_meta(
         ],
         "produced_new_themes": produced_new_themes,
     }
+    if effective_include_self is not None:
+        meta["detected_host"] = detected_host
+        meta["effective_include_self"] = effective_include_self
     # The nested form is authoritative. The final two fields written by
     # record_snapshot remain for v0.2 readers such as `afriend resolve`.
     record_snapshot(meta, snapshot, snapshot_history)
@@ -263,7 +269,43 @@ def _normalize_saved_grants(value: object) -> list[str]:
     return sorted(grants)
 
 
-def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
+def _frozen_host_context(
+    meta: dict[str, Any], saved: dict[str, Any]
+) -> tuple[bool, str | None, bool | None]:
+    has_host = "detected_host" in meta
+    has_inclusion = "effective_include_self" in meta
+    if has_host != has_inclusion:
+        raise UsageError(
+            "cannot resume: frozen host metadata must record both detected_host "
+            "and effective_include_self"
+        )
+    if has_host:
+        detected_host = meta["detected_host"]
+        effective_include_self = meta["effective_include_self"]
+        if detected_host is not None and (type(detected_host) is not str or not detected_host):
+            raise UsageError("cannot resume: saved detected_host must be a nonempty string or null")
+        if type(effective_include_self) is not bool:
+            raise UsageError("cannot resume: saved effective_include_self must be a boolean")
+        return True, detected_host, effective_include_self
+
+    # Older runs did freeze an explicit --host-provider inside invocation.
+    # That operator-provided value is historical evidence, unlike host
+    # rediscovery in the resuming process, so it can safely repair omitted
+    # role fields without rewriting who orchestrated the original run.
+    explicit_host = saved.get("host_provider")
+    if isinstance(explicit_host, str) and explicit_host:
+        requested = saved.get("include_self")
+        effective = requested if type(requested) is bool else explicit_host == "codex"
+        return True, explicit_host, effective
+    return False, None, None
+
+
+def _validated_roster_entries(
+    value: object,
+    *,
+    detected_host: str | None = None,
+    host_context_known: bool = False,
+) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise UsageError("cannot resume: saved roster must be a list")
     validated: list[dict[str, Any]] = []
@@ -288,6 +330,30 @@ def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
                 raise UsageError(
                     f"cannot resume: saved roster field {field_name!r} must be a boolean"
                 )
+        ambiguous_possible_host = (
+            not host_context_known
+            and can_be_host_provider(candidate["cli"])
+            and ("independent" not in candidate or "host_self_review" not in candidate)
+        )
+        if host_context_known:
+            expected_host = candidate["cli"] == detected_host
+            expected_independent = not expected_host
+            for field_name, expected in (
+                ("independent", expected_independent),
+                ("host_self_review", expected_host),
+            ):
+                if field_name in candidate and candidate[field_name] != expected:
+                    raise UsageError(
+                        f"cannot resume: saved roster field {field_name!r} "
+                        "conflicts with the frozen detected host"
+                    )
+                candidate[field_name] = expected
+        elif ambiguous_possible_host:
+            # Report resumes remain readable, but an old row that could be
+            # the orchestrating provider must not be presented as proven
+            # independent merely because the historical fields are absent.
+            candidate["independent"] = False
+            candidate["host_self_review"] = False
         if candidate.get("host_self_review") is True and candidate.get("independent", True):
             raise UsageError(
                 "cannot resume: saved roster host_self_review cannot also be independent"
@@ -299,6 +365,8 @@ def _validated_roster_entries(value: object) -> list[dict[str, Any]]:
                 if key not in {"independent", "host_self_review"}
             }
         )
+        candidate.setdefault("independent", True)
+        candidate.setdefault("host_self_review", False)
         validated.append(candidate)
     return validated
 
@@ -377,6 +445,7 @@ def _normalized_checkpoint(
     meta: dict[str, Any],
     *,
     roster_names: set[str],
+    roster_roles: dict[str, tuple[bool, bool]],
     max_calls: int | None,
     max_rounds: object,
     require_friends: object,
@@ -400,7 +469,7 @@ def _normalized_checkpoint(
         raise UsageError(
             "cannot resume: saved resume_iteration is inconsistent with iterations_run"
         )
-    friends = normalize_friend_rows(meta.get("friends", []), roster_names)
+    friends = normalize_friend_rows(meta.get("friends", []), roster_names, roster_roles)
     if type(max_rounds) is not int or max_rounds < 1:
         raise UsageError("cannot resume: saved max_rounds must be a positive integer")
     critique_round = (resume_iteration - 1) * max_rounds + 1
@@ -488,18 +557,47 @@ def _restore_args(args: argparse.Namespace) -> argparse.Namespace:
     audit_external_grants = _normalize_saved_grants(meta.get("external_tool_grants", []))
     if audit_external_grants != saved_external_grants:
         raise UsageError("cannot resume: external_tool_grants disagrees with the saved invocation")
-    roster_entries = _validated_roster_entries(meta.get("roster", []))
+    host_context_known, detected_host, effective_include_self = _frozen_host_context(meta, saved)
+    raw_roster = meta.get("roster", [])
+    roster_entries = _validated_roster_entries(
+        raw_roster,
+        detected_host=detected_host,
+        host_context_known=host_context_known,
+    )
     validate_roster_entry_uniqueness(
         roster_entries, judging=saved.get("mode", "report") != "report"
     )
+    ambiguous_host_entries = (
+        not host_context_known
+        and isinstance(raw_roster, list)
+        and any(
+            isinstance(entry, dict)
+            and can_be_host_provider(entry.get("cli"))
+            and ("independent" not in entry or "host_self_review" not in entry)
+            for entry in raw_roster
+        )
+    )
+    if saved.get("mode", "report") in JUDGING_MODES and ambiguous_host_entries:
+        raise UsageError(
+            "cannot resume judging: this run predates frozen host-role metadata, "
+            "so an advisory host could be mistaken for an independent judge. "
+            "rerun the review with the current afriend version."
+        )
+    roster_roles = {
+        entry["name"]: (entry["independent"], entry["host_self_review"]) for entry in roster_entries
+    }
     meta = _normalized_checkpoint(
         meta,
         roster_names={entry["name"] for entry in roster_entries},
+        roster_roles=roster_roles,
         max_calls=saved.get("max_calls"),
         max_rounds=saved.get("max_rounds", 1),
         require_friends=saved.get("require_friends"),
     )
     validate_lifecycle_and_snapshot(meta, run_dir=run_dir, legacy=raw_version == 1)
+    if host_context_known:
+        meta["detected_host"] = detected_host
+        meta["effective_include_self"] = effective_include_self
     restored = argparse.Namespace(**vars(args))
     for name in _RESUMABLE_ARGS:
         if name in saved:
