@@ -81,7 +81,7 @@ partition "Dispatch — parallel, one thread per friend" {
   end note
   :re-enforce this provider's authority at dispatch;
   :build argv and filtered child environment;
-  :apply adapter read-only flags and, where\nrequired, OS filesystem confinement;
+  :apply read-only flags and, where\nrequired, OS filesystem confinement\nas secondary controls;
   :capability = what was actually emitted,\nnever re-derived from requested scope;
   :spawn in its own process group\ndeadline = ""--timeout"" + 60s grace;
   if (timed out / aborted?) then (yes)

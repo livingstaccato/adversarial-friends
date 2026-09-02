@@ -3,9 +3,11 @@
 import argparse
 from pathlib import Path
 
-from ..adapters import FriendSpec, validate_roster_entry_uniqueness
+from ..adapters import FriendSpec, load_adapters, validate_roster_entry_uniqueness
+from ..authority import AuthorityPolicy
 from ..errors import UsageError
 from ..jsonio import load_json_object
+from ..paths import ADAPTER_DIR
 from ..readiness import can_be_host_provider
 from ..runstore import default_root
 from ..themes import ThemeProposal
@@ -61,6 +63,7 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
             f"cannot resume: {meta_path} has no valid invocation; it may predate "
             "resume support and does not record how the run was invoked."
         )
+    known_providers = set(load_adapters(ADAPTER_DIR).keys())
     normalize_repeat_tracker(meta.get("repeat_tracker", {}))
     for name in _RESUMABLE_ARGS:
         if name in saved:
@@ -78,6 +81,14 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
         if name == "allow_external_tools":
             saved_value = _normalize_saved_grants(saved_value)
             current_value = _normalize_saved_grants(current_value)
+            try:
+                AuthorityPolicy.from_grants(saved_value, known_providers)
+            except UsageError as exc:
+                raise UsageError(f"cannot resume: {exc}") from exc
+            try:
+                AuthorityPolicy.from_grants(current_value, known_providers)
+            except UsageError as exc:
+                raise UsageError(f"cannot resume: {exc}") from exc
         if current_value != saved_value:
             raise UsageError(
                 f"cannot resume: prior --{name.replace('_', '-')} authority must be "

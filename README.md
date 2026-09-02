@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1983-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1985-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -178,7 +178,7 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 |---|---|
 | 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
-| 🔒 **Isolate** | Repo-scoped friends get a private `git worktree` from one shared snapshot; doc-scoped friends get an artifact-only directory. Adapter read-only flags and, where required, OS confinement (`sandbox-exec` / `bwrap`) enforce that scope — or the friend is refused |
+| 🔒 **Isolate** | Repo-scoped friends get a private `git worktree` from one shared snapshot; doc-scoped friends get an artifact-only directory. Friend scope determines the isolation directory, then adapter read-only flags and, where required, OS confinement (`sandbox-exec` / `bwrap`) are applied as a second line of defense — or the friend is refused |
 | 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools=PROVIDER` explicitly opts that provider in for this run |
 | 🧰 **Stage harnesses** | Adapter-owned workspace assets are copied into each isolated run workspace. Agy receives the controlled `afriend-reviewer` agent selected with `--agent`, `--disable-slash-commands`, `--mode plan`, and `--sandbox` |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
