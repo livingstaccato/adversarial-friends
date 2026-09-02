@@ -29,12 +29,15 @@ title adversarial_friends — module architecture
 package "Entry" {
   rectangle "cli.py\n<size:11>thin entry + re-exports</size>" as CLI
   rectangle "cliargs.py\n<size:11>parser, friend specs</size>" as ARGS
-  rectangle "commands/run.py\n<size:11>the report pipeline</size>" as RUN
-  rectangle "commands/doctor.py\n<size:11>capability probe</size>" as DOC
+  rectangle "commands/run.py\n<size:11>run orchestration</size>" as RUN
+  rectangle "commands/doctor.py\n<size:11>readiness diagnostics</size>" as DOC
 }
 
 package "Roster & contract" {
-  rectangle "roster.py\n<size:11>discover, assign lenses</size>" as ROSTER
+  rectangle "commands/friends.py + roster.py\n<size:11>selection, host roles, lenses</size>" as ROSTER
+  rectangle "providerconfig.py\n<size:11>persistent enable/model policy</size>" as PCONFIG
+  rectangle "readiness.py\n<size:11>effective provider admission</size>" as READY
+  rectangle "authority.py\n<size:11>provider-scoped tool grants</size>" as AUTH
   rectangle "adapters.py\n<size:11>argv + capability</size>" as ADAPT
   rectangle "trust.py\n<size:11>allowlist, denied flags</size>" as TRUST
   rectangle "paths.py\n<size:11>bundled asset lookup</size>" as PATHS
@@ -43,6 +46,8 @@ package "Roster & contract" {
 package "Execute" {
   rectangle "prompt.py\n<size:11>lens prose → prompt</size>" as PROMPT
   rectangle "isolation.py\n<size:11>snapshot, worktrees</size>" as ISO
+  rectangle "workspaceassets.py\n<size:11>digest-pinned harness staging</size>" as WSA
+  rectangle "sandbox.py + childenv.py\n<size:11>OS policy + env allowlist</size>" as SANDBOX
   rectangle "dispatch.py\n<size:11>argv → process</size>" as DISP
   rectangle "spawn.py\n<size:11>process groups, reaping</size>" as SPAWN
 }
@@ -51,37 +56,49 @@ package "Interpret & record" {
   rectangle "normalize.py\n<size:11>envelope, JSON recovery</size>" as NORM
   rectangle "claimschema.py\n<size:11>payload validation</size>" as SCHEMA
   rectangle "merge.py\n<size:11>exact-merge, aliases</size>" as MERGE
+  rectangle "rounds.py + commands/crossexam.py\n<size:11>parallel critique + judging</size>" as ROUNDS
   rectangle "ledger.py\n<size:11>append-only records</size>" as LEDGER
   rectangle "report.py\n<size:11>ranked report.md</size>" as REPORT
   rectangle "runstore.py\n<size:11>run dir layout</size>" as STORE
 }
 
-database "assets/\nadapters · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
-cloud "friend CLIs\nclaude · codex\nagy · opencode" as FRIENDS #E8F5E9
+database "assets/\nadapters · harnesses · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
+cloud "friend providers\nclaude · codex · agy\nopencode · ollama HTTP" as FRIENDS #E8F5E9
 
 CLI --> ARGS
 CLI --> RUN
 CLI --> DOC
 
 RUN --> ROSTER
+RUN --> AUTH
 RUN --> PROMPT
 RUN --> ISO
-RUN --> DISP
+RUN --> ROUNDS
 RUN --> MERGE
 RUN --> STORE
 RUN --> REPORT
 
-ARGS --> ADAPT
+ARGS --> AUTH
 ROSTER --> ADAPT
+ROSTER --> PCONFIG
+ROSTER --> READY
 ROSTER --> TRUST
-DOC --> ADAPT
+READY --> PCONFIG
+READY --> AUTH
+READY --> ADAPT
+DOC --> READY
 
 PATHS --> ASSETS
 ADAPT ..> PATHS
 PROMPT ..> PATHS
+WSA ..> PATHS
 
+ROUNDS --> DISP
 DISP --> ADAPT
+DISP --> AUTH
 DISP --> TRUST
+DISP --> WSA
+DISP --> SANDBOX
 DISP --> SPAWN
 SPAWN --> FRIENDS
 SPAWN --> NORM

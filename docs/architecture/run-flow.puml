@@ -30,13 +30,17 @@ endlegend
 start
 
 partition "Resolve the roster" {
-  :validate ""--mode"" / ""--preset""\nload bundled adapter records;
-  if (""--friend"" given?) then (yes)
-    :specs from flags\n(replaces discovery entirely);
-  else (no)
-    :discover CLIs on PATH\nround-robin a lens to each;
-  endif
+  :validate ""--mode"" / ""--preset""\nload bundled adapter records,
+  provider defaults, and scoped authority grants;
   :detect host; Codex is included by default,\nother hosts excluded unless overridden;
+  if (""--friend"" given?) then (yes)
+    :specs from flags\n(replaces discovery entirely),\nthen preflight each named provider;
+  else (no)
+    :apply persistent and per-run\nenable / disable / model policy;
+    :assess each provider: ready,\nunconfigured, unavailable, disabled,\nhost-excluded, or policy-blocked;
+    :discover only ready providers\nround-robin a lens to each;
+  endif
+  :for each provider, enforce deny-by-default\nexternal-tool policy or require its\nexplicit scoped grant;
   :mark any host friend advisory\nand independent=false;
   if (any friends?) then (no)
     :exit 3 — no usable friends;
@@ -59,7 +63,7 @@ partition "Prepare" {
   :resolve the artifact's git root\n(none → force all friends to doc scope);<<#FFE0B2>>
   :create run dir, copy + hash artifact;
   :per friend: build its OWN prompt from\nits OWN lens, write round-1/<friend>.prompt\n(missing lens → generic prompt, downgrade);<<#FFE0B2>>
-  :if any friend is repo scope, take one\nsnapshot commit (tracked + untracked);
+  :if a repository exists, take one snapshot\ncommit (tracked + untracked) for friend\nworktrees and later resolution evidence;
 }
 
 partition "Dispatch — parallel, one thread per friend" {
@@ -68,7 +72,17 @@ partition "Dispatch — parallel, one thread per friend" {
   else (no)
     :bare dir with only the artifact;
   endif
-  :build argv; capability = what was\nactually emitted, never re-derived;
+  :validate and stage digest-pinned adapter\nworkspace assets inside this isolation dir;
+  note right
+    Agy's staged reviewer is defense in depth.
+    It does not prove provider-managed tools
+    are disabled, so Agy still needs a scoped
+    explicit authority grant in 0.3.0.
+  end note
+  :re-enforce this provider's authority at dispatch;
+  :build argv and filtered child environment;
+  :apply adapter read-only flags and, where\nrequired, OS filesystem confinement;
+  :capability = what was actually emitted,\nnever re-derived from requested scope;
   :spawn in its own process group\ndeadline = ""--timeout"" + 60s grace;
   if (timed out / aborted?) then (yes)
     :SIGTERM the group, then SIGKILL;<<#FFCDD2>>
@@ -84,7 +98,7 @@ partition "Dispatch — parallel, one thread per friend" {
 
 partition "Merge & report" {
   :tear down every worktree and isolation dir;
-  :write <friend>.raw / .meta / .err — pass or fail;
+  :write <friend>.raw / .meta / .err / .sandbox\nwith authority, staging, and confinement evidence;
   :exact-merge claims: identical claims become\naliases, origins accumulate as corroboration;
   :append every claim AND alias to claims.jsonl;
   :write run.json + report.md, print the run dir;
