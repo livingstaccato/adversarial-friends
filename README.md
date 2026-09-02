@@ -178,9 +178,9 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 |---|---|
 | 🔍 **Resolve** | Discover agent CLIs on `PATH`, round-robin a lens to each |
 | ✍️ **Prompt** | Build a per-friend prompt: shared contract header + that friend's lens prose + the artifact |
-| 🔒 **Isolate** | Repo-scoped friends get a private `git worktree` from one shared snapshot; doc-scoped friends get an artifact-only directory. Friend scope determines the isolation directory, then adapter read-only flags and, where required, OS confinement (`sandbox-exec` / `bwrap`) are applied as a second line of defense — or the friend is refused |
+| 🔒 **Isolate** | Each friend's effective scope selects its isolation directory: repo scope gets a private `git worktree` from one shared snapshot, while doc scope gets an artifact-only directory. Adapter read-only flags and, where required, OS confinement (`sandbox-exec` / `bwrap`) are then applied separately as a second line of defense — or the friend is refused |
 | 🛂 **Deny remote authority** | External tools are denied by default. An adapter that cannot neutralize provider-managed tools, plugins, apps, or MCP servers is `policy-blocked` unless `--allow-external-tools=PROVIDER` explicitly opts that provider in for this run |
-| 🧰 **Stage harnesses** | Adapter-owned workspace assets are copied into each isolated run workspace. Agy receives the controlled `afriend-reviewer` agent selected with `--agent`, `--disable-slash-commands`, `--mode plan`, and `--sandbox` |
+| 🧰 **Stage harnesses** | Adapter-owned workspace assets are copied into each isolated run workspace. Antigravity receives the controlled `afriend-reviewer` agent selected with `--agent`, `--disable-slash-commands`, `--mode plan`, and `--sandbox` |
 | ⚡ **Dispatch** | Parallel, one thread per friend, each in its own process group with a kill deadline of `--timeout + 60s` |
 | 🧩 **Normalize** | Unwrap the CLI's own JSON envelope, strip ANSI, recover the payload, validate against the claim schema |
 | 🔗 **Merge** | Exact-merge identical claims into aliases — accumulating origins so corroboration survives |
@@ -340,12 +340,13 @@ is derived from your roster and actually enforced.
 | `opencode` | ✅ ships — no read-only mode, reported honestly |
 | `ollama` | ✅ ships — local models over HTTP, no schema/read-only to enforce; needs an explicit model |
 
-Agy's controlled reviewer is staged into the run's isolated workspace; it
-does not edit global Agy configuration. The staged agent and `--sandbox` are
-defense in depth, but sandbox does not mean external tools were denied. Agy
-remains `external_tools=uncontrolled` because its CLI cannot prove every
-plugin/MCP integration disabled invocation-locally. That is an accepted
-best-effort limitation: Agy is policy-blocked by default, while
+Antigravity's controlled reviewer is staged into the run's isolated workspace;
+it does not edit global Antigravity configuration. The staged agent and
+`--sandbox` are defense in depth, but sandbox does not mean external tools
+were denied. Antigravity remains `external_tools=uncontrolled` because its
+CLI cannot prove every plugin/MCP integration disabled invocation-locally.
+That is an accepted
+best-effort limitation: Antigravity is policy-blocked by default, while
 `--allow-external-tools=agy` records it as `explicitly-allowed`.
 
 There is no `gemini` adapter: the `gemini` CLI returns an ineligible-tier

@@ -3,11 +3,10 @@
 import argparse
 from pathlib import Path
 
-from ..adapters import FriendSpec, load_adapters, validate_roster_entry_uniqueness
+from ..adapters import FriendSpec, validate_roster_entry_uniqueness
 from ..authority import AuthorityPolicy
 from ..errors import UsageError
 from ..jsonio import load_json_object
-from ..paths import ADAPTER_DIR
 from ..readiness import can_be_host_provider
 from ..runstore import default_root
 from ..themes import ThemeProposal
@@ -63,8 +62,8 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
             f"cannot resume: {meta_path} has no valid invocation; it may predate "
             "resume support and does not record how the run was invoked."
         )
-    known_providers = set(load_adapters(ADAPTER_DIR).keys())
     normalize_repeat_tracker(meta.get("repeat_tracker", {}))
+    resume_authority_policy = AuthorityPolicy.deny_all()
     for name in _RESUMABLE_ARGS:
         if name in saved:
             _validate_saved_setting(name, saved[name])
@@ -79,16 +78,18 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
         current_value = getattr(args, name, default)
         _validate_saved_grant(name, current_value, expected_type)
         if name == "allow_external_tools":
-            saved_value = _normalize_saved_grants(saved_value)
-            current_value = _normalize_saved_grants(current_value)
+            saved_grants = _normalize_saved_grants(saved_value)
+            current_grants = _normalize_saved_grants(current_value)
+            if current_grants != saved_grants:
+                raise UsageError(
+                    f"cannot resume: prior --{name.replace('_', '-')} authority must be "
+                    "repeated exactly on the resume command line"
+                )
             try:
-                AuthorityPolicy.from_grants(saved_value, known_providers)
+                resume_authority_policy = AuthorityPolicy(tuple(current_grants))
             except UsageError as exc:
                 raise UsageError(f"cannot resume: {exc}") from exc
-            try:
-                AuthorityPolicy.from_grants(current_value, known_providers)
-            except UsageError as exc:
-                raise UsageError(f"cannot resume: {exc}") from exc
+            continue
         if current_value != saved_value:
             raise UsageError(
                 f"cannot resume: prior --{name.replace('_', '-')} authority must be "
@@ -169,6 +170,7 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
     restored.out = str(run_dir.parent)
     restored._resume_dir = run_dir
     restored._resume_meta = meta
+    restored._resume_authority_policy = resume_authority_policy
     # Resume the loop iteration that halted instead of restarting at one.
     restored._resume_iteration = meta["resume_iteration"]
     restored._resume_streak = meta["dry_streak"]

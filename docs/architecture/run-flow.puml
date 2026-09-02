@@ -68,20 +68,20 @@ partition "Prepare" {
 
 partition "Dispatch — parallel, one thread per friend" {
   if (effective friend scope is repo?) then (yes)
-    :private git worktree\nfrom the shared snapshot;
+    :private git worktree from\nthe shared snapshot;
   else (doc)
-    :bare dir with only the artifact;
+    :artifact-only directory;
   endif
   :validate and stage digest-pinned adapter\nworkspace assets inside this isolation dir;
   note right
-    Agy's staged reviewer is defense in depth.
+    Antigravity's staged reviewer is defense in depth.
     It does not prove provider-managed tools
-    are disabled, so Agy still needs a scoped
+    are disabled, so Antigravity still needs a scoped
     explicit authority grant in 0.3.0.
   end note
   :re-enforce this provider's authority at dispatch;
   :build argv and filtered child environment;
-  :apply read-only flags and, where\nrequired, OS filesystem confinement\nas secondary controls;
+  :separately apply adapter read-only flags\nand, where required, OS filesystem\nconfinement as secondary controls;
   :capability = what was actually emitted,\nnever re-derived from requested scope;
   :spawn in its own process group\ndeadline = ""--timeout"" + 60s grace;
   if (timed out / aborted?) then (yes)

@@ -42,16 +42,16 @@ not capture enough authority evidence to make a denial claim.
 grant; a provider-scoped grant is insufficient because arbitrary extra flags
 can affect every selected friend.
 
-## Agy is policy-blocked even though it has a controlled reviewer
+## Antigravity is policy-blocked even though it has a controlled reviewer
 
-For each Agy dispatch, the packaged `afriend-reviewer` agent is staged into
-the run's isolated workspace. The adapter selects it with `--agent
+For each Antigravity dispatch, the packaged `afriend-reviewer` agent is
+staged into the run's isolated workspace. The adapter selects it with `--agent
 afriend-reviewer`, `--disable-slash-commands`, `--mode plan`, and `--sandbox`.
 The agent's own frontmatter disables tools and inherited customizations, and
-the runner does not edit global Agy configuration.
+the runner does not edit global Antigravity configuration.
 
 This is defense in depth, not proof that every inherited plugin, MCP server,
-or provider-managed tool was disabled. Agy remains
+or provider-managed tool was disabled. Antigravity remains
 `external_tools=uncontrolled` and is `policy-blocked` by default. Its inability
 to disable every plugin invocation-locally is an accepted best-effort
 limitation, not a hidden guarantee. `--allow-external-tools=agy` changes the

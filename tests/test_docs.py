@@ -485,11 +485,22 @@ def test_live_docs_describe_scope_based_isolation_and_exec_environment_filtering
         .lower()
         .split()
     )
-    diagram = " ".join(REPO.joinpath("docs/architecture/run-flow.puml").read_text().lower().split())
+    diagram = " ".join(
+        REPO.joinpath("docs/architecture/run-flow.puml")
+        .read_text()
+        .lower()
+        .replace("\\n", " ")
+        .split()
+    )
 
-    assert "repo-scoped friends get a private `git worktree`" in readme
+    assert "each friend's effective scope selects its isolation directory" in readme
+    assert "doc scope gets an artifact-only directory" in readme
+    assert "adapter read-only flags and, where required, os confinement" in readme
     assert "every executable friend process" in modes
     assert "effective friend scope is repo?" in diagram
+    assert "artifact-only directory" in diagram
+    assert "separately apply adapter read-only flags" in diagram
+    assert "os filesystem confinement as secondary controls" in diagram
     assert "adapter has a real read-only mode?" not in diagram
 
 
@@ -562,7 +573,7 @@ def test_operator_docs_pin_provider_authority_and_agy_harness_contracts():
         "--sandbox",
         "external_tools=uncontrolled",
         "explicitly-allowed",
-        "global agy configuration",
+        "global antigravity configuration",
         "best-effort limitation",
         "sandbox does not mean external tools were denied",
     ):

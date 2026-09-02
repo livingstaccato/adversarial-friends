@@ -4,24 +4,11 @@ from pathlib import Path
 
 import pytest
 
+from adversarial_friends.authority import ExternalToolPolicy
+from adversarial_friends.cliargs import build_parser
+from adversarial_friends.commands import setup
 from adversarial_friends.commands.runmeta import _restore_args
 from adversarial_friends.errors import UsageError
-
-
-def _resume_args(run_dir: Path, **overrides):
-    values = dict(
-        resume=str(run_dir),
-        out=None,
-        artifact=None,
-        friend=[],
-        allow_external_tools=[],
-        allow_unsandboxed_friend=False,
-        unsafe_extra_args=None,
-        i_accept_unsandboxed=False,
-        pass_env=[],
-    )
-    values.update(overrides)
-    return argparse.Namespace(**values)
 
 
 def _write_resume_fixture(
@@ -56,13 +43,36 @@ def _write_resume_fixture(
     return run_dir
 
 
-def test_unknown_saved_external_tool_grant_is_rejected(tmp_path):
+def test_resume_preserves_reasserted_unused_external_tool_grant_with_empty_registry(
+    tmp_path, monkeypatch
+):
     run_dir = _write_resume_fixture(tmp_path, {"allow_external_tools": ["future"]})
-    with pytest.raises(UsageError, match="unknown --allow-external-tools"):
-        _restore_args(_resume_args(run_dir))
+
+    restored = _restore_args(
+        build_parser().parse_args(
+            [
+                "run",
+                "--resume",
+                str(run_dir),
+                "--allow-external-tools=future",
+                "--no-progress",
+            ]
+        )
+    )
+
+    monkeypatch.setattr(setup, "load_adapters", lambda _path: {})
+    monkeypatch.setattr(setup, "install_abort_handlers", lambda *_args: {})
+
+    prepared = setup.prepare_run(restored)
+
+    assert prepared.registry == {}
+    assert prepared.specs == []
+    assert prepared.authority_policy.for_provider("future") is ExternalToolPolicy.ALLOW
+    assert prepared.authority_policy.for_provider("other") is ExternalToolPolicy.DENY
 
 
-def test_unknown_current_external_tool_grant_is_rejected(tmp_path):
-    run_dir = _write_resume_fixture(tmp_path, {"allow_external_tools": []})
+def test_fresh_external_tool_grant_is_rejected_against_empty_adapter_registry(monkeypatch):
+    monkeypatch.setattr(setup, "load_adapters", lambda _path: {})
+
     with pytest.raises(UsageError, match="unknown --allow-external-tools"):
-        _restore_args(_resume_args(run_dir, allow_external_tools=["future"]))
+        setup.prepare_run(argparse.Namespace(allow_external_tools=["future"]))

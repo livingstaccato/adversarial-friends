@@ -54,9 +54,11 @@ def prepare_run(args: argparse.Namespace) -> RunSetup:
     not leave either permanently changed.
     """
     registry = load_adapters(ADAPTER_DIR)
-    authority_policy = AuthorityPolicy.from_grants(
-        getattr(args, "allow_external_tools", []), registry
-    )
+    authority_policy = getattr(args, "_resume_authority_policy", None)
+    if authority_policy is None:
+        authority_policy = AuthorityPolicy.from_grants(
+            getattr(args, "allow_external_tools", []), registry
+        )
     # AF_FAKE_FRIEND keeps the end-to-end tests off real CLIs and, critically,
     # off any metered provider. `--friend fake:<mode>` runs
     # `$AF_FAKE_FRIEND <mode>` directly (see dispatch._dispatch); the mode
