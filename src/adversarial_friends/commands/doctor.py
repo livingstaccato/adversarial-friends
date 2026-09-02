@@ -27,6 +27,8 @@ from ..readiness import (
 )
 from ..runstore import default_root
 
+_DECLARATION_ONLY_STATES = frozenset({ReadinessState.DISABLED, ReadinessState.HOST_EXCLUDED})
+
 
 def _legacy_status(row: FriendReadiness, adapter: Adapter) -> str:
     if row.ready or row.state is ReadinessState.REACHABLE_UNCONFIGURED:
@@ -74,12 +76,12 @@ def _rows(
     rows = []
     for name, adapter in sorted(registry.items()):
         assessed = readiness[name]
-        if assessed.state is ReadinessState.DISABLED:
-            # Readiness deliberately decides disabled rows before authority
-            # and availability. Preserve that decision: constructing argv
-            # here would both contradict the state and crash on an
-            # uncontrolled adapter. With no invocation there is no enforced
-            # decision, so report the conservative declaration itself.
+        if assessed.state in _DECLARATION_ONLY_STATES:
+            # Readiness deliberately decides selection exclusions before
+            # authority and availability. Preserve that decision:
+            # constructing argv here would both contradict the state and
+            # crash on an uncontrolled adapter. With no invocation there is
+            # no enforced decision, so report the conservative declaration.
             cap = Capability(
                 False,
                 False,
