@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0
+
+An authority-focused release that makes Adversarial Friends easier to invoke
+deliberately, clearer about the Codex host's dual role, and extensible to
+provider harnesses without weakening deny-by-default behavior.
+
+### Activation and host roles
+
+- Narrowed conversational activation to `afriend ...`, `afriend to ...`, the
+  full Adversarial Friends name, or direct skill selection; ordinary review
+  requests no longer select the skill implicitly.
+- Included Codex as an advisory host self-review by default in Codex, with
+  `--exclude-self` as the opt-out. Host review remains non-independent and
+  cannot satisfy judging admission, quorum, gate clearance, or convergence.
+
+### Provider authority and harnesses
+
+- Replaced the global external-tool escape hatch with repeatable,
+  provider-scoped `--allow-external-tools=PROVIDER` grants while preserving an
+  explicit `=*` global form and exact grant re-assertion on resume.
+- Added generic, digest-pinned workspace-asset staging for adapter-controlled
+  harnesses. Antigravity receives a constrained reviewer agent as defense in
+  depth but remains policy-blocked unless explicitly granted for the run.
+- Passed the Google provider's actual `GOOGLE_GENERATIVE_AI_API_KEY` variable
+  to confined OpenCode friends alongside the compatibility variable reported
+  by `opencode auth list`.
+
+### Release assurance
+
+- Hardened host-role, readiness, resume, workspace-asset, and report
+  invariants; synchronized the packaged skill and Codex/Claude plugin payloads.
+- Refreshed live documentation and architecture diagrams, with reproducible
+  renders and complete distribution/install verification.
+
 ## 0.2.1
 
 A contract-first hardening release that makes provider selection, authority,
