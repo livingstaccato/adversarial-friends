@@ -63,6 +63,14 @@ def test_all_shipped_adapters_load(registry):
     assert set(registry) >= {"claude", "codex", "agy", "opencode", "ollama"}
 
 
+def test_opencode_passes_both_google_api_key_names_without_broadening_env(registry):
+    passed = set(registry["opencode"].env_pass)
+
+    assert {"GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"} <= passed
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in passed
+    assert "AWS_SECRET_ACCESS_KEY" not in passed
+
+
 def test_agy_prompt_is_the_last_argument(registry, files):
     """agy's --print takes the prompt as its value; anything after it is
     ignored."""

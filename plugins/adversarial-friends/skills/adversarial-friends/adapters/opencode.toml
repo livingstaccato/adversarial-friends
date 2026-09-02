@@ -87,6 +87,14 @@ pass = [
   # Without them a confined opencode reaches its provider and is refused by
   # it, which reads as a server error rather than a missing key.
   "GEMINI_API_KEY",
+  # What `opencode auth list` names and what the Google provider actually
+  # reads are two different variables. With `GEMINI_API_KEY` alone -- which is
+  # the one that listing reports -- a run answers with the ProviderAuthError
+  # quoted below, naming `GOOGLE_GENERATIVE_AI_API_KEY`; setting that one
+  # instead, opencode answers normally. Withholding the variable this
+  # adapter's own remediation tells an operator to set would make following
+  # that advice fail silently.
+  "GOOGLE_GENERATIVE_AI_API_KEY",
   "HF_TOKEN",
 ]
 
