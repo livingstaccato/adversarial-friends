@@ -50,6 +50,7 @@ package "Execute" {
   rectangle "sandbox.py + childenv.py\n<size:11>OS policy + env allowlist</size>" as SANDBOX
   rectangle "dispatch.py\n<size:11>argv → process</size>" as DISP
   rectangle "spawn.py\n<size:11>process groups, reaping</size>" as SPAWN
+  rectangle "http_transport.py\n<size:11>bounded endpoint process</size>" as HTTPX
 }
 
 package "Interpret & record" {
@@ -63,7 +64,8 @@ package "Interpret & record" {
 }
 
 database "assets/\nadapters · harnesses · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
-cloud "friend providers\nclaude · codex · agy\nopencode · ollama HTTP" as FRIENDS #E8F5E9
+cloud "exec friend CLIs\nclaude · codex · agy · opencode" as FRIENDS #E8F5E9
+cloud "Ollama HTTP endpoint" as HTTP #E8F5E9
 
 CLI --> ARGS
 CLI --> RUN
@@ -100,8 +102,11 @@ DISP --> TRUST
 DISP --> WSA
 DISP --> SANDBOX
 DISP --> SPAWN
+DISP --> HTTPX
 SPAWN --> FRIENDS
 SPAWN --> NORM
+HTTPX --> HTTP
+HTTPX --> NORM
 NORM --> SCHEMA
 
 MERGE --> LEDGER
