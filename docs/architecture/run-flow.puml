@@ -67,9 +67,9 @@ partition "Prepare" {
 }
 
 partition "Dispatch — parallel, one thread per friend" {
-  if (adapter has a real read-only mode?) then (yes)
+  if (effective friend scope is repo?) then (yes)
     :private git worktree\nfrom the shared snapshot;
-  else (no)
+  else (doc)
     :bare dir with only the artifact;
   endif
   :validate and stage digest-pinned adapter\nworkspace assets inside this isolation dir;

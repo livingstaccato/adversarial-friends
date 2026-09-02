@@ -1,7 +1,7 @@
 """What a run records about withheld environment variables (§12.2).
 
 The list reaches run.json and report.md as the run's evidence that secrets
-were kept from confined friends, so it has to describe what dispatch will
+were kept from executable friends, so it has to describe what dispatch will
 actually do rather than an approximation of it. A crossexam of
 commands/run.py found it doing neither.
 """
@@ -78,7 +78,7 @@ def test_no_mechanism_means_no_filesystem_confinement_but_still_a_filtered_env(e
 
 
 def test_a_variable_only_one_adapter_receives_is_named_not_folded_in(env, monkeypatch):
-    """Withheld means no confined friend got it. One that a single adapter's
+    """Withheld means no executable friend got it. One that a single adapter's
     pass list lets through is reported separately rather than counted as
     kept back from everyone."""
     monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")

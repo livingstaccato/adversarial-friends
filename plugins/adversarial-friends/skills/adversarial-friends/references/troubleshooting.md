@@ -137,8 +137,9 @@ Three ways out, best first:
 1. **Install the mechanism.** On Linux, `bubblewrap`. Note that Ubuntu 24.04
    and later also restrict unprivileged user namespaces, which bwrap needs:
    `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-2. **Use a friend that confines itself.** `claude`, `codex` and `agy` all
-   have real read-only modes and never need this.
+2. **Use a friend with its own read-only mode.** `claude`, `codex` and `agy`
+   can still enforce write protection when no OS sandbox is available. Where
+   an adapter also opts into OS confinement, that adds read protection.
 3. **`--allow-unsandboxed-friend`.** Accepts the risk explicitly and stamps
    every affected friend in the report. Reasonable for an artifact you wrote
    yourself; not for one you were sent.

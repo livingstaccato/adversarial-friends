@@ -477,6 +477,22 @@ def test_rendered_run_flow_shows_the_one_friend_mode_contract():
     assert "fewer than two independent non-host friends" in visible
 
 
+def test_live_docs_describe_scope_based_isolation_and_exec_environment_filtering():
+    readme = " ".join(REPO.joinpath("README.md").read_text().lower().split())
+    modes = " ".join(
+        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
+        .read_text()
+        .lower()
+        .split()
+    )
+    diagram = " ".join(REPO.joinpath("docs/architecture/run-flow.puml").read_text().lower().split())
+
+    assert "repo-scoped friends get a private `git worktree`" in readme
+    assert "every executable friend process" in modes
+    assert "effective friend scope is repo?" in diagram
+    assert "adapter has a real read-only mode?" not in diagram
+
+
 def test_modes_explains_resume_authority_exception_and_doctor_readiness():
     modes = " ".join(
         REPO.joinpath("src/adversarial_friends/assets/references/modes.md")

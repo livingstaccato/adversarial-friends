@@ -381,7 +381,7 @@ this authority, and these grants do not change provider defaults.
 | `--include-self`, `--exclude-self` | Mutually exclusive overrides for host participation; host review remains advisory and non-independent |
 | `--enable-provider NAME`, `--disable-provider NAME` | Override persistent provider policy for this automatic roster only |
 | `--allow-external-tools=PROVIDER` | Explicitly inherit that provider's managed tools and connectors for this run; repeat per provider, or use `=*` globally |
-| `--pass-env VAR` (repeatable) | Also pass `VAR` through to confined friends |
+| `--pass-env VAR` (repeatable) | Allow an exported `VAR` through the filtered environment to every executable friend process; HTTP friends have no child environment |
 | `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
 | `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
 | `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |

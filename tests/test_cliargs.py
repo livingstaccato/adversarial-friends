@@ -79,6 +79,19 @@ def test_http_adapter_is_no_longer_rejected(registry):
     assert specs[0].cli == "ollama"
 
 
+def test_pass_env_help_names_every_exec_friend_not_only_os_confined_friends():
+    parser = cliargs.build_parser()
+    subcommands = next(
+        action
+        for action in parser._actions
+        if isinstance(action, cliargs.argparse._SubParsersAction)
+    )
+    help_text = subcommands.choices["run"].format_help()
+
+    assert "every executable friend process" in help_text
+    assert "confined friends" not in help_text
+
+
 def test_fake_scope_suffix_still_wins_over_model_parsing(registry):
     """`fake:<mode>:repo` predates the model slot and is handled in its own
     branch, so the third slot keeps meaning scope there and never leaks into

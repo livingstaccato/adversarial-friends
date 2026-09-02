@@ -1,4 +1,4 @@
-"""Tests for the confined friend's environment (spec §12.2, §12.3).
+"""Tests for executable friend environment filtering (spec §12.2, §12.3).
 
 Found by running this tool against its own sandbox: the filesystem policy was
 careful and the environment was not filtered at all, so a friend inherited
@@ -75,7 +75,7 @@ def test_withheld_and_kept_partition_the_environment():
 
 
 def test_nothing_in_the_base_list_looks_like_a_credential():
-    """The base list is passed to every confined friend, so a credential
+    """The base list is passed to every executable friend, so a credential
     hiding in it would be passed to all of them unconditionally."""
     import re
 

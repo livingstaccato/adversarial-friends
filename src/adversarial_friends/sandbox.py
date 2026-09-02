@@ -22,11 +22,11 @@ and every path nobody thought of is permitted by default.
 middle of it were found by running this tool against this file, and both are
 now closed:
 
-* **The environment is filtered** (see childenv). A friend used to inherit
+* **Every executable friend's environment is filtered** (see childenv). A friend used to inherit
   every secret exported in the runner's shell -- 61 variables on the machine
   where this was found, four of them API tokens for unrelated services --
-  and could read them without touching a single forbidden path. A confined
-  friend now receives an allowlist: the basics, plus what its adapter
+  and could read them without touching a single forbidden path. Each local
+  friend process now receives an allowlist: the basics, plus what its adapter
   declares it needs, plus whatever `--pass-env` adds.
 * **Host-local networking is denied on macOS.** `allow network*` reached
   127.0.0.1 too, so a database, another dev server, or anything else bound

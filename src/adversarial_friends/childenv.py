@@ -1,4 +1,4 @@
-"""What a confined friend is allowed to see in its environment -- §12.2.
+"""What an executable friend process may see in its environment -- §12.2.
 
 Found by running this tool against its own sandbox: the filesystem policy
 was careful and the environment was not filtered at all, so a friend
@@ -7,11 +7,10 @@ prompt-injected friend could read another service's token without touching a
 single forbidden path -- the confinement boundary had a hole straight through
 the middle of it.
 
-**Applied only to friends that are already being confined.** A CLI with a
-real read-only mode is trusted to enforce its own limits (§11) and its
-environment is left exactly as the operator arranged it; changing that would
-break working setups for no gain. The friends this touches are the ones the
-OS is already confining because they cannot confine themselves.
+**Applied to every executable friend, independently of filesystem
+confinement.** A CLI's read-only mode limits writes, not reads from its own
+environment. HTTP friends have no child process and therefore no child
+environment to filter.
 
 **An allowlist, like everything else here.** A denylist of "things that look
 like secrets" is direction-blind in the same way §13's rejected flag
@@ -127,7 +126,7 @@ def build(
     operator_pass: tuple[str, ...] = (),
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """The environment a confined friend receives.
+    """The filtered environment an executable friend process receives.
 
     Only variables that are BOTH allowed and actually set are returned:
     exporting an empty value for an unset variable would tell a CLI that a
