@@ -272,6 +272,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_p.add_argument("--out", default=None, help="run root, if not the default")
 
+    status_p = sub.add_parser("status")
+    status_p.add_argument("run_id", metavar="RUN_ID_OR_PATH")
+    status_p.add_argument("--out", default=None, help="run root, if not the default")
+    status_p.add_argument("--json", action="store_true", help="machine-readable output")
+    status_p.add_argument("--watch", action="store_true", help="follow lifecycle events until finished")
+
     providers_p = sub.add_parser("providers")
     provider_sub = providers_p.add_subparsers(dest="provider_command", required=True)
     list_p = provider_sub.add_parser("list")

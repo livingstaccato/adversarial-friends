@@ -31,6 +31,16 @@ def test_unknown_subcommand_exits_2():
     assert "invalid choice" in result.stderr
 
 
+def test_status_subcommand_is_available(tmp_path):
+    result = subprocess.run(
+        [str(AF), "status", "missing-run", "--out", str(tmp_path / "runs")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "no such run" in result.stderr
+
+
 def test_the_reported_version_matches_the_file_that_drives_the_build():
     """`afriend --version` said 0.1.0 from a 0.1.2 wheel: the string was
     hardcoded in __init__.py and had drifted two releases while VERSION,

@@ -1,8 +1,8 @@
 """Command line entry point.
 
-Wires the modules under this package into three working subcommands:
-`afriend run` (modes report/crossexam/gate/loop), `afriend resolve`, and
-`afriend doctor`. The actual work lives in
+Wires the modules under this package into working subcommands:
+`afriend run` (modes report/crossexam/gate/loop), `afriend resolve`,
+`afriend doctor`, and `afriend status`. The actual work lives in
 cliargs.py (parsing), dispatch.py (running one friend), prompt.py (building
 one friend's prompt), and commands/run.py + commands/doctor.py (the two
 subcommands); this file is the thin entry point that ties them together.
@@ -27,6 +27,7 @@ from .commands.init import cmd_init
 from .commands.providers import cmd_providers
 from .commands.resolve import cmd_resolve
 from .commands.run import cmd_run
+from .commands.status import cmd_status
 from .dispatch import (
     _FAKE_CAPABILITY,
     _UNKNOWN_CAPABILITY,
@@ -59,6 +60,7 @@ __all__ = [
     "cmd_providers",
     "cmd_resolve",
     "cmd_run",
+    "cmd_status",
     "main",
 ]
 
@@ -75,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_resolve(args)
         if args.command == "doctor":
             return cmd_doctor(args)
+        if args.command == "status":
+            return cmd_status(args)
         if args.command == "providers":
             return cmd_providers(args)
         parser.print_help()
