@@ -186,6 +186,12 @@ def build_parser() -> argparse.ArgumentParser:
     # asked otherwise. Keeping them is how you inspect what a friend saw.
     run_p.add_argument("--keep", action="store_true", help="keep friend worktrees for inspection")
     run_p.add_argument("--json", action="store_true", help="print run.json instead of the path")
+    run_p.add_argument(
+        "--failure-summary",
+        choices=["terminal", "report-only"],
+        default="terminal",
+        help="where to show a zero-response review summary (default: terminal)",
+    )
     # §13's escape hatch, and the only way arbitrary flags ever reach a
     # friend. Command line ONLY -- never from any file -- and only together
     # with the acknowledgement below.

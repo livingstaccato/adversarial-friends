@@ -93,3 +93,18 @@ def build_terminal_outcome(
         repeat_tracker=repeat_tracker,
     )
     return outcome, quorum_failed
+
+
+def _terminal_event_summary(stop_reason: str) -> tuple[str, str]:
+    """Project terminal state into the intentionally small event vocabulary."""
+    if stop_reason == "completed":
+        return "completed", "inspect_report"
+    if stop_reason == "gate-blocked":
+        return "blocked", "resolve"
+    if stop_reason in {"max-loop-iterations", "max-calls", "max-wall-clock", "interrupted"}:
+        return "incomplete", "resume"
+    if stop_reason == "auth-abort":
+        return "halted", "fix_configuration"
+    if stop_reason == "runtime-error":
+        return "error", "inspect_report"
+    return "incomplete", "inspect_report"

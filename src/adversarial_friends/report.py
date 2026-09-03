@@ -34,6 +34,7 @@ import unicodedata
 
 from .dispatch import _strip_terminal_controls
 from .ledger import Claim, Verdict
+from .reviewcompleteness import from_friends
 from .reviewstate import ReviewState
 from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
 
@@ -465,6 +466,20 @@ def render(
             ]
         )
     lines.extend(_external_authority_lines(run_meta))
+    review_completeness = from_friends(run_meta.get("friends", []))
+    if review_completeness is not None:
+        message = review_completeness["message"]
+        assert isinstance(message, str)
+        lines.extend(
+            [
+                "## Review completeness",
+                "",
+                _escape_block(message),
+                "",
+                "No artifact conclusion follows from zero friend answers.",
+                "",
+            ]
+        )
     lines.append("## Friends")
     lines.append("")
     lines.append(

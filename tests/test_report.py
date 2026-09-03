@@ -101,6 +101,30 @@ def test_report_surfaces_failed_friends():
     assert "failed: exit 1" in out
 
 
+def test_report_explains_that_zero_answers_provide_no_artifact_conclusion():
+    out = render(
+        [],
+        [],
+        meta(
+            friends=[
+                {
+                    "name": "codex-security",
+                    "independent": True,
+                    "model": None,
+                    "effort": None,
+                    "round": 1,
+                    "status": "failed: DNS temporary failure",
+                }
+            ]
+        ),
+    )
+
+    assert "## Review completeness" in out
+    assert "review incomplete: 0/1 friends answered; codex-security: DNS temporary failure" in out
+    assert "no artifact conclusion follows from zero friend answers" in out.lower()
+    assert out.index("## Review completeness") < out.index("## Friends")
+
+
 def test_report_surfaces_downgrades():
     out = render([claim("c-0001@1")], [], meta())
     assert "forced to doc scope" in out

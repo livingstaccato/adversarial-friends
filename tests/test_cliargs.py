@@ -162,3 +162,20 @@ def test_host_provider_parses_and_is_resumable():
     args = cliargs.build_parser().parse_args(["run", "spec.md", "--host-provider", "wrapper-agent"])
     assert args.host_provider == "wrapper-agent"
     assert "host_provider" in _RESUMABLE_ARGS
+
+
+def test_failure_summary_defaults_to_terminal_and_accepts_report_only():
+    parser = cliargs.build_parser()
+
+    assert parser.parse_args(["run", "spec.md"]).failure_summary == "terminal"
+    assert (
+        parser.parse_args(["run", "spec.md", "--failure-summary", "report-only"]).failure_summary
+        == "report-only"
+    )
+
+
+def test_failure_summary_rejects_unknown_policy():
+    with pytest.raises(SystemExit) as raised:
+        cliargs.build_parser().parse_args(["run", "spec.md", "--failure-summary", "quiet"])
+
+    assert raised.value.code == 2

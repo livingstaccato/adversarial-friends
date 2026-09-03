@@ -20,7 +20,11 @@ import pytest
 
 from adversarial_friends import adapters, cli, dispatch
 from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.commands import friends as friends_module, setup as run_setup_module
+from adversarial_friends.commands import (
+    friends as friends_module,
+    setup as run_setup_module,
+    status,
+)
 from adversarial_friends.paths import ADAPTER_DIR
 
 
@@ -492,6 +496,46 @@ def test_all_friends_failing_exits_1_and_says_so(tmp_path):
     runs = sorted((tmp_path / "runs").iterdir())
     report = (runs[0] / "report.md").read_text()
     assert "failed" in report.lower()
+
+
+def test_zero_response_review_is_persisted_reported_and_printed(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+
+    result = run_af(tmp_path, artifact, "--friend", "fake:offtopic")
+
+    assert result.returncode == 1, result.stderr
+    assert "review incomplete: 0/1 friends answered" in result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["review_completeness"]["state"] == "incomplete"
+    report = (run_dir / "report.md").read_text()
+    assert meta["review_completeness"]["message"] in report
+
+    summary = status.summarize(run_dir, root=run_dir.parent)
+    assert summary["review_completeness"]["answered"] == 0
+
+
+def test_report_only_failure_summary_suppresses_terminal_message(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:offtopic",
+        "--failure-summary",
+        "report-only",
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "review incomplete:" not in result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["review_completeness"]["state"] == "incomplete"
+    assert meta["review_completeness"]["message"] in (run_dir / "report.md").read_text()
+    assert status.summarize(run_dir, root=run_dir.parent)["review_completeness"]["answered"] == 0
 
 
 def test_a_run_directory_that_already_exists_fails_cleanly(tmp_path):

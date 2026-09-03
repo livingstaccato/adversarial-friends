@@ -15,10 +15,11 @@ from ..events import EventRecord, read_events
 from ..ids import FRIEND_NAME_RE
 from ..jsonio import MAX_JSON_FILE_BYTES, decode_json_object
 from ..ledger import Claim, Resolution, record_from_dict
+from ..reviewcompleteness import from_friends
 from ..runstore import default_root
 from ..secureio import secure_open_directory, secure_read_bytes, secure_regular_exists
 
-STATUS_SCHEMA_VERSION = 1
+STATUS_SCHEMA_VERSION = 2
 _POLL_S = 0.25
 _MAX_LEDGER_BYTES = 128 * 1024 * 1024
 
@@ -344,6 +345,7 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     state, outcome, reported_action = _state(meta, events)
     downgrades = meta.get("downgrades")
     friends = _friends(meta, events)
+    review_completeness = from_friends(meta.get("friends", []))
     rows = friends["rows"]
     assert isinstance(rows, list)
     started_scope = started.payload.get("scope") if started is not None else None
@@ -366,6 +368,7 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
         "scope": scope,
         "rounds": _rounds(meta, events, state),
         "friends": friends,
+        "review_completeness": review_completeness,
         "downgrades": list(downgrades)
         if isinstance(downgrades, list) and all(isinstance(item, str) for item in downgrades)
         else [],
@@ -448,6 +451,11 @@ def _render(summary: dict[str, object]) -> str:
                 lines.append(
                     f"friend: {row['name']} {row['status']} scope={row['scope']} round={row['round']}"
                 )
+    review_completeness = summary["review_completeness"]
+    if isinstance(review_completeness, dict):
+        message = review_completeness.get("message")
+        if isinstance(message, str):
+            lines.append(f"review completeness: {message}")
     downgrades = summary["downgrades"]
     if isinstance(downgrades, list) and downgrades:
         lines.append("downgrades:")
