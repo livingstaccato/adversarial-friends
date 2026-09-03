@@ -154,6 +154,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # a run.json write into that window against a directory another
         # resumer may be mid-write on.
         store.lock()
+        reporter.event_writer = store.events_writer()
+        reporter.run_started(args.mode, str(getattr(args, "profile", "legacy") or "legacy"))
         snapshot = select_snapshot(
             repo_root,
             frozen,
@@ -660,6 +662,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 successful_friend_ids=successful_friend_ids,
                 iteration_completed=not extraction_halt,
             )
+            reporter.run_finished("halted", "resume", duration_s=budget.elapsed(now()))
             raise
         except Exception as exc:
             if isinstance(exc, AfError):
@@ -685,6 +688,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     budget.elapsed(now()),
                     auth_abort=auth_abort,
                     runtime_error=f"{type(exc).__name__}: {exc}",
+                    reporter=reporter,
                 )
             except Exception as persistence_error:
                 exc.add_note(f"terminal persistence also failed: {persistence_error}")
@@ -710,6 +714,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             budget.elapsed(now()),
             auth_abort=auth_abort,
             runtime_error=dispatch_error,
+            reporter=reporter,
         )
     except Exception:
         # Initialization failures before a durable run.json exists must not

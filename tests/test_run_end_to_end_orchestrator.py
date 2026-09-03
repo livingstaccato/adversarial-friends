@@ -87,6 +87,13 @@ def test_the_run_halts_with_exit_ten(tmp_path):
     result = _halt(tmp_path, "judge_uphold_a", "judge_uphold_b")
     assert result.returncode == 10, result.stderr
     assert "waiting for merge adjudication" in result.stderr
+    events = [
+        json.loads(line) for line in (_run_dir(tmp_path) / "events.jsonl").read_text().splitlines()
+    ]
+    terminal = [event for event in events if event["type"] == "run_finished"]
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "halted"
+    assert terminal[0]["payload"]["next_action"] == "resume"
 
 
 def test_the_request_names_every_claim(tmp_path):

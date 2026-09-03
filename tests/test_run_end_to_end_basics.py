@@ -93,6 +93,28 @@ def test_report_run_produces_ledger_and_report(tmp_path):
     assert "# Adversarial review" in (runs[0] / "report.md").read_text()
 
 
+def test_report_run_writes_ordered_safe_lifecycle_events(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\nA design with a missing guard.\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "friend_finished",
+        "round_finished",
+        "run_finished",
+    ]
+    assert events[0]["payload"] == {"mode": "report", "profile": "quick", "status": "started"}
+    assert events[1]["payload"]["provider"] == "fake"
+    assert events[1]["payload"]["lens"] == "good"
+    assert events[-1]["payload"]["next_action"] == "inspect_report"
+    serialized = (run_dir / "events.jsonl").read_text()
+    assert "missing guard" not in serialized
+    assert "argv" not in serialized
+
+
 def test_failed_friend_is_reported_not_silently_dropped(tmp_path):
     artifact = tmp_path / "spec.md"
     artifact.write_text("# spec\n")
@@ -291,6 +313,8 @@ def test_artifact_outside_git_repo_scope_warning_prints_with_no_progress(tmp_pat
     result = run_af(tmp_path, artifact, "--friend", "fake:good", "--no-progress")
     assert result.returncode == 0, result.stderr
     assert "warning: doc scope only" in result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    assert (run_dir / "events.jsonl").is_file()
 
 
 def test_artifact_in_a_nested_subdirectory_of_a_repo_resolves_the_real_root(tmp_path):

@@ -279,7 +279,13 @@ def dispatch_round(
                 # lets the caller prune the prompt as genuinely unused.
                 if abort_event.is_set():
                     return None
-                report.friend_dispatched(spec.name, spec.timeout)
+                report.friend_dispatched(
+                    spec.name,
+                    spec.timeout,
+                    provider=spec.cli,
+                    lens=spec.lens,
+                    round_no=round_no,
+                )
                 result: RoundResult
                 try:
                     asset_audit: tuple[WorkspaceAssetAudit, ...] = ()
@@ -296,7 +302,9 @@ def dispatch_round(
                             capability = replace(capability, workspace_assets=exc.audits)
                             outcome = replace(_exception_outcome([], exc), failure_reason=str(exc))
                             result = spec, capability, outcome, provider_policy
-                            report.friend_finished(spec.name, _outcome_word(outcome, contract))
+                            report.friend_finished(
+                                spec.name, _outcome_word(outcome, contract), succeeded=False
+                            )
                             return _DispatchAttempt(result)
                     result = _dispatch(
                         spec,
@@ -335,10 +343,14 @@ def dispatch_round(
                         replace(_exception_outcome([], exc), failure_reason=str(exc)),
                         None,
                     )
-                    report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                    report.friend_finished(
+                        spec.name, _outcome_word(result[2], contract), succeeded=False
+                    )
                     return _DispatchAttempt(result, exc)
                 except Exception as exc:
-                    report.friend_finished(spec.name, f"failed: {exc.__class__.__name__}")
+                    report.friend_finished(
+                        spec.name, f"failed: {exc.__class__.__name__}", succeeded=False
+                    )
                     return _DispatchAttempt(
                         (
                             spec,
@@ -359,9 +371,19 @@ def dispatch_round(
                         _exception_outcome([], exc),
                         None,
                     )
-                    report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                    report.friend_finished(
+                        spec.name, _outcome_word(result[2], contract), succeeded=False
+                    )
                     return _DispatchAttempt(result, exc)
-                report.friend_finished(spec.name, _outcome_word(result[2], contract))
+                report.friend_finished(
+                    spec.name,
+                    _outcome_word(result[2], contract),
+                    succeeded=(
+                        result[2].failure_reason is None
+                        and result[2].result.succeeded
+                        and result[2].result.payload is not None
+                    ),
+                )
                 return _DispatchAttempt(result)
 
             # Only specs that actually got an isolation directory are
@@ -425,7 +447,11 @@ def dispatch_round(
                 # when the round raises. A background thread left naming
                 # friends that are no longer running would interleave with
                 # the error being reported.
-                report.round_finished(round_no, _round_summary(results, contract))
+                report.round_finished(
+                    round_no,
+                    _round_summary(results, contract),
+                    status="interrupted" if round_error is not None else "completed",
+                )
         finally:
             if not keep:
                 for spec in specs:

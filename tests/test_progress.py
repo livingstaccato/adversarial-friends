@@ -10,6 +10,8 @@ import io
 import time
 
 from adversarial_friends import progress
+from adversarial_friends.events import read_events
+from adversarial_friends.runstore import RunStore
 
 
 def _lines(stream: io.StringIO) -> list[str]:
@@ -149,3 +151,26 @@ def test_durations_are_reported_at_the_scale_friends_run_at():
     assert progress.format_duration(60) == "1m00s"
     assert progress.format_duration(357.1) == "5m57s"
     assert progress.format_duration(900) == "15m00s"
+
+
+def test_progress_writes_safe_lifecycle_events_without_touching_human_output(tmp_path):
+    stream = io.StringIO()
+    store = RunStore(tmp_path / "runs", "run-progress")
+    reporter = progress.Progress(stream=stream, event_writer=store.events_writer())
+    reporter.run_started("report", "quick")
+    reporter.round_started(1, "critique", ["fake-security-0"])
+    reporter.friend_dispatched("fake-security-0", 900, provider="fake", lens="security")
+    reporter.friend_finished("fake-security-0", "answered with 1 claim", succeeded=True)
+    reporter.round_finished(1, "1/1 friends answered", status="completed")
+    reporter.run_finished("completed", "inspect_report", duration_s=0.1)
+    reporter.close()
+    events = read_events(store.events_path(), root=store.root)
+    assert [(event.type, event.payload["status"]) for event in events] == [
+        ("run_started", "started"),
+        ("friend_finished", "succeeded"),
+        ("round_finished", "completed"),
+        ("run_finished", "completed"),
+    ]
+    assert events[1].payload["provider"] == "fake"
+    assert events[1].payload["lens"] == "security"
+    assert "answered with 1 claim" not in store.events_path().read_text()

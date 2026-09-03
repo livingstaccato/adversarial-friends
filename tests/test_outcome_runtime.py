@@ -101,6 +101,11 @@ def test_unexpected_runtime_error_is_persisted_then_reraised(monkeypatch, tmp_pa
     assert meta["exit_code"] == 1
     assert meta["lifecycle_state"] == "terminal"
     assert "Stop reason: `runtime-error`" in (run_dir / "report.md").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    terminal = [event for event in events if event["type"] == "run_finished"]
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "error"
+    assert terminal[0]["payload"]["next_action"] == "inspect_report"
 
 
 def test_mid_dispatch_stop_terminalizes_after_preserving_partial_friend_rows(monkeypatch, tmp_path):

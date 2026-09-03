@@ -48,6 +48,7 @@ from .runmeta_migration import (
 )
 
 if TYPE_CHECKING:
+    from ..progress import Progress
     from .crossexam import CrossexamOutcome
 
 _RESUMABLE_ARGS = (
@@ -693,6 +694,7 @@ def finish_run(
     active_elapsed_s: float,
     auth_abort: str | None = None,
     runtime_error: str | None = None,
+    reporter: "Progress | None" = None,
 ) -> int:
     """Wrap up a completed run: the gate's blocking claims, the finalized
     meta, run.json and report.md on disk, the printed path, and the exit
@@ -789,4 +791,23 @@ def finish_run(
             f"only {succeeded_friends} of {args.require_friends} required friends "
             "produced a usable answer"
         )
-    return decide_exit(outcome, detail=detail)
+    exit_code = decide_exit(outcome, detail=detail)
+    if reporter is not None:
+        event_status, next_action = _terminal_event_summary(outcome.stop_reason.value)
+        reporter.run_finished(event_status, next_action, duration_s=outcome.duration_s)
+    return exit_code
+
+
+def _terminal_event_summary(stop_reason: str) -> tuple[str, str]:
+    """Project terminal state into the intentionally small event vocabulary."""
+    if stop_reason == "completed":
+        return "completed", "inspect_report"
+    if stop_reason == "gate-blocked":
+        return "blocked", "resolve"
+    if stop_reason in {"max-loop-iterations", "max-calls", "max-wall-clock", "interrupted"}:
+        return "incomplete", "resume"
+    if stop_reason == "auth-abort":
+        return "halted", "fix_configuration"
+    if stop_reason == "runtime-error":
+        return "error", "inspect_report"
+    return "incomplete", "inspect_report"

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from .errors import UsageError
+from .events import EventWriter
 from .ids import validate_friend_name
 from .ledger import Ledger
 from .outcomes import json_node_count
@@ -169,6 +170,14 @@ class RunStore:
         validate_friend_name(friend_name)
         base = self.round_dir(round_no)
         return contain_path(self.run_dir, base / f"{friend_name}.audit.json")
+
+    def events_path(self) -> Path:
+        """The run-owned, private lifecycle event stream."""
+        return contain_path(self.run_dir, self.run_dir / "events.jsonl")
+
+    def events_writer(self) -> EventWriter:
+        """Return the synchronized writer for this run's event stream."""
+        return EventWriter(self.events_path(), self.root)
 
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"

@@ -27,6 +27,8 @@ import threading
 import time
 from typing import TextIO
 
+from .events import EventRecord, EventWriter
+
 # How often the heartbeat names what is still in flight. Thirty seconds is
 # chosen against the thing being waited on: friends take minutes, so a
 # shorter interval is noise that scrolls the lifecycle lines away, and a
@@ -54,6 +56,9 @@ def format_duration(seconds: float) -> str:
 class _InFlight:
     started: float
     timeout_s: int
+    provider: str
+    lens: str
+    round_no: int
 
 
 @dataclass
@@ -73,6 +78,8 @@ class Progress:
     _in_flight: dict[str, _InFlight] = field(default_factory=dict, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _beat: threading.Thread | None = field(default=None, repr=False)
+    event_writer: EventWriter | None = field(default=None, repr=False)
+    _terminal_event_written: bool = field(default=False, repr=False)
 
     # --- writing ----------------------------------------------------------
 
@@ -100,6 +107,26 @@ class Progress:
     def note(self, text: str) -> None:
         self._emit(f"afriend: {text}")
 
+    def _event(self, event_type: str, payload: dict[str, object]) -> None:
+        """Append a safe lifecycle record without affecting stderr output."""
+        if self.event_writer is None:
+            return
+        self.event_writer.append(EventRecord.create(event_type, payload))
+
+    def run_started(self, mode: str, profile: str) -> None:
+        self._event("run_started", {"mode": mode, "profile": profile, "status": "started"})
+
+    def run_finished(self, status: str, next_action: str, *, duration_s: float) -> None:
+        """Persist the one terminal record for this invocation."""
+        with self._lock:
+            if self._terminal_event_written:
+                return
+            self._terminal_event_written = True
+        self._event(
+            "run_finished",
+            {"status": status, "next_action": next_action, "duration_s": duration_s},
+        )
+
     # --- round lifecycle --------------------------------------------------
 
     def round_started(self, round_no: int, kind: str, names: list[str]) -> None:
@@ -107,21 +134,47 @@ class Progress:
         self._emit(f"afriend: round {round_no} ({kind}): {len(names)} friends -- {friends}")
         self._start_heartbeat()
 
-    def round_finished(self, round_no: int, summary: str) -> None:
+    def round_finished(self, round_no: int, summary: str, *, status: str = "completed") -> None:
         self._stop_heartbeat()
         self._emit(f"afriend: round {round_no} done -- {summary}")
+        self._event("round_finished", {"round": round_no, "status": status})
 
     # --- friend lifecycle -------------------------------------------------
 
-    def friend_dispatched(self, name: str, timeout_s: int) -> None:
+    def friend_dispatched(
+        self,
+        name: str,
+        timeout_s: int,
+        *,
+        provider: str = "unknown",
+        lens: str = "unknown",
+        round_no: int = 1,
+    ) -> None:
         with self._lock:
-            self._in_flight[name] = _InFlight(started=time.monotonic(), timeout_s=timeout_s)
+            self._in_flight[name] = _InFlight(
+                started=time.monotonic(),
+                timeout_s=timeout_s,
+                provider=provider,
+                lens=lens,
+                round_no=round_no,
+            )
 
-    def friend_finished(self, name: str, outcome: str) -> None:
+    def friend_finished(self, name: str, outcome: str, *, succeeded: bool = True) -> None:
         with self._lock:
             record = self._in_flight.pop(name, None)
-        elapsed = format_duration(time.monotonic() - record.started) if record else "?"
+        elapsed_s = time.monotonic() - record.started if record else 0.0
+        elapsed = format_duration(elapsed_s) if record else "?"
         self._emit(f"afriend:   {name} {outcome} in {elapsed}")
+        self._event(
+            "friend_finished" if succeeded else "friend_failed",
+            {
+                "provider": record.provider if record else "unknown",
+                "lens": record.lens if record else "unknown",
+                "round": record.round_no if record else 1,
+                "duration_s": elapsed_s,
+                "status": "succeeded" if succeeded else "failed",
+            },
+        )
 
     def friend_forgotten(self, name: str) -> None:
         """Drop a friend without reporting an outcome.
