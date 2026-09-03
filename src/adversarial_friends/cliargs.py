@@ -227,7 +227,12 @@ def build_parser() -> argparse.ArgumentParser:
     # §12.2. A friend with no read-only mode of its own is refused when the
     # OS offers no way to confine it; this accepts that risk explicitly and
     # stamps every affected friend in the report.
-    run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
+    run_p.add_argument(
+        "--allow-unsandboxed-friend",
+        action="store_true",
+        help="explicitly allow a provider without a read-only mode to run without OS "
+        "confinement; it retains same-user filesystem read access",
+    )
     run_p.add_argument(
         "--allow-external-tools",
         action="append",

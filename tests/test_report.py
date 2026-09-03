@@ -254,6 +254,8 @@ def test_read_exposed_names_are_stably_deduplicated():
     out = render([], [], meta(friends=[dict(repeated, round=1), dict(repeated, round=2)]))
     sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
     assert sentence.count("claude-security") == 1
+    assert "write-protected, but ran without OS confinement" in sentence
+    assert "same-user filesystem read access" in sentence
 
 
 @pytest.mark.parametrize(

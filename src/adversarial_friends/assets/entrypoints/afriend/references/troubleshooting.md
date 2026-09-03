@@ -158,15 +158,19 @@ refused — the rest of the run continues.
 
 Three ways out, best first:
 
-1. **Install the mechanism.** On Linux, `bubblewrap`. Note that Ubuntu 24.04
-   and later also restrict unprivileged user namespaces, which bwrap needs:
+1. **Make the OS mechanism available.** Use `sandbox-exec` on macOS or install
+   `bwrap` (`bubblewrap`) on Linux. Note that Ubuntu 24.04 and later also
+   restrict unprivileged user namespaces, which bwrap needs:
    `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-2. **Use a friend with its own read-only mode.** `claude`, `codex` and `agy`
-   can still enforce write protection when no OS sandbox is available. Where
-   an adapter also opts into OS confinement, that adds read protection.
-3. **`--allow-unsandboxed-friend`.** Accepts the risk explicitly and stamps
-   every affected friend in the report. Reasonable for an artifact you wrote
-   yourself; not for one you were sent.
+2. **Use a verified self-confining provider.** A provider with a verified
+   read-only mode does not need `--allow-unsandboxed-friend`: it can still
+   enforce write protection when no OS sandbox is available. Where an adapter
+   also opts into OS confinement, that adds read protection.
+3. **`--allow-unsandboxed-friend`.** This is explicit risk acceptance, not a
+   normal fix. It stamps every affected provider in the report; that provider
+   runs without OS confinement and retains same-user filesystem read access.
+   It is reasonable only for an artifact you wrote yourself, not one you were
+   sent.
 
 ## The sandbox breaks a friend that used to work
 

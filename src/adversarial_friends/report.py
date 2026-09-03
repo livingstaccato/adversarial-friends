@@ -529,7 +529,7 @@ def render(
                 "",
                 "**Filesystem read scope:** "
                 + ", ".join(_escape_cell(name) for name in read_exposed)
-                + " were write-protected but not OS-confined; each retained "
+                + " were write-protected, but ran without OS confinement; each retained "
                 "same-user filesystem read access outside the declared prompt scope.",
             ]
         )

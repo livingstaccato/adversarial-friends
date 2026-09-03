@@ -92,6 +92,19 @@ def test_pass_env_help_names_every_exec_friend_not_only_os_confined_friends():
     assert "confined friends" not in help_text
 
 
+def test_unsandboxed_friend_help_names_lost_confinement_and_read_authority():
+    parser = cliargs.build_parser()
+    subcommands = next(
+        action
+        for action in parser._actions
+        if isinstance(action, cliargs.argparse._SubParsersAction)
+    )
+    help_text = " ".join(subcommands.choices["run"].format_help().split())
+
+    assert "OS confinement" in help_text
+    assert "same-user filesystem read access" in help_text
+
+
 def test_fake_scope_suffix_still_wins_over_model_parsing(registry):
     """`fake:<mode>:repo` predates the model slot and is handled in its own
     branch, so the third slot keeps meaning scope there and never leaks into

@@ -87,7 +87,8 @@ def confinement_downgrades(
         downgrades.append(
             "--allow-unsandboxed-friend was passed: "
             + ", ".join(s.name for s in unconfined)
-            + " may run with no OS confinement at all. The artifact under "
+            + " may run with no OS confinement and retain same-user filesystem "
+            "read access. The artifact under "
             "review is untrusted text; a friend that follows an instruction "
             "inside it can read anything this user can."
         )
