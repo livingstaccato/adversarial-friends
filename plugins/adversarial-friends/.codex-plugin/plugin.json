@@ -27,9 +27,11 @@
     ],
     "websiteURL": "https://github.com/livingstaccato/adversarial-friends",
     "defaultPrompt": [
-      "afriend README.md",
-      "Use Adversarial Friends on docs/README.md.",
-      "afriend to src/adversarial_friends/assets/SKILL.md with crossexam"
+      "/afriend README.md",
+      "$adversarial-friends:review README.md",
+      "$adversarial-friends:status",
+      "$adversarial-friends:configure",
+      "$adversarial-friends:resolve"
     ]
   }
 }

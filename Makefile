@@ -32,12 +32,9 @@ wheel-assets: ## Build the wheel and verify bundled assets
 wheel-install: ## Install the wheel outside the checkout and smoke-test afriend
 	ci/verify_wheel_install.sh
 
-# Mirror assets/ -> plugins/.../skills/adversarial-friends/ byte-for-byte
-# (including deletions). Manual convenience -- `plugin-sync` only verifies.
-plugin-sync-copy: ## Copy assets/ -> the plugins/ mirror (manual)
-	rsync -a --delete --exclude '__pycache__' --exclude '__init__.py' \
-		src/adversarial_friends/assets/ \
-		plugins/adversarial-friends/skills/adversarial-friends/
+# Materialize the composite skills projection, including deletions.
+plugin-sync-copy: ## Copy canonical skill projection into the plugin
+	python3 scripts/check_plugin_sync.py --copy
 
 # Requires plantuml (brew install plantuml) and graphviz. Renders both PNG
 # (for README embedding) and SVG (scalable, text-selectable) from every

@@ -63,7 +63,7 @@ package "Interpret & record" {
   rectangle "runstore.py\n<size:11>run dir layout</size>" as STORE
 }
 
-database "assets/\nadapters · harnesses · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
+database "assets/\nadapters · harnesses · lenses\nentrypoints/ (five skills)" as ASSETS #FFF8E1
 cloud "exec friend CLIs\nclaude · codex · Antigravity (agy) · opencode" as FRIENDS #E8F5E9
 cloud "Ollama HTTP endpoint" as HTTP #E8F5E9
 

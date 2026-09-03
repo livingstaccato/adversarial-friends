@@ -56,11 +56,10 @@ version = { file = "VERSION" }
 
 [tool.setuptools.package-data]
 adversarial_friends = [
-    "assets/SKILL.md",
     "assets/adapters/*.toml",
     "assets/harnesses/**/*",
     "assets/lenses/*.md",
-    "assets/references/*.md",
+    "assets/entrypoints/**/*.md",
 ]
 
 # ── Ruff ─────────────────────────────────────────────────────────────────────

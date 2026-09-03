@@ -12,6 +12,7 @@ the README is mirrored.
 | Claim lifecycle | [`claim-lifecycle.puml`](claim-lifecycle.puml) | How two friends finding the same defect become one corroborated claim without losing either attribution |
 | Cross-examination states | [`crossexam-states.puml`](crossexam-states.puml) | The eight states a claim can reach under `--mode crossexam`, which are terminal, and which need a human |
 | The gate loop | [`gate-workflow.puml`](gate-workflow.puml) | How `--mode gate` and `afriend resolve` fit together, and the two things a resolution can be refused for |
+| Skill routing | [`skill-routing.puml`](skill-routing.puml) | How `/afriend` routes explicit operations to focused skills and stable CLI commands |
 
 ## Regenerating
 

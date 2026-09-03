@@ -9,11 +9,14 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 
 | Document | What it covers |
 |---|---|
-| [SKILL.md](../src/adversarial_friends/assets/SKILL.md) | The skill itself — when it fires, how to run it, how to read its output |
-| [modes.md](../src/adversarial_friends/assets/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus `afriend resolve`, claim states, ceilings, and exit codes |
-| [troubleshooting.md](../src/adversarial_friends/assets/references/troubleshooting.md) | Verified CLI traps, empty reports, timeouts, unauthenticated friends |
+| [/afriend](../src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | The sole router and short selector; stable commands remain `afriend run` and `afriend doctor` |
+| [review](../src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Artifact reviews with `afriend run` |
+| [status](../src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only readiness and named-run inspection |
+| [configure](../src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Explicit persistent provider-default changes |
+| [resolve](../src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Named-run resolutions with supplied evidence |
+| [modes](../src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus claim states, ceilings, and exit codes |
 
-> These three live under `src/adversarial_friends/assets/` because they ship
+> These entrypoints live under `src/adversarial_friends/assets/` because they ship
 > **inside the wheel** as package data — the runner resolves them at runtime
 > via `importlib.resources`, and they are mirrored into `plugins/` for plugin
 > loaders. Edit them there, never in the mirror.
@@ -24,7 +27,7 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 
 | Document | What it covers |
 |---|---|
-| [ledger.md](../src/adversarial_friends/assets/references/ledger.md) | Claim, verdict, alias, and resolution records — and how to read `claims.jsonl` directly |
+| [ledger](../src/adversarial_friends/assets/entrypoints/afriend/references/ledger.md) | Claim, verdict, alias, and resolution records — and how to read `claims.jsonl` directly |
 | [architecture/](architecture/README.md) | Diagrams: module architecture, run flow, claim lifecycle |
 
 ### The diagrams
@@ -44,6 +47,8 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 - **[The gate loop](architecture/gate-workflow.puml)** — how `--mode gate` and
   `afriend resolve` fit together, and the two things a resolution can be
   refused for.
+- **[Skill routing](architecture/skill-routing.puml)** — how `/afriend` hands
+  explicit operations to focused skills and stable CLI commands.
 
 Rendered PNG and SVG are committed alongside each source. Regenerate with
 `make diagrams`.

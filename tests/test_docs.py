@@ -10,6 +10,10 @@ from pathlib import Path
 import re
 
 REPO = Path(__file__).resolve().parents[1]
+ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+ENTRYPOINTS = ASSETS / "entrypoints"
+AFRIEND = ENTRYPOINTS / "afriend"
+OPERATOR_DOCS = [AFRIEND / "SKILL.md", *(AFRIEND / "references").glob("*.md")]
 
 
 def test_readme_leads_with_the_banner():
@@ -19,10 +23,8 @@ def test_readme_leads_with_the_banner():
 
 def test_scope_selection_docs_explain_artifact_location_and_snapshot_rules():
     readme = REPO.joinpath("README.md").read_text()
-    skill = REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md"
-    troubleshooting = (
-        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md"
-    ).read_text()
+    skill = AFRIEND / "SKILL.md"
+    troubleshooting = (AFRIEND / "references" / "troubleshooting.md").read_text()
 
     assert "outside a Git repository" in readme
     assert "repository snapshot" in skill.read_text()
@@ -261,8 +263,8 @@ def test_docs_index_links_only_to_existing_files():
 
 def test_evals_file_is_valid_and_has_cases():
     data = json.loads((REPO / "evals" / "evals.json").read_text())
-    assert data["skill_name"] == "adversarial-friends"
-    assert len(data["evals"]) >= 3
+    assert data["skill_name"] == "afriend"
+    assert len(data["evals"]) >= 12
     assert all("prompt" in e and "expected_output" in e for e in data["evals"])
 
 
@@ -274,9 +276,10 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     positive_prompts = " ".join(case["prompt"].lower() for case in positives)
     negative_prompts = " ".join(case["prompt"].lower() for case in negatives)
 
+    assert "/afriend" in positive_prompts
     assert "afriend to" in positive_prompts
     assert "adversarial friends" in positive_prompts
-    assert "$adversarial-friends" in positive_prompts
+    assert "$adversarial-friends:afriend" in positive_prompts
     for phrase in ("review this", "challenge this", "poke holes", "second opinion"):
         assert phrase in negative_prompts, phrase
     assert all("af run" not in case["expected_output"].lower() for case in evals)
@@ -290,15 +293,14 @@ def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespa
     manifest = json.loads(
         (REPO / "plugins" / "adversarial-friends" / ".codex-plugin" / "plugin.json").read_text()
     )
-    skill_name = re.search(
-        r"^name:\s*([a-z0-9-]+)\s*$",
-        (REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md").read_text(),
-        re.MULTILINE,
-    ).group(1)
-    expected_selector = (manifest["name"], skill_name)
+    skill_names = {path.parent.name for path in ENTRYPOINTS.glob("*/SKILL.md")}
+    assert skill_names == {"afriend", "review", "status", "configure", "resolve"}
+    expected_selectors = {(manifest["name"], name) for name in skill_names}
     selectors = []
 
     for case in positives:
+        assert "skill" in case and "requires_artifact" in case
+        assert case["skill"] in skill_names
         paths = list(case["files"])
         paths.extend(
             re.findall(
@@ -306,13 +308,40 @@ def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespa
                 case["prompt"],
             )
         )
-        assert paths, f"positive eval {case['id']} has no resolvable artifact"
+        if case["requires_artifact"]:
+            assert paths, f"positive eval {case['id']} has no resolvable artifact"
+        else:
+            assert not paths, f"positive eval {case['id']} unexpectedly requires an artifact"
         for path in paths:
             assert REPO.joinpath(path).is_file(), f"positive eval {case['id']}: {path}"
         selectors.extend(re.findall(r"\$([a-z0-9-]+):([a-z0-9-]+)", case["prompt"]))
         assert not re.search(r"\$adversarial-friends(?:\s|$)", case["prompt"])
 
-    assert selectors == [expected_selector]
+    assert set(selectors) == expected_selectors
+
+
+def test_current_docs_describe_only_the_five_skill_surface_and_stable_cli():
+    current = "\n".join(
+        path.read_text()
+        for path in (REPO / "README.md", REPO / "AGENTS.md", REPO / "docs" / "README.md")
+    ).lower()
+    assert "/afriend" in current
+    assert "$adversarial-friends:afriend" in current
+    assert "$adversarial-friends:adversarial-friends" not in current
+    assert "afriend status" in current and "afriend review" in current
+    assert "afriend doctor" in current and "afriend run" in current
+    assert "not executable aliases" in current
+
+
+def test_skill_routing_diagram_labels_all_skills_and_commands():
+    source = (REPO / "docs" / "architecture" / "skill-routing.puml").read_text()
+    visible = _svg_visible_text(REPO / "docs" / "architecture" / "skill-routing.svg")
+    for label in ("/afriend", "review", "status", "configure", "resolve"):
+        assert label in source
+        assert label in visible
+    for label in ("afriend run", "afriend doctor", "afriend providers", "afriend resolve"):
+        assert label in source
+        assert label in visible
 
 
 def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_contract():
@@ -341,10 +370,13 @@ def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_con
 
     prompts = codex["interface"]["defaultPrompt"]
     assert prompts
-    assert all(
-        prompt.startswith("afriend") or prompt.startswith("Use Adversarial Friends")
-        for prompt in prompts
-    )
+    assert prompts == [
+        "/afriend README.md",
+        "$adversarial-friends:review README.md",
+        "$adversarial-friends:status",
+        "$adversarial-friends:configure",
+        "$adversarial-friends:resolve",
+    ]
 
 
 def test_the_advertised_test_count_is_the_real_one():
@@ -423,11 +455,7 @@ def test_no_shipped_doc_calls_a_shipped_mode_unimplemented():
 def test_contract_first_provider_and_authority_guidance_is_shipped():
     docs = {
         "README.md": REPO.joinpath("README.md").read_text(),
-        "SKILL.md": REPO.joinpath("src/adversarial_friends/assets/SKILL.md").read_text(),
-        "modes.md": REPO.joinpath("src/adversarial_friends/assets/references/modes.md").read_text(),
-        "troubleshooting.md": REPO.joinpath(
-            "src/adversarial_friends/assets/references/troubleshooting.md"
-        ).read_text(),
+        **{path.name: path.read_text() for path in OPERATOR_DOCS},
     }
     joined = " ".join("\n".join(docs.values()).lower().replace("`", "").split())
 
@@ -456,15 +484,8 @@ def test_contract_first_provider_and_authority_guidance_is_shipped():
 
 def test_shipped_docs_state_the_one_friend_mode_contract_exactly():
     readme = " ".join(REPO.joinpath("README.md").read_text().lower().split())
-    skill = " ".join(
-        REPO.joinpath("src/adversarial_friends/assets/SKILL.md").read_text().lower().split()
-    )
-    modes = " ".join(
-        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
-        .read_text()
-        .lower()
-        .split()
-    )
+    skill = " ".join((AFRIEND / "SKILL.md").read_text().lower().split())
+    modes = " ".join((AFRIEND / "references" / "modes.md").read_text().lower().split())
     diagram = " ".join(REPO.joinpath("docs/architecture/run-flow.puml").read_text().lower().split())
 
     for prose in (readme, skill, modes):
@@ -492,12 +513,7 @@ def test_rendered_run_flow_shows_the_one_friend_mode_contract():
 
 def test_live_docs_describe_scope_based_isolation_and_exec_environment_filtering():
     readme = " ".join(REPO.joinpath("README.md").read_text().lower().split())
-    modes = " ".join(
-        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
-        .read_text()
-        .lower()
-        .split()
-    )
+    modes = " ".join((AFRIEND / "references" / "modes.md").read_text().lower().split())
     diagram = " ".join(
         REPO.joinpath("docs/architecture/run-flow.puml")
         .read_text()
@@ -542,11 +558,7 @@ def test_live_docs_and_run_flow_explain_doc_scope_warning_and_confined_dns():
 
 def test_modes_explains_resume_authority_exception_and_doctor_readiness():
     modes = " ".join(
-        REPO.joinpath("src/adversarial_friends/assets/references/modes.md")
-        .read_text()
-        .lower()
-        .replace("`", "")
-        .split()
+        (AFRIEND / "references" / "modes.md").read_text().lower().replace("`", "").split()
     )
 
     assert "no other non-authority configuration flags" in modes
@@ -562,9 +574,7 @@ def test_modes_explains_resume_authority_exception_and_doctor_readiness():
 def test_operator_docs_explain_advisory_host_and_independent_authority():
     paths = (
         REPO / "README.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md",
+        *OPERATOR_DOCS,
     )
     docs = " ".join(" ".join(path.read_text().lower().replace("`", "").split()) for path in paths)
 
@@ -588,9 +598,7 @@ def test_operator_docs_explain_advisory_host_and_independent_authority():
 def test_operator_docs_pin_provider_authority_and_agy_harness_contracts():
     paths = (
         REPO / "README.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md",
-        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md",
+        *OPERATOR_DOCS,
     )
     docs = " ".join(" ".join(path.read_text().lower().replace("`", "").split()) for path in paths)
 
@@ -617,19 +625,9 @@ def test_operator_docs_pin_provider_authority_and_agy_harness_contracts():
 
 
 def test_operator_docs_state_real_mode_defaults_and_runtime_expectations():
-    skill = " ".join(
-        (REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md")
-        .read_text()
-        .lower()
-        .replace("`", "")
-        .split()
-    )
+    skill = " ".join((AFRIEND / "SKILL.md").read_text().lower().replace("`", "").split())
     modes = " ".join(
-        (REPO / "src" / "adversarial_friends" / "assets" / "references" / "modes.md")
-        .read_text()
-        .lower()
-        .replace("`", "")
-        .split()
+        (AFRIEND / "references" / "modes.md").read_text().lower().replace("`", "").split()
     )
     combined = f"{skill} {modes}"
 

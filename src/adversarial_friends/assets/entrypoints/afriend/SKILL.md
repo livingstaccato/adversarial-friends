@@ -1,9 +1,9 @@
 ---
-name: adversarial-friends
-description: Use when a request starts with afriend, says afriend to ..., explicitly names Adversarial Friends, or directly selects this skill. Do not use for generic review, challenge or poke holes, second opinion, or architectural-decision requests when afriend and the full product name are absent.
+name: afriend
+description: Use for /afriend, when the user directly selects this skill, explicit afriend or “a friend” requests, and named Adversarial Friends requests. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, or architecture requests without those explicit triggers.
 ---
 
-# Adversarial Friends
+# /afriend — Adversarial Friends router
 
 Challenge an artifact by dispatching it to agent CLIs under distinct lenses,
 then merge what they find.
@@ -15,11 +15,24 @@ they disagree are usually where the real problem is.
 
 ## When this fires
 
-Activate only for command-like intent: a request that starts with `afriend`,
-uses `afriend to ...`, explicitly names **Adversarial Friends**, or directly
-selects this skill. Equivalent forms include `afriend this plan`, `afriend to
-this plan`, `afriend docs/design.md`, and `afriend to docs/design.md with
-crossexam`.
+`/afriend` is the short direct selector and the only router. Activate only for
+direct selection, command-like intent that starts with `afriend` or uses
+`afriend to ...`, an explicit “a friend” request, or a request that names
+**Adversarial Friends**. Equivalent review forms include `afriend this plan`,
+`afriend to this plan`, `afriend docs/design.md`, and `afriend to
+docs/design.md with crossexam`.
+
+Route an explicit conversational operation before doing any work:
+
+| Conversation intent | Focused skill | Stable executable command |
+| --- | --- | --- |
+| review an artifact | `review` | `afriend run` |
+| status or readiness | `status` | `afriend doctor` |
+| provider configuration | `configure` | `afriend providers` |
+| resolve an existing run | `resolve` | `afriend resolve` |
+
+Phrases such as “afriend status” and “afriend review” are routing language,
+not new executable aliases. The CLI command names remain `doctor` and `run`.
 
 Conversational shorthand maps to `afriend run`; it is not a new CLI alias. If
 the request names an existing path, pass that path to `afriend run`. If “this”

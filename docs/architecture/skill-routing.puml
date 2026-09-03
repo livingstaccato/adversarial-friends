@@ -1,0 +1,34 @@
+@startuml skill-routing
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam ArrowColor #37474F
+skinparam rectangle {
+  BorderColor #1565C0
+  BackgroundColor #E3F2FD
+}
+title Adversarial Friends skill routing
+
+rectangle "/afriend\nsole router" as router
+rectangle "review" as review
+rectangle "status" as status
+rectangle "configure" as configure
+rectangle "resolve" as resolve
+rectangle "afriend run" as run #E8F5E9
+rectangle "afriend doctor" as doctor #E8F5E9
+rectangle "afriend providers" as providers #E8F5E9
+rectangle "afriend resolve" as resolution #E8F5E9
+
+router --> review : explicit review
+router --> status : explicit status
+router --> configure : explicit configuration
+router --> resolve : explicit resolution
+review --> run
+status --> doctor
+configure --> providers
+resolve --> resolution
+note bottom of router
+  Conversational operation words route skills.
+  They are not executable CLI aliases.
+end note
+@enduml

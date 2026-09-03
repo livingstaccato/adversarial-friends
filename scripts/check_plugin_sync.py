@@ -1,76 +1,115 @@
 #!/usr/bin/env python3
-"""Verify that the packaged assets and the mirrored plugin tree stay in sync.
-
-`src/adversarial_friends/assets/` is the canonical copy of the skill --
-SKILL.md, adapters/, lenses/, references/ -- shipped inside the installed
-wheel via package-data. `plugins/adversarial-friends/skills/adversarial-friends/`
-is a byte-identical mirror used by Claude Code's plugin marketplace and by
-Codex's plugin loader, neither of which can install a Python package as part
-of adding a plugin. If the two drift, agents that load the plugin see stale
-lenses, adapters, or instructions relative to what `afriend` actually ships.
-"""
+"""Verify or safely materialize the composite Adversarial Friends plugin skills."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 
-SOURCE = Path("src/adversarial_friends/assets")
-MIRROR = Path("plugins/adversarial-friends/skills/adversarial-friends")
-
-
-def _collect(root: Path) -> dict[Path, bytes]:
-    """Return a map of relative path -> file bytes for every file under root."""
-    files: dict[Path, bytes] = {}
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if "__pycache__" in path.parts:
-            continue
-        if path.name == "__init__.py":
-            continue
-        files[path.relative_to(root)] = path.read_bytes()
-    return files
+REPO = Path(__file__).resolve().parents[1]
+ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+PLUGIN_ROOT = REPO / "plugins" / "adversarial-friends"
+SKILLS = PLUGIN_ROOT / "skills"
 
 
-def main() -> int:
-    """Return 1 if the trees differ, 0 if they match."""
-    if not SOURCE.is_dir():
-        print(f"error: source tree not found: {SOURCE}", file=sys.stderr)
-        return 1
-    if not MIRROR.is_dir():
-        print(f"error: mirror tree not found: {MIRROR}", file=sys.stderr)
-        return 1
+def project_tree(source: Path, destination: Path) -> dict[Path, bytes]:
+    """Return source bytes mapped under a relative plugin destination."""
+    return {
+        destination / path.relative_to(source): path.read_bytes()
+        for path in source.rglob("*")
+        if path.is_file() and path.name != "__init__.py" and "__pycache__" not in path.parts
+    }
 
-    src_files = _collect(SOURCE)
-    mir_files = _collect(MIRROR)
 
-    src_only = sorted(src_files.keys() - mir_files.keys())
-    mir_only = sorted(mir_files.keys() - src_files.keys())
+def expected_plugin_files() -> dict[Path, bytes]:
+    """Build the only allowed file map beneath the plugin's skills directory."""
+    expected = project_tree(ASSETS / "entrypoints", Path())
+    expected |= project_tree(ASSETS / "adapters", Path("afriend/adapters"))
+    expected |= project_tree(ASSETS / "harnesses", Path("afriend/harnesses"))
+    expected |= project_tree(ASSETS / "lenses", Path("afriend/lenses"))
+    return expected
+
+
+def collect(root: Path) -> dict[Path, bytes]:
+    if not root.is_dir():
+        return {}
+    return {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "__init__.py" and "__pycache__" not in path.parts
+    }
+
+
+def report_difference(actual: dict[Path, bytes], expected: dict[Path, bytes]) -> int:
+    missing = sorted(expected.keys() - actual.keys())
+    unexpected = sorted(actual.keys() - expected.keys())
     differing = sorted(
-        p for p in src_files.keys() & mir_files.keys() if src_files[p] != mir_files[p]
+        path for path in expected.keys() & actual.keys() if expected[path] != actual[path]
     )
-
-    if not (src_only or mir_only or differing):
+    if not (missing or unexpected or differing):
         return 0
-
-    print("plugin trees are out of sync:", file=sys.stderr)
-    print(f"  source: {SOURCE}", file=sys.stderr)
-    print(f"  mirror: {MIRROR}", file=sys.stderr)
-    if src_only:
-        print("\nonly in source (missing from mirror):", file=sys.stderr)
-        for p in src_only:
-            print(f"  {p}", file=sys.stderr)
-    if mir_only:
-        print("\nonly in mirror (missing from source):", file=sys.stderr)
-        for p in mir_only:
-            print(f"  {p}", file=sys.stderr)
-    if differing:
-        print("\ncontent differs:", file=sys.stderr)
-        for p in differing:
-            print(f"  {p}", file=sys.stderr)
+    print("plugin skills are out of sync:", file=sys.stderr)
+    for heading, paths in (
+        ("missing", missing),
+        ("unexpected", unexpected),
+        ("content differs", differing),
+    ):
+        if paths:
+            print(f"  {heading}:", file=sys.stderr)
+            for path in paths:
+                print(f"    {path}", file=sys.stderr)
     return 1
 
 
+def is_inside_plugin(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(PLUGIN_ROOT.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def copy_expected(expected: dict[Path, bytes]) -> int:
+    """Stage, validate, then replace exactly the resolved plugin skills directory."""
+    plugin_root = PLUGIN_ROOT.resolve()
+    skills = SKILLS.resolve()
+    if not plugin_root.is_dir() or not is_inside_plugin(skills) or skills.parent != plugin_root:
+        print("error: resolved skills target is outside the plugin root", file=sys.stderr)
+        return 2
+    stage_parent = Path(tempfile.mkdtemp(prefix=".skills-stage-", dir=plugin_root))
+    try:
+        staged_skills = stage_parent / "skills"
+        for relative, payload in expected.items():
+            target = staged_skills / relative
+            if not is_inside_plugin(target) or not target.resolve().is_relative_to(
+                stage_parent.resolve()
+            ):
+                print(f"error: unsafe projected path: {relative}", file=sys.stderr)
+                return 2
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+        if report_difference(collect(staged_skills), expected):
+            print("error: staged plugin projection failed validation", file=sys.stderr)
+            return 2
+        if skills.exists():
+            shutil.rmtree(skills)
+        staged_skills.replace(skills)
+    finally:
+        shutil.rmtree(stage_parent, ignore_errors=True)
+    return report_difference(collect(SKILLS), expected)
+
+
+def main(argv: list[str]) -> int:
+    if argv not in ([], ["--copy"]):
+        print("usage: check_plugin_sync.py [--copy]", file=sys.stderr)
+        return 2
+    expected = expected_plugin_files()
+    if argv == ["--copy"]:
+        return copy_expected(expected)
+    return report_difference(collect(SKILLS), expected)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

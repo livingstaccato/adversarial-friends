@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1993-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1994-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -96,6 +96,15 @@ reachability alone is insufficient because dispatch also requires a model.
 ---
 
 ## 🚀 Quickstart
+
+In an agent host, select `/afriend` to route an explicit Adversarial Friends
+request, or select `$adversarial-friends:afriend` directly. It hands review,
+status, provider configuration, and resolution requests to focused skills:
+`review`, `status`, `configure`, and `resolve`.
+
+Conversational phrases such as `afriend review` and `afriend status` are
+routing language, not executable aliases: the stable CLI commands remain
+`afriend run` and `afriend doctor`.
 
 ```bash
 afriend run docs/my-design.md --mode report
@@ -390,10 +399,12 @@ A ceiling outranks everything below it, so a CI wrapper can read `11` as
 | Where | What |
 |---|---|
 | [docs/](docs/README.md) | Documentation index |
-| [SKILL.md](src/adversarial_friends/assets/SKILL.md) | The skill itself — when it fires, how to read its output |
-| [modes.md](src/adversarial_friends/assets/references/modes.md) | `report`, `crossexam`, `gate`, `loop` — and which are real |
-| [ledger.md](src/adversarial_friends/assets/references/ledger.md) | Claim, verdict, alias, and resolution records |
-| [troubleshooting.md](src/adversarial_friends/assets/references/troubleshooting.md) | Verified CLI traps, empty reports, timeouts |
+| [/afriend router](src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | Explicit product router and review workflow |
+| [review](src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Start and interpret a review run |
+| [status](src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only provider and named-run status |
+| [configure](src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Explicit provider-default changes |
+| [resolve](src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Named-run claim resolutions |
+| [modes](src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | `report`, `crossexam`, `gate`, and `loop` |
 | [architecture/](docs/architecture/README.md) | Diagrams and their sources |
 | [design spec](docs/superpowers/specs/2026-08-22-adversarial-friends-design.md) | The full design, including the adversarial review that produced it |
 
@@ -407,17 +418,16 @@ under [`plugins/`](plugins/) for loaders that can't install a Python package:
 /plugin marketplace add /path/to/adversarial-friends/plugins
 ```
 
-Plugins package capabilities; the Adversarial Friends plugin contributes the
-underlying skill, and that skill invokes the `afriend` CLI. The CLI never runs
-automatically by itself. In Codex, implicit skill selection is deliberately
-narrow: a request must start with `afriend`, say `afriend to ...`, or
-explicitly name **Adversarial Friends**. Direct skill selection also works.
-Generic “review this,” “poke holes,” “second opinion,” and architectural
-decision requests stay ordinary Codex work.
+Plugins package capabilities; the Adversarial Friends plugin provides exactly
+five skills: `/afriend`, `review`, `status`, `configure`, and `resolve`.
+`/afriend` is the only router and short slash selector; direct qualified
+selection is `$adversarial-friends:afriend`. The CLI never runs automatically
+by itself. Generic “review this,” “poke holes,” “second opinion,” and
+architectural decision requests stay ordinary Codex work.
 
 The package must therefore be installed for the skill to work — `afriend
-doctor` is the check. Conversational forms such as `afriend docs/design.md`
-map to `afriend run docs/design.md`; they are not additional CLI syntax.
+doctor` is the check. Conversational forms route to stable commands; they are
+not executable aliases.
 
 ---
 
@@ -437,9 +447,9 @@ specific assertion locally. Use `make act-ci` for the closest local Linux run.
 
 Two gates catch drift that is otherwise silent:
 
-- **`plugin-sync`** — `src/adversarial_friends/assets/` is canonical; the
-  `plugins/` tree is a byte-identical mirror. Edit assets, then
-  `make plugin-sync-copy`.
+- **`plugin-sync`** — `src/adversarial_friends/assets/` is canonical; its
+  entrypoints project directly to plugin skills and runtime assets project
+  beneath `skills/afriend/`. Edit assets, then `make plugin-sync-copy`.
 - **`version-sync`** — `VERSION` must match the `version` field in every
   plugin manifest.
 

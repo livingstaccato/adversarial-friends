@@ -1,37 +1,43 @@
 #!/usr/bin/env bash
-# Build the wheel and confirm every bundled asset (adapters, lenses,
-# references, harnesses, SKILL.md) actually made it in. Package-data misconfiguration
-# in pyproject.toml is silent at build time -- the wheel builds and installs
-# fine, and the failure only shows up later as "adapter directory not found"
-# on first run. This makes that failure mode visible in CI instead.
+# Build a wheel and compare its bundled assets to the source-derived manifest.
 set -euo pipefail
 
-EXPECTED=16  # 5 adapters + 6 lenses + 3 references + 1 harness + SKILL.md
-EXPECTED_HARNESS='adversarial_friends/assets/harnesses/agy/afriend-reviewer.md'
+repo=$(cd "$(dirname "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
 
-# Built into a scratch directory rather than `dist/`. This used to be
-# `rm -rf dist && uv build --wheel`, which is harmless in CI and destructive
-# when a release is being cut by hand: run between `uv build` and
-# `twine upload dist/*`, it deleted the sdist, and 0.1.7 went to PyPI as a
-# wheel with no source distribution -- the only release of this project
-# missing one. A fresh build directory gets the same guarantee without
-# reaching into the one holding the artifacts about to be uploaded.
-out="$(mktemp -d)"
-trap 'rm -rf "$out"' EXIT
-uv build --wheel --out-dir "$out"
+uv build --wheel --out-dir "$scratch/dist" "$repo"
+wheel=$(find "$scratch/dist" -name '*.whl' -print -quit)
 
-listing="$(unzip -Z1 "$out"/*.whl)"
-count=$(grep -c 'adversarial_friends/assets/.*\.\(toml\|md\)$' <<<"$listing")
+python3 - "$repo" "$wheel" <<'PY'
+from __future__ import annotations
 
-if [ "$count" -ne "$EXPECTED" ]; then
-  echo "error: expected $EXPECTED bundled asset files in the wheel, found $count" >&2
-  unzip -l "$out"/*.whl | grep 'adversarial_friends/assets/' >&2 || true
-  exit 1
-fi
+from pathlib import Path
+import sys
+import zipfile
 
-if ! grep -Fxq "$EXPECTED_HARNESS" <<<"$listing"; then
-  echo "error: expected nested harness $EXPECTED_HARNESS in the wheel" >&2
-  exit 1
-fi
+repo = Path(sys.argv[1])
+wheel = Path(sys.argv[2])
+assets = repo / "src" / "adversarial_friends" / "assets"
+expected: set[str] = set()
+for directory, pattern in (("adapters", "*.toml"), ("harnesses", "*.md"), ("lenses", "*.md"), ("entrypoints", "*.md")):
+    for path in (assets / directory).rglob(pattern):
+        expected.add(str(Path("adversarial_friends/assets") / path.relative_to(assets)))
 
-echo "ok: $count bundled asset files found in the wheel"
+with zipfile.ZipFile(wheel) as archive:
+    actual = {
+        name
+        for name in archive.namelist()
+        if name.startswith("adversarial_friends/assets/") and name.endswith((".md", ".toml"))
+    }
+
+missing = sorted(expected - actual)
+unexpected = sorted(actual - expected)
+if missing or unexpected:
+    if missing:
+        print("error: wheel missing expected assets:", *missing, sep="\n  ", file=sys.stderr)
+    if unexpected:
+        print("error: wheel has unexpected assets:", *unexpected, sep="\n  ", file=sys.stderr)
+    raise SystemExit(1)
+print(f"ok: wheel contains exactly {len(expected)} source-derived assets")
+PY

@@ -19,7 +19,7 @@ MIRROR_AGENT = (
     / "plugins"
     / "adversarial-friends"
     / "skills"
-    / "adversarial-friends"
+    / "afriend"
     / "harnesses"
     / "agy"
     / "afriend-reviewer.md"

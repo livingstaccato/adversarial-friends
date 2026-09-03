@@ -1,70 +1,17 @@
 {
-  "skill_name": "adversarial-friends",
+  "skill_name": "afriend",
   "evals": [
-    {
-      "id": 1,
-      "prompt": "afriend README.md",
-      "should_trigger": true,
-      "expected_output": "Selects the skill and maps the conversational shorthand to `afriend run README.md` in the default report mode. It reads the resulting report, identifies failures or downgrades, and presents ranked findings.",
-      "files": []
-    },
-    {
-      "id": 2,
-      "prompt": "afriend to docs/README.md with crossexam",
-      "should_trigger": true,
-      "expected_output": "Selects the skill and runs `afriend run docs/README.md --mode crossexam`. In Codex, the Codex host remains advisory and the run needs two independent non-host friends for judging.",
-      "files": []
-    },
-    {
-      "id": 3,
-      "prompt": "Use Adversarial Friends on README.md.",
-      "should_trigger": true,
-      "expected_output": "Selects the named product's skill and runs `afriend run README.md` in report mode unless the user requests different mode semantics.",
-      "files": []
-    },
-    {
-      "id": 4,
-      "prompt": "$adversarial-friends:adversarial-friends src/adversarial_friends/assets/SKILL.md",
-      "should_trigger": true,
-      "expected_output": "Honors the qualified direct skill selection and runs `afriend run src/adversarial_friends/assets/SKILL.md` in report mode.",
-      "files": []
-    },
-    {
-      "id": 5,
-      "prompt": "afriend this plan",
-      "should_trigger": true,
-      "expected_output": "Uses an unambiguous current task backing file if one exists. If there is no exact backing file or complete artifact already in the request, asks for a path instead of inventing the plan.",
-      "files": [
-        "docs/README.md"
-      ]
-    },
-    {
-      "id": 6,
-      "prompt": "Review this design doc and tell me what is wrong with it.",
-      "should_trigger": false,
-      "expected_output": "Keeps this as ordinary Codex review work. It does not select Adversarial Friends or invoke the `afriend` CLI because the narrow command-like trigger is absent.",
-      "files": []
-    },
-    {
-      "id": 7,
-      "prompt": "Poke holes in this architecture before I commit to it.",
-      "should_trigger": false,
-      "expected_output": "Keeps this as ordinary Codex work and does not invoke `afriend`; generic challenge or architectural-decision language is not an activation trigger.",
-      "files": []
-    },
-    {
-      "id": 8,
-      "prompt": "Can you give me a second opinion on this review?",
-      "should_trigger": false,
-      "expected_output": "Responds as ordinary Codex work or asks for the review contents as needed. It does not select the skill solely from second-opinion language.",
-      "files": []
-    },
-    {
-      "id": 9,
-      "prompt": "Challenge this plan.",
-      "should_trigger": false,
-      "expected_output": "Keeps this as ordinary Codex work and does not invoke the Adversarial Friends plugin or the `afriend` CLI because generic challenge language is not an activation trigger.",
-      "files": []
-    }
+    {"id": 1, "prompt": "/afriend README.md", "should_trigger": true, "skill": "afriend", "requires_artifact": true, "files": ["README.md"], "expected_output": "Routes the artifact review request to the review skill and the stable `afriend run README.md` command in report mode."},
+    {"id": 2, "prompt": "afriend to docs/README.md with crossexam", "should_trigger": true, "skill": "afriend", "requires_artifact": true, "files": ["docs/README.md"], "expected_output": "Routes explicit review intent to `afriend run docs/README.md --mode crossexam`; Codex is advisory and judging needs two independent non-host friends."},
+    {"id": 3, "prompt": "Use Adversarial Friends on README.md.", "should_trigger": true, "skill": "afriend", "requires_artifact": true, "files": ["README.md"], "expected_output": "Selects the product router and uses the stable review command rather than inventing an alias."},
+    {"id": 4, "prompt": "$adversarial-friends:afriend README.md", "should_trigger": true, "skill": "afriend", "requires_artifact": true, "files": ["README.md"], "expected_output": "Honors the qualified router selector and asks for no invented artifact."},
+    {"id": 5, "prompt": "$adversarial-friends:review README.md", "should_trigger": true, "skill": "review", "requires_artifact": true, "files": ["README.md"], "expected_output": "Runs the stable `afriend run README.md` command and reports downgrades, refusals, failures, and incomplete results honestly."},
+    {"id": 6, "prompt": "$adversarial-friends:status", "should_trigger": true, "skill": "status", "requires_artifact": false, "files": [], "expected_output": "Uses read-only `afriend doctor`; it does not dispatch friends or change configuration."},
+    {"id": 7, "prompt": "$adversarial-friends:configure", "should_trigger": true, "skill": "configure", "requires_artifact": false, "files": [], "expected_output": "Shows provider defaults and requests an exact desired change before modifying persistent configuration."},
+    {"id": 8, "prompt": "$adversarial-friends:resolve", "should_trigger": true, "skill": "resolve", "requires_artifact": false, "files": [], "expected_output": "Asks for a named run, claim, user-supplied disposition, and concrete evidence instead of inventing them."},
+    {"id": 9, "prompt": "Review this design doc and tell me what is wrong with it.", "should_trigger": false, "expected_output": "Keeps this as ordinary Codex review work; the narrow Adversarial Friends trigger is absent.", "files": []},
+    {"id": 10, "prompt": "Poke holes in this architecture before I commit to it.", "should_trigger": false, "expected_output": "Keeps this as ordinary Codex work and does not invoke the plugin.", "files": []},
+    {"id": 11, "prompt": "Can you give me a second opinion on this review?", "should_trigger": false, "expected_output": "Responds as ordinary Codex work or asks for contents as needed.", "files": []},
+    {"id": 12, "prompt": "Challenge this plan.", "should_trigger": false, "expected_output": "Keeps this as ordinary Codex work; generic challenge language is not an activation trigger.", "files": []}
   ]
 }
