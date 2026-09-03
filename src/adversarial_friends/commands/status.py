@@ -266,18 +266,14 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     friends = _friends(meta, events)
     rows = friends["rows"]
     assert isinstance(rows, list)
-    if rows:
+    started_scope = started.payload.get("scope") if started is not None else None
+    if isinstance(started_scope, str) and started_scope in {"doc", "repo"}:
+        scope = started_scope
+    elif rows:
         scope = (
             "repo"
             if any(row["scope"] == "repo" for row in rows if isinstance(row, dict))
             else "doc"
-        )
-    elif started is not None:
-        started_scope = started.payload.get("scope")
-        scope = (
-            started_scope
-            if isinstance(started_scope, str) and started_scope in {"doc", "repo"}
-            else "unknown"
         )
     else:
         scope = "unknown"

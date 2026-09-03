@@ -274,6 +274,38 @@ def test_event_first_status_reports_validated_repo_scope(monkeypatch, tmp_path, 
     capsys.readouterr()
 
 
+def test_repo_started_run_keeps_its_scope_after_a_friend_event(tmp_path, capsys):
+    root = tmp_path / "runs"
+    run = root / "run-status"
+    run.mkdir(parents=True)
+    (run / "events.jsonl").write_text(
+        _event(
+            "run_started",
+            {"mode": "report", "profile": "quick", "scope": "repo", "status": "started"},
+        )
+        + "\n"
+        + _event(
+            "friend_finished",
+            {
+                "friend": "fake-repo-0",
+                "provider": "fake",
+                "lens": "configured",
+                "round": 1,
+                "duration_s": 1.0,
+                "status": "succeeded",
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["scope"] == "repo"
+    assert summary["friends"]["rows"][0]["scope"] == "unknown"
+
+
 def test_status_surfaces_safe_scope_rounds_and_finished_friend_rows(tmp_path, capsys):
     root = tmp_path / "runs"
     run = _run(root)
