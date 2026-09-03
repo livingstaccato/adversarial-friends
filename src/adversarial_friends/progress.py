@@ -41,6 +41,11 @@ DEFAULT_HEARTBEAT_S = 30.0
 # seconds after a heartbeat must not keep a thread alive for the remaining
 # twenty-eight, or the process lingers after its work is done.
 _TICK_S = 0.5
+# A roster lens is intentionally free text. Lifecycle events are not a
+# second place to persist it: an arbitrary lens could contain a credential
+# or other user content, so every dispatched friend receives this fixed,
+# descriptive label instead.
+_LIFECYCLE_LENS = "configured"
 
 
 def format_duration(seconds: float) -> str:
@@ -108,10 +113,20 @@ class Progress:
         self._emit(f"afriend: {text}")
 
     def _event(self, event_type: str, payload: dict[str, object]) -> None:
-        """Append a safe lifecycle record without affecting stderr output."""
-        if self.event_writer is None:
+        """Best-effort telemetry that cannot change review execution."""
+        writer = self.event_writer
+        if writer is None:
             return
-        self.event_writer.append(EventRecord.create(event_type, payload))
+        try:
+            writer.append(EventRecord.create(event_type, payload))
+        except Exception:
+            # Events are observational. A full disk, a malformed runtime
+            # projection, or a host-provided writer failure must not turn a
+            # successful review into a failed one. Disable this writer after
+            # its first failure rather than repeatedly perturbing dispatch.
+            with self._lock:
+                if self.event_writer is writer:
+                    self.event_writer = None
 
     def run_started(self, mode: str, profile: str) -> None:
         self._event("run_started", {"mode": mode, "profile": profile, "status": "started"})
@@ -150,12 +165,13 @@ class Progress:
         lens: str = "unknown",
         round_no: int = 1,
     ) -> None:
+        del lens
         with self._lock:
             self._in_flight[name] = _InFlight(
                 started=time.monotonic(),
                 timeout_s=timeout_s,
                 provider=provider,
-                lens=lens,
+                lens=_LIFECYCLE_LENS,
                 round_no=round_no,
             )
 

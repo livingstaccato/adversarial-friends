@@ -19,7 +19,8 @@ from e2e_helpers import AF, FAKE, _env, _git_commit, _git_repo, run_af
 import pytest
 
 from adversarial_friends import adapters, cli, dispatch
-from adversarial_friends.commands import setup as run_setup_module
+from adversarial_friends.adapters import FriendSpec
+from adversarial_friends.commands import friends as friends_module, setup as run_setup_module
 from adversarial_friends.paths import ADAPTER_DIR
 
 
@@ -108,11 +109,49 @@ def test_report_run_writes_ordered_safe_lifecycle_events(tmp_path):
     ]
     assert events[0]["payload"] == {"mode": "report", "profile": "quick", "status": "started"}
     assert events[1]["payload"]["provider"] == "fake"
-    assert events[1]["payload"]["lens"] == "good"
+    assert events[1]["payload"]["lens"] == "configured"
     assert events[-1]["payload"]["next_action"] == "inspect_report"
     serialized = (run_dir / "events.jsonl").read_text()
     assert "missing guard" not in serialized
     assert "argv" not in serialized
+
+
+def test_arbitrary_roster_lens_cannot_abort_or_leak_into_lifecycle_events(monkeypatch, tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    secret_lens = "token=super-secret"
+    monkeypatch.setattr(
+        friends_module,
+        "_specs_from_flags",
+        lambda *_args: [
+            FriendSpec(
+                name="fake-secret-0",
+                cli="fake",
+                lens=secret_lens,
+                model=None,
+                effort=None,
+                scope="doc",
+                timeout=900,
+            )
+        ],
+    )
+
+    assert (
+        cli.main(["run", str(artifact), "--out", str(tmp_path / "runs"), "--friend", "fake:good"])
+        == 0
+    )
+    run_dir = next((tmp_path / "runs").iterdir())
+    serialized = (run_dir / "events.jsonl").read_text()
+    assert secret_lens not in serialized
+    friend_event = next(
+        json.loads(line)
+        for line in serialized.splitlines()
+        if json.loads(line)["type"] == "friend_finished"
+    )
+    assert friend_event["payload"]["lens"] == "configured"
 
 
 def test_failed_friend_is_reported_not_silently_dropped(tmp_path):

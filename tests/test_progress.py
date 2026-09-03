@@ -172,5 +172,27 @@ def test_progress_writes_safe_lifecycle_events_without_touching_human_output(tmp
         ("run_finished", "completed"),
     ]
     assert events[1].payload["provider"] == "fake"
-    assert events[1].payload["lens"] == "security"
+    assert events[1].payload["lens"] == "configured"
     assert "answered with 1 claim" not in store.events_path().read_text()
+
+
+def test_lifecycle_events_redact_an_arbitrary_lens_and_are_observational(tmp_path):
+    class BrokenWriter:
+        def append(self, _event):
+            raise RuntimeError("telemetry storage failed")
+
+    store = RunStore(tmp_path / "runs", "run-progress-redaction")
+    reporter = progress.Progress(event_writer=store.events_writer())
+    reporter.friend_dispatched(
+        "fake-secret-0",
+        900,
+        provider="fake",
+        lens="token=super-secret",
+    )
+    reporter.friend_finished("fake-secret-0", "answered with 1 claim")
+    events = read_events(store.events_path(), root=store.root)
+    assert events[0].payload["lens"] == "configured"
+    assert "token=super-secret" not in store.events_path().read_text()
+
+    reporter.event_writer = BrokenWriter()  # type: ignore[assignment]
+    reporter.round_finished(1, "still completes")
