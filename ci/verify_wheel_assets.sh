@@ -6,6 +6,10 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
+# setuptools reuses build/lib across invocations but does not remove package
+# data deleted from the source tree. Start from the repository's ignored,
+# generated intermediate directory so the wheel reflects this checkout only.
+rm -rf "$repo/build"
 uv build --wheel --out-dir "$scratch/dist" "$repo"
 wheel=$(find "$scratch/dist" -name '*.whl' -print -quit)
 

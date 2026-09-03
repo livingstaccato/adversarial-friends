@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
@@ -129,3 +130,21 @@ def test_every_action_is_pinned_to_a_full_commit_sha():
 
     assert references
     assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in references)
+
+
+def test_wheel_asset_verifier_ignores_stale_intermediate_assets():
+    """A deleted asset in setuptools' build/lib must not leak into a wheel."""
+    stale_asset = ROOT / "build/lib/adversarial_friends/assets/SKILL.md"
+    stale_asset.parent.mkdir(parents=True, exist_ok=True)
+    stale_asset.write_text("stale legacy asset\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        ["bash", "ci/verify_wheel_assets.sh"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not stale_asset.exists()
