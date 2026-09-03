@@ -13,11 +13,14 @@ is one someone edited by hand.
 """
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 
 from .. import providerconfig, reviewprofiles, sessionconfig
 from ..adapters import Adapter, load_adapters
@@ -60,6 +63,14 @@ def _roster_target(args: argparse.Namespace) -> Path:
 def _write_roster(args: argparse.Namespace, *, target: Path | None = None) -> tuple[Path, int]:
     """Write the normal discovered roster without choosing a user-facing stream."""
     target = _roster_target(args) if target is None else target
+    contents, count = _render_roster(args)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(contents, encoding="utf-8")
+    return target, count
+
+
+def _render_roster(args: argparse.Namespace) -> tuple[str, int]:
+    """Perform normal discovery and return a roster before anything is written."""
 
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
@@ -130,9 +141,48 @@ def _write_roster(args: argparse.Namespace, *, target: Path | None = None) -> tu
             "independent friends; with one, a run is a single opinion."
         )
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render(entries, notes), encoding="utf-8")
-    return target, len(entries)
+    return render(entries, notes), len(entries)
+
+
+@contextmanager
+def _staged_roster(target: Path, contents: str) -> Iterator[Path]:
+    """Durably stage a roster beside its target without making it visible yet."""
+    temporary: Path | None = None
+    descriptor: int | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+        yield temporary
+    except OSError as exc:
+        raise UsageError(f"{target}: cannot stage roster: {exc}") from exc
+    finally:
+        if descriptor is not None:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        if descriptor is not None:
+            with suppress(OSError):
+                os.close(descriptor)
 
 
 def _cmd_guided_init(args: argparse.Namespace) -> int:
@@ -189,23 +239,40 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
         files_before[target] = target.exists()
 
     if applying:
-        # Parse every configuration document needed by this transaction before
-        # changing either file. A malformed pre-existing config is therefore
-        # a safe refusal, never a reason to apply only the earlier half.
-        if default_profile is not None:
-            sessionconfig.load(reviewprofiles.names())
-        if provider_changes:
-            providerconfig.load(known)
-        if default_profile is not None:
-            sessionconfig.set_default(default_profile, known=reviewprofiles.names())
-        for name in sorted(enabled):
-            providerconfig.set_enabled(name, True, known=known)
-        for name in sorted(disabled):
-            providerconfig.set_enabled(name, False, known=known)
-        if ollama_model is not None:
-            providerconfig.set_model("ollama", ollama_model, known=known)
+        # Discovery happens first: an empty or otherwise invalid roster is a
+        # refusal before any preference document can be changed.
+        roster_contents, _ = _render_roster(args)
         assert target is not None
-        _write_roster(args, target=target)
+        with _staged_roster(target, roster_contents) as staged:
+            # Parse every configuration document needed by this transaction
+            # before changing either file. A malformed pre-existing config is
+            # therefore a safe refusal, never a reason to apply only the
+            # earlier half.
+            if default_profile is not None:
+                sessionconfig.load(reviewprofiles.names())
+            if provider_changes:
+                providerconfig.load(known)
+            if default_profile is not None:
+                sessionconfig.set_default(default_profile, known=reviewprofiles.names())
+            for name in sorted(enabled):
+                providerconfig.set_enabled(name, True, known=known)
+            for name in sorted(disabled):
+                providerconfig.set_enabled(name, False, known=known)
+            if ollama_model is not None:
+                providerconfig.set_model("ollama", ollama_model, known=known)
+
+            # The roster is staged before any setter runs, so discovery or
+            # staging failure cannot persist setup. The two existing config
+            # APIs atomically replace their individual files, but cannot make
+            # a cross-file transaction with this final rename: an OS failure
+            # during a later config write or this rename may leave already
+            # committed selected settings without a new roster. We do not
+            # roll back by overwriting a concurrent user edit.
+            try:
+                staged.replace(target)
+                _fsync_directory(target.parent)
+            except OSError as exc:
+                raise UsageError(f"{target}: cannot finalize roster: {exc}") from exc
 
     policy = providerconfig.load(known)
     profiles = [
@@ -233,7 +300,7 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
         payload["created_files"] = sorted(created)
         payload["changed_files"] = sorted(changed)
     if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, sort_keys=True), file=sys.stderr)
+        print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
 
     phase = "applied" if payload["apply"] else "preview"

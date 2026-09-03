@@ -7,7 +7,7 @@ import pytest
 from adversarial_friends import providerconfig, readiness, reviewprofiles, sessionconfig
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands import init as init_module
-from adversarial_friends.errors import UsageError
+from adversarial_friends.errors import NoFriendsError, UsageError
 from adversarial_friends.paths import ADAPTER_DIR
 
 
@@ -71,8 +71,8 @@ def test_guided_preview_json_is_machine_readable_and_never_writes(tmp_path, monk
     )
 
     captured = capsys.readouterr()
-    assert captured.out == ""
-    payload = json.loads(captured.err)
+    assert captured.err == ""
+    payload = json.loads(captured.out)
     assert payload["schema_version"] == 1
     assert payload["guided"] is True
     assert payload["apply"] is False
@@ -171,6 +171,23 @@ def test_guided_apply_refuses_an_existing_roster_before_config_writes(tmp_path, 
     assert target.read_text(encoding="utf-8") == "# do not replace\n"
     assert not sessionconfig.config_path().exists()
     assert not providerconfig.config_path().exists()
+
+
+def test_guided_apply_does_not_persist_settings_when_no_roster_can_be_generated(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    target = tmp_path / "roster.toml"
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: {})
+
+    with pytest.raises(NoFriendsError):
+        init_module.cmd_init(
+            _args("--apply", "--default-profile", "balanced", "--out", str(target))
+        )
+
+    assert not sessionconfig.config_path().exists()
+    assert not providerconfig.config_path().exists()
+    assert not target.exists()
 
 
 def test_guided_apply_force_replaces_the_existing_roster(tmp_path, monkeypatch):
