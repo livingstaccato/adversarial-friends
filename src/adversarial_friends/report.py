@@ -436,7 +436,9 @@ def render(
     verdicts = review.verdicts
     lines: list[str] = [f"# Adversarial review — {_artifact_label(run_meta['artifact'])}", ""]
     lines.append(
-        f"Mode: {_code_span(str(run_meta['mode']))} · preset: {_code_span(str(run_meta['preset']))}"
+        f"Mode: {_code_span(str(run_meta['mode']))} · "
+        f"profile: {_code_span(str(run_meta.get('profile', 'legacy-unknown')))} · "
+        f"preset: {_code_span(str(run_meta['preset']))}"
     )
     lines.append("")
     lifecycle_state = run_meta.get("lifecycle_state")

@@ -237,6 +237,26 @@ def test_legacy_host_roles_are_restored_from_frozen_host_and_audit_rows_follow(t
     assert "False" in rendered_host
 
 
+def test_legacy_resume_leaves_profile_absent_without_reading_session_default(tmp_path, monkeypatch):
+    from adversarial_friends.cliargs import build_parser
+    from adversarial_friends.commands import runmeta
+
+    run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=True))
+
+    direct = runmeta._restore_args(_resume_args(run_dir))
+    assert direct.profile is None
+
+    def session_default_must_not_be_read():
+        raise AssertionError("a resume must not read the current session profile default")
+
+    monkeypatch.setattr(runmeta, "load_session_config", session_default_must_not_be_read)
+    parsed = build_parser().parse_args(["run", "--resume", str(run_dir)])
+    restored, _ = runmeta.validate_run_args(parsed)
+
+    assert restored.profile is None
+    assert restored.mode == "report"
+
+
 @pytest.mark.parametrize("mode", ["crossexam", "gate", "loop"])
 def test_legacy_frozen_host_cannot_satisfy_judging_admission(monkeypatch, tmp_path, mode):
     from adversarial_friends.commands import friends as friends_module
