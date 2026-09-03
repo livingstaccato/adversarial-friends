@@ -90,9 +90,7 @@ def test_focused_skills_hold_their_operational_boundaries():
 
 def test_focused_skills_route_the_new_user_workflows_to_stable_cli_commands():
     status = " ".join((ENTRYPOINTS / "status" / "SKILL.md").read_text().lower().split())
-    configure = " ".join(
-        (ENTRYPOINTS / "configure" / "SKILL.md").read_text().lower().split()
-    )
+    configure = " ".join((ENTRYPOINTS / "configure" / "SKILL.md").read_text().lower().split())
     resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
 
     assert "afriend status <run-id-or-path>" in status
