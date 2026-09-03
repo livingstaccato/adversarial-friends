@@ -8,7 +8,7 @@ import pytest
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands.resolve import cmd_resolve
 from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim, Ledger, Resolution
+from adversarial_friends.ledger import MAX_LEDGER_LINE_BYTES, Claim, Ledger, Resolution
 
 
 def _claim(claim_id: str, severity: str, *, location: str = "src/app.py:12") -> Claim:
@@ -177,4 +177,19 @@ def test_resolve_discovery_does_not_change_run_directory_permissions(tmp_path, c
     assert cmd_resolve(_args(run, list_claims=True)) == 0
 
     assert "c-0001@1" in capsys.readouterr().out
+    assert run.stat().st_mode == before_mode
+
+
+def test_resolve_discovery_rejects_an_oversized_ledger_record_without_mutating(tmp_path):
+    claim = _claim("c-0001@1", "high")
+    run, _ledger = _run(tmp_path, [claim], states={claim.id: "settled-upheld"})
+    oversized = b"x" * (MAX_LEDGER_LINE_BYTES + 1) + b"\n"
+    (run / "claims.jsonl").write_bytes(oversized)
+    run.chmod(0o755)
+    before_mode = run.stat().st_mode
+
+    with pytest.raises(UsageError, match="line 1 exceeds"):
+        cmd_resolve(_args(run, list_claims=True))
+
+    assert (run / "claims.jsonl").read_bytes() == oversized
     assert run.stat().st_mode == before_mode

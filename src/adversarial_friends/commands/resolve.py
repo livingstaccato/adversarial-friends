@@ -27,7 +27,15 @@ from typing import Any
 from ..errors import UsageError
 from ..ids import parse_claim_id
 from ..jsonio import load_json_object
-from ..ledger import MAX_LEDGER_BYTES, Claim, Ledger, Record, Resolution, record_from_dict
+from ..ledger import (
+    MAX_LEDGER_BYTES,
+    Claim,
+    Ledger,
+    Record,
+    Resolution,
+    _bounded_lines,
+    record_from_dict,
+)
 from ..outcomes import json_node_count
 from ..resolutions import (
     UNVERIFIABLE,
@@ -38,7 +46,7 @@ from ..resolutions import (
 )
 from ..reviewstate import ReviewState
 from ..runstore import default_root
-from ..secureio import secure_read_bytes
+from ..secureio import secure_open_read
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _EVIDENCE_REQUIREMENT = "--disposition fixed|rejected|accepted-risk --evidence PATH[:LINE]"
@@ -101,33 +109,40 @@ def _unresolved_claims(review: ReviewState, meta: dict[str, Any]) -> list[Claim]
 
 
 def _read_discovery_records(path: Path, *, run_dir: Path) -> list[Record]:
-    """Read the ledger without writer initialization or permission changes."""
+    """Read the ledger with Ledger's bounds but without writer initialization."""
     try:
-        payload = secure_read_bytes(path, root=run_dir, max_bytes=MAX_LEDGER_BYTES)
+        descriptor = secure_open_read(path, root=run_dir)
     except FileNotFoundError:
         return []
     except OSError as exc:
         raise UsageError(f"cannot read ledger {path}: {exc}") from exc
-    records: list[Record] = []
-    for line_no, raw in enumerate(payload.splitlines(), start=1):
-        if not raw.strip():
-            continue
-        try:
-            decoded = raw.decode("utf-8")
-            parsed = json.loads(decoded)
-            json_node_count(parsed, f"ledger record {line_no}")
-            records.append(record_from_dict(parsed))
-        except (
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            RecursionError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise UsageError(f"{path}:{line_no}: invalid ledger record: {exc}") from exc
-        except UsageError as exc:
-            raise UsageError(f"{path}:{line_no}: {exc}") from exc
-    return records
+    try:
+        if os.fstat(descriptor).st_size > MAX_LEDGER_BYTES:
+            raise UsageError(f"ledger {path} file exceeds the {MAX_LEDGER_BYTES}-byte limit")
+        records: list[Record] = []
+        for line_no, raw in enumerate(_bounded_lines(descriptor, path), start=1):
+            if not raw.strip():
+                continue
+            try:
+                decoded = raw.decode("utf-8")
+                parsed = json.loads(decoded)
+                json_node_count(parsed, f"ledger record {line_no}")
+                records.append(record_from_dict(parsed))
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                RecursionError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                raise UsageError(f"{path}:{line_no}: invalid ledger record: {exc}") from exc
+            except UsageError as exc:
+                raise UsageError(f"{path}:{line_no}: {exc}") from exc
+        return records
+    except OSError as exc:
+        raise UsageError(f"cannot read ledger {path}: {exc}") from exc
+    finally:
+        os.close(descriptor)
 
 
 def _location(claim: Claim) -> str:
