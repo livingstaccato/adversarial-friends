@@ -13,12 +13,13 @@ is one someone edited by hand.
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
 import sys
 
-from .. import providerconfig
+from .. import providerconfig, reviewprofiles, sessionconfig
 from ..adapters import load_adapters
 from ..authority import AuthorityPolicy
 from ..errors import NoFriendsError, UsageError
@@ -29,6 +30,11 @@ from ..rosterfile import default_roster_path, render
 
 
 def cmd_init(args: argparse.Namespace) -> int:
+    if getattr(args, "apply", False) and not getattr(args, "guided", False):
+        raise UsageError("--apply requires --guided")
+    if getattr(args, "guided", False):
+        return _cmd_guided_init(args)
+
     target = Path(args.out) if args.out else default_roster_path()
     if target.exists() and not args.force:
         raise UsageError(
@@ -113,4 +119,90 @@ def cmd_init(args: argparse.Namespace) -> int:
         f"run `afriend run <artifact>` -- it is picked up automatically.",
         file=sys.stderr,
     )
+    return 0
+
+
+def _cmd_guided_init(args: argparse.Namespace) -> int:
+    """Preview or persist only explicitly selected, local setup defaults."""
+    registry = load_adapters(ADAPTER_DIR)
+    known = set(registry)
+    default_profile = getattr(args, "default_profile", None)
+    enabled = set(getattr(args, "enable_provider", []))
+    disabled = set(getattr(args, "disable_provider", []))
+    ollama_model = getattr(args, "ollama_model", None)
+
+    if default_profile is not None and reviewprofiles.get(default_profile) is None:
+        raise UsageError(
+            f"default profile must be one of {list(reviewprofiles.names())}; got {default_profile!r}"
+        )
+    for name in sorted(enabled | disabled):
+        if name not in known:
+            raise UsageError(f"provider must be one of {sorted(known)}; got {name!r}")
+    conflict = enabled & disabled
+    if conflict:
+        raise UsageError(f"provider cannot be both enable and disable: {sorted(conflict)}")
+    if ollama_model is not None:
+        if "ollama" not in enabled:
+            raise UsageError("--ollama-model requires --enable-provider ollama")
+        # Validate before any configuration write, using the provider config's
+        # established model contract rather than accepting a guided-only form.
+        providerconfig._validate_model(
+            providerconfig.config_path(), "providers.ollama.model", ollama_model
+        )
+
+    provider_changes: dict[str, dict[str, object]] = {}
+    for name in sorted(enabled):
+        provider_changes[name] = {"enabled": True}
+    for name in sorted(disabled):
+        provider_changes[name] = {"enabled": False}
+    if ollama_model is not None:
+        provider_changes["ollama"]["model"] = ollama_model
+    changes: dict[str, object] = {}
+    if default_profile is not None:
+        changes["session"] = {"default_profile": default_profile}
+    if provider_changes:
+        changes["providers"] = provider_changes
+
+    if getattr(args, "apply", False):
+        # Parse every configuration document needed by this transaction before
+        # changing either file. A malformed pre-existing config is therefore
+        # a safe refusal, never a reason to apply only the earlier half.
+        if default_profile is not None:
+            sessionconfig.load(reviewprofiles.names())
+        if provider_changes:
+            providerconfig.load(known)
+        if default_profile is not None:
+            sessionconfig.set_default(default_profile, known=reviewprofiles.names())
+        for name in sorted(enabled):
+            providerconfig.set_enabled(name, True, known=known)
+        for name in sorted(disabled):
+            providerconfig.set_enabled(name, False, known=known)
+        if ollama_model is not None:
+            providerconfig.set_model("ollama", ollama_model, known=known)
+
+    payload = {
+        "guided": True,
+        "apply": bool(getattr(args, "apply", False)),
+        "changes": changes,
+        "external_tools": "denied",
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    phase = "applied" if payload["apply"] else "preview"
+    print(f"guided setup {phase}:")
+    if default_profile is not None:
+        print(f"  default profile: {default_profile}")
+    for name in sorted(enabled):
+        print(f"  enable provider: {name}")
+    for name in sorted(disabled):
+        print(f"  disable provider: {name}")
+    if ollama_model is not None:
+        print(f"  Ollama model: {ollama_model}")
+    if not changes:
+        print("  no configuration changes selected")
+    print("  external tools remain denied; no external tools were enabled or used")
+    if not payload["apply"]:
+        print("  no files were written; rerun with --apply to persist these changes")
     return 0

@@ -223,6 +223,47 @@ def build_parser() -> argparse.ArgumentParser:
     init_p = sub.add_parser("init")
     init_p.add_argument("--force", action="store_true", help="overwrite an existing roster")
     init_p.add_argument("--out", default=None, help="write somewhere other than the default")
+    init_p.add_argument(
+        "--guided",
+        action="store_true",
+        help="preview a no-prompt setup change; use --apply to persist it",
+    )
+    init_p.add_argument(
+        "--apply",
+        action="store_true",
+        help="apply the explicitly selected guided setup changes",
+    )
+    init_p.add_argument(
+        "--default-profile",
+        default=None,
+        metavar="NAME",
+        help="set the default built-in review profile in guided setup",
+    )
+    init_p.add_argument(
+        "--enable-provider",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="enable a provider in guided setup (repeatable)",
+    )
+    init_p.add_argument(
+        "--disable-provider",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="disable a provider in guided setup (repeatable)",
+    )
+    init_p.add_argument(
+        "--ollama-model",
+        default=None,
+        metavar="MODEL",
+        help="set Ollama's model in guided setup; requires --enable-provider ollama",
+    )
+    init_p.add_argument(
+        "--json",
+        action="store_true",
+        help="print a guided setup preview as JSON",
+    )
 
     doctor_p = sub.add_parser("doctor")
     doctor_p.add_argument("--json", action="store_true", help="machine-readable output")
