@@ -10,9 +10,8 @@ provider roster, and resolving an existing run.  The interface is concise at
 selection time, loads only task-relevant guidance, and remains accurate about
 the existing `afriend` command-line contract.
 
-The package continues to expose its original `adversarial-friends` skill as a
-compatibility router.  Existing command-like requests therefore continue to
-work while users can select a narrowly scoped skill directly.
+`/afriend` is the sole router. It serves command-like requests and directs
+explicit product-name requests to the same focused operation surface.
 
 ## Public skill surface
 
@@ -21,14 +20,14 @@ The plugin provides these selectable skills under the
 
 | Skill | Job | Activation boundary |
 | --- | --- | --- |
-| `adversarial-friends` | Route explicit Adversarial Friends requests to the appropriate job. | Requests beginning with `afriend`, requests that name Adversarial Friends, or direct selection. |
+| `afriend` | Router and `/afriend` slash entry point. | Direct selection, command-like `afriend` requests, an explicit “a friend” request, or a request that names Adversarial Friends. |
 | `review` | Start and interpret a review run. | Direct selection, or review-oriented `afriend` routing. Generic review language does not activate it. |
 | `status` | Diagnose provider readiness and an optional existing run. | Direct selection or an explicit `afriend status` request. |
 | `configure` | Inspect and intentionally change persistent provider defaults. | Direct selection or an explicit `afriend configure` request. |
 | `resolve` | Inspect and resolve claims in an existing run. | Direct selection or explicit `afriend resolve` or `afriend resume` routing. |
 
 The router recognizes conversational operation words, not new executable
-subcommands.  It maps them to the established command surface:
+subcommands. It maps them to the established command surface:
 
 | Conversational operation | Command invoked |
 | --- | --- |
@@ -39,52 +38,55 @@ subcommands.  It maps them to the established command surface:
 
 There are no new `afriend status`, `afriend review`, or similar CLI aliases.
 
-## Skill layout and shared guidance
+## Skill layout and packaged payload
 
-The canonical package data keeps runtime adapter, lens, and harness files at
-the asset root.  Selectable skills and their shared operator references are
-under `assets/skills/`:
+The canonical package data keeps runtime adapter, harness, and lens files at
+the asset root. Every selectable skill lives below `entrypoints/`; the router
+keeps its detailed operator references in its own folder, and focused skills
+are self-contained so a plugin loader can load one without depending on
+sibling-directory traversal:
 
 ```text
 src/adversarial_friends/assets/
   adapters/
   harnesses/
   lenses/
-  skills/
-    adversarial-friends/SKILL.md
+  entrypoints/
+    afriend/SKILL.md
+    afriend/references/
     review/SKILL.md
     status/SKILL.md
     configure/SKILL.md
     resolve/SKILL.md
-    _shared/
-      review-operations.md
-      provider-policy.md
-      result-interpretation.md
-      troubleshooting.md
 ```
 
-`_shared` is reference material and has no `SKILL.md`; it is not selectable.
-Each selectable skill links only to the references that affect its decision.
-This maintains one authoritative explanation of provider policy, mode
-semantics, result interpretation, and troubleshooting without loading all of
-it for every task.
+The router links to its co-located detailed references when an operation
+needs them. Focused skills state the safety rules required for their own
+operation rather than relying on a sibling reference directory.
 
-The plugin mirror has the same skill tree directly below its `skills/`
-directory, so every directory that contains `SKILL.md` is discoverable by the
-plugin loader:
+The plugin mirrors the runtime payload into the router directory, so
+`/afriend` includes the controlled Antigravity harness, adapters, lenses, and
+operator references. The focused entrypoints are copied directly below
+`skills/`, where the plugin loader discovers slash commands:
 
 ```text
 plugins/adversarial-friends/skills/
-  adversarial-friends/
+  afriend/
+    SKILL.md
+    adapters/
+    harnesses/
+    lenses/
+    references/
   review/
   status/
   configure/
   resolve/
-  _shared/
 ```
 
-The sync checker and copy target compare/copy this tree.  Wheel package-data
-includes all skill and shared-reference files.
+The sync checker verifies this composite projection: root runtime assets map
+to `skills/afriend/`; router references and all `assets/entrypoints/` skills
+map to their direct skill folders. Wheel package-data includes every runtime
+asset and every entrypoint skill.
 
 ## Operational behavior
 
@@ -128,15 +130,15 @@ The implementation proves:
 
 1. Each skill has valid, discriminating metadata and a narrow activation
    boundary.
-2. The router preserves established `afriend` and direct-selector behavior,
-   and hands explicit operations to the correct focused skill.
+2. `/afriend` handles command-like and explicit product-name requests and
+   hands explicit operations to the correct focused skill.
 3. Generic review, challenge, second-opinion, and architecture language does
    not invoke Adversarial Friends without an explicit trigger.
-4. Every focused skill references available shared guidance and maps to an
-   existing CLI command without inventing aliases.
-5. The canonical skill tree and plugin mirror are identical, including
-   deletions.
-6. Built wheels contain all selectable skills and shared references.
+4. Every focused skill is self-contained and maps to an existing CLI command
+   without inventing aliases.
+5. The plugin mirror preserves every runtime asset and its direct entrypoint
+   projection, including deletions.
+6. Built wheels contain all runtime assets and selectable skills.
 7. Public documentation and rendered diagrams describe only the current
    multi-skill interface and remain internally consistent with the code.
 
