@@ -12,7 +12,7 @@ import pytest
 from adversarial_friends import cli
 from adversarial_friends.commands import status
 from adversarial_friends.errors import UsageError
-from adversarial_friends.events import EventRecord, EventWriter
+from adversarial_friends.events import MAX_EVENT_LOG_BYTES, EventRecord, EventWriter
 from adversarial_friends.progress import Progress
 
 
@@ -109,6 +109,81 @@ def test_status_json_is_versioned_and_uses_legacy_artifacts_when_events_are_abse
     assert payload["profile"] == "quick"
     assert payload["claims"] == {"by_status": {"pending": 1}, "total": 1}
     assert payload["downgrades"] == ["doc scope only"]
+
+
+def test_status_projects_safe_legacy_friend_metadata_without_events(tmp_path, capsys):
+    root = tmp_path / "runs"
+    run = _run(root, events=False)
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    meta["roster"] = [
+        {
+            "name": "fake-doc-0",
+            "cli": "fake",
+            "lens": "security",
+            "scope": "doc",
+            "model": None,
+            "effort": None,
+            "timeout": 1,
+        },
+        {
+            "name": "fake-repo-0",
+            "cli": "fake",
+            "lens": "ops",
+            "scope": "repo",
+            "model": None,
+            "effort": None,
+            "timeout": 1,
+        },
+    ]
+    meta["friends"] = [
+        {"name": "fake-doc-0", "round": 1, "status": "ok"},
+        {"name": "fake-repo-0", "round": 2, "status": "failed: timed out"},
+    ]
+    (run / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["friends"]["rows"] == [
+        {
+            "name": "fake-doc-0",
+            "provider": "fake",
+            "scope": "doc",
+            "round": 1,
+            "status": "succeeded",
+        },
+        {
+            "name": "fake-repo-0",
+            "provider": "fake",
+            "scope": "repo",
+            "round": 2,
+            "status": "failed",
+        },
+    ]
+    assert summary["friends"]["finished"] == 2
+    assert summary["friends"]["failed"] == 1
+
+
+def test_status_rejects_an_empty_directory(tmp_path):
+    root = tmp_path / "runs"
+    (root / "run-status").mkdir(parents=True)
+
+    with pytest.raises(UsageError, match="not a run directory"):
+        status.cmd_status(_args("run-status", out=root))
+
+
+@pytest.mark.parametrize("kind", ["directory", "oversized"])
+def test_status_wraps_unreadable_event_artifacts_as_usage_errors(tmp_path, kind):
+    root = tmp_path / "runs"
+    run = _run(root, events=False)
+    events_path = run / "events.jsonl"
+    if kind == "directory":
+        events_path.mkdir()
+    else:
+        events_path.write_bytes(b"x" * (MAX_EVENT_LOG_BYTES + 1))
+
+    with pytest.raises(UsageError, match="cannot read lifecycle events"):
+        status.cmd_status(_args("run-status", out=root))
 
 
 def test_status_rejects_path_outside_the_selected_run_root(tmp_path):

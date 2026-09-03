@@ -78,14 +78,22 @@ def _read_json(path: Path, *, root: Path, label: str) -> dict[str, Any]:
     return decode_json_object(payload, path=path, label=label)
 
 
-def _read_optional_json(path: Path, *, root: Path, label: str) -> dict[str, Any]:
+def _read_optional_json(path: Path, *, root: Path, label: str) -> tuple[dict[str, Any], bool]:
     """A run can expose events before its initial metadata checkpoint."""
     try:
-        return _read_json(path, root=root, label=label)
+        return _read_json(path, root=root, label=label), True
     except UsageError as exc:
         if isinstance(exc.__cause__, FileNotFoundError):
-            return {}
+            return {}, False
         raise
+
+
+def _read_events(path: Path, *, root: Path) -> list[EventRecord]:
+    """Keep unreadable telemetry in the command's normal error boundary."""
+    try:
+        return read_events(path, root=root)
+    except OSError as exc:
+        raise UsageError(f"cannot read lifecycle events {path}: {exc}") from exc
 
 
 def _read_ledger(path: Path, *, root: Path) -> list[Claim | Resolution]:
@@ -158,8 +166,66 @@ def _roster_rows(meta: dict[str, Any]) -> dict[str, dict[str, object]]:
     return rows
 
 
+def _metadata_status(value: object) -> str:
+    """Map diagnostic-bearing legacy statuses to a small safe vocabulary."""
+    if not isinstance(value, str):
+        return "pending"
+    normalized = value.lower()
+    if (
+        normalized == "ok"
+        or normalized.startswith("ok ")
+        or normalized in {"succeeded", "completed"}
+    ):
+        return "succeeded"
+    if normalized == "failed" or normalized.startswith("failed:"):
+        return "failed"
+    if normalized == "skipped" or normalized.startswith("skipped:"):
+        return "skipped"
+    return "pending"
+
+
+def _metadata_rows(meta: dict[str, Any], rows: dict[str, dict[str, object]]) -> None:
+    """Overlay validated historical friend rows without exposing diagnostics."""
+    saved = meta.get("friends")
+    if not isinstance(saved, list):
+        return
+    for entry in saved:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        round_no = entry.get("round")
+        if (
+            not isinstance(name, str)
+            or FRIEND_NAME_RE.fullmatch(name) is None
+            or type(round_no) is not int
+            or round_no < 1
+        ):
+            continue
+        prior = rows.get(name)
+        scope = entry.get("scope")
+        if scope not in {"doc", "repo"}:
+            scope = prior["scope"] if prior is not None else "unknown"
+        provider = entry.get("provider", entry.get("cli"))
+        if not isinstance(provider, str) or FRIEND_NAME_RE.fullmatch(provider) is None:
+            provider = prior["provider"] if prior is not None else "unknown"
+        status = _metadata_status(entry.get("status"))
+        if prior is not None:
+            prior_round = prior["round"]
+            assert isinstance(prior_round, int)
+            if round_no < prior_round:
+                continue
+        rows[name] = {
+            "name": name,
+            "provider": provider,
+            "scope": scope,
+            "round": round_no,
+            "status": status,
+        }
+
+
 def _friends(meta: dict[str, Any], events: Iterable[EventRecord]) -> dict[str, object]:
     rows = _roster_rows(meta)
+    _metadata_rows(meta, rows)
     for event in events:
         if event.type not in {"friend_finished", "friend_failed"}:
             continue
@@ -250,8 +316,12 @@ def _next_action(
 
 def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     """Reconstruct a stable status schema entirely from existing artifacts."""
-    meta = _read_optional_json(run_dir / "run.json", root=root, label="saved run metadata")
-    events = read_events(run_dir / "events.jsonl", root=root)
+    meta, has_metadata = _read_optional_json(
+        run_dir / "run.json", root=root, label="saved run metadata"
+    )
+    events = _read_events(run_dir / "events.jsonl", root=root)
+    if not has_metadata and not events:
+        raise UsageError(f"{run_dir} is not a run directory: no run.json or valid lifecycle events")
     claims = _claim_counts(_read_ledger(run_dir / "claims.jsonl", root=root))
     started = next((event for event in events if event.type == "run_started"), None)
     mode = meta.get("mode") if isinstance(meta.get("mode"), str) else None
@@ -270,11 +340,8 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     if isinstance(started_scope, str) and started_scope in {"doc", "repo"}:
         scope = started_scope
     elif rows:
-        scope = (
-            "repo"
-            if any(row["scope"] == "repo" for row in rows if isinstance(row, dict))
-            else "doc"
-        )
+        scopes = {row.get("scope") for row in rows if isinstance(row, dict)}
+        scope = "repo" if "repo" in scopes else "doc" if "doc" in scopes else "unknown"
     else:
         scope = "unknown"
     return {
@@ -316,7 +383,7 @@ def watch_events(
     source = iter(snapshots) if snapshots is not None else None
     while True:
         if source is None:
-            events = read_events(path, root=root)
+            events = _read_events(path, root=root)
         else:
             try:
                 snapshot = next(source)
