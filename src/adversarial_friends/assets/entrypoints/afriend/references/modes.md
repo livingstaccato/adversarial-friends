@@ -378,6 +378,7 @@ this authority, and these grants do not change provider defaults.
 | `--require-friends N` | Fail the run (exit 12) if fewer than `N` friends answered; opt-in, unset by default |
 | `--keep` | Leave friend worktrees under the run directory to inspect |
 | `--json` | Print run.json instead of the run directory path |
+| `--failure-summary terminal`, `--failure-summary report-only` | For a zero-response review, `terminal` (the default) prints the incomplete summary to stderr; `report-only` keeps it in run metadata, `report.md`, and status only |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
 | `--include-self`, `--exclude-self` | Mutually exclusive overrides for host participation; host review remains advisory and non-independent |
 | `--enable-provider NAME`, `--disable-provider NAME` | Override persistent provider policy for this automatic roster only |

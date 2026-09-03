@@ -10,7 +10,7 @@ import pytest
 
 from adversarial_friends.ceilings import Budget
 from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands import run as run_command, runmeta
+from adversarial_friends.commands import run as run_command, runmeta, status
 from adversarial_friends.commands.critique import CritiqueOutcome
 from adversarial_friends.commands.crossexam import CrossexamOutcome
 from adversarial_friends.commands.resume import ResumedRun, ResumedStep
@@ -261,6 +261,67 @@ def test_terminal_duration_uses_monotonic_time_when_utc_moves_backward(monkeypat
     meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert meta["finished_at"] < meta["started_at"]
     assert meta["duration_s"] >= 0
+
+
+def test_zero_response_completeness_does_not_mask_a_terminal_ceiling(tmp_path, capsys):
+    store = RunStore(tmp_path, "run-completeness-ceiling")
+    budget = Budget(max_calls=2, max_rounds=1, max_wall_clock_s=60)
+    budget.exhaust("max-wall-clock")
+
+    assert (
+        runmeta.finish_run(
+            argparse.Namespace(
+                mode="report", require_friends=None, json=False, failure_summary="terminal"
+            ),
+            store,
+            {
+                "artifact": "spec.md",
+                "mode": "report",
+                "preset": "inherit",
+                "friends": [
+                    {
+                        "name": "fake-security-0",
+                        "independent": True,
+                        "host_self_review": False,
+                        "model": None,
+                        "effort": None,
+                        "round": 1,
+                        "status": "failed: DNS temporary failure",
+                    }
+                ],
+                "downgrades": [],
+                "started_at": "2026-08-31T00:00:00Z",
+            },
+            None,
+            None,
+            False,
+            0,
+            [],
+            1,
+            0,
+            [],
+            budget,
+            1,
+            RepeatTracker(),
+            False,
+            False,
+            60.0,
+        )
+        == 11
+    )
+
+    stderr = capsys.readouterr().err
+    assert "max-wall-clock" in stderr
+    assert "review incomplete" not in stderr
+    meta = json.loads((store.run_dir / "run.json").read_text(encoding="utf-8"))
+    assert meta["review_completeness"]["state"] == "incomplete"
+    assert meta["review_completeness"]["message"] in (store.run_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        status.summarize(store.run_dir, root=store.run_dir.parent)["review_completeness"]
+        == meta["review_completeness"]
+    )
 
 
 def test_non_utf8_artifact_is_refused_before_run_directory_creation(monkeypatch, tmp_path):

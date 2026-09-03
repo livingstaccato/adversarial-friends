@@ -759,6 +759,7 @@ def finish_run(
         )
     elif (
         detail is None
+        and outcome.ceiling_hit is None
         and getattr(args, "failure_summary", "terminal") == "terminal"
         and review_completeness is not None
     ):

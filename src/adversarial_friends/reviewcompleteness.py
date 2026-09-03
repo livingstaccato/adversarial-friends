@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 
-from .dispatch import failure_summary
+from .dispatch import failure_summary, sanitize_display
 from .ids import FRIEND_NAME_RE
 
 _MAX_REASONS = 3
@@ -24,6 +24,7 @@ def _terminal_status(value: object) -> tuple[bool, str | None] | None:
             reason = value[len(prefix) :]
             reason = reason.removesuffix(" [orphans suspected]")
             reason = reason.split(" (stderr: ", 1)[0]
+            reason = sanitize_display(reason)
             return False, failure_summary(reason) or prefix.removesuffix(": ")
     return None
 

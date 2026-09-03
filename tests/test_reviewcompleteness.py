@@ -57,3 +57,19 @@ def test_failure_reasons_are_normalized_sorted_and_bounded():
         "gamma: fourth",
     ]
     assert "zeta: last" not in summary["message"]
+
+
+def test_failure_reasons_strip_bidirectional_controls():
+    summary = from_friends(
+        [
+            {
+                "name": "codex-security",
+                "independent": True,
+                "status": "failed: safe\u202eflip",
+            }
+        ]
+    )
+
+    assert summary is not None
+    assert summary["reasons"] == ["codex-security: safeflip"]
+    assert "\u202e" not in summary["message"]

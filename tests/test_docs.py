@@ -32,6 +32,13 @@ def test_scope_selection_docs_explain_artifact_location_and_snapshot_rules():
     assert "ignored" in troubleshooting
 
 
+def test_modes_docs_explain_zero_response_failure_summary_output():
+    modes = (AFRIEND / "references" / "modes.md").read_text()
+
+    assert "--failure-summary terminal" in modes
+    assert "--failure-summary report-only" in modes
+
+
 def test_all_brand_sizes_exist():
     brand = REPO / "docs" / "images" / "brand"
     banner = brand / "adversarial-friends-banner.png"
