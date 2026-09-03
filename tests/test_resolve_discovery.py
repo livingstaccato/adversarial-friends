@@ -1,7 +1,9 @@
 """Read-only discovery of unresolved claims before a human resolution."""
 
 import argparse
+from dataclasses import replace
 import json
+import shlex
 
 import pytest
 
@@ -193,3 +195,64 @@ def test_resolve_discovery_rejects_an_oversized_ledger_record_without_mutating(t
 
     assert (run / "claims.jsonl").read_bytes() == oversized
     assert run.stat().st_mode == before_mode
+
+
+@pytest.mark.parametrize(
+    "claim_id",
+    ["c-0001@1 extra", "c-0001@1\nsecond-line", "c-0001@1; echo unsafe"],
+)
+def test_resolve_discovery_rejects_malformed_claim_ids_without_mutating(tmp_path, claim_id):
+    claim = replace(_claim("c-0001@1", "high"), id=claim_id)
+    run, _ledger = _run(tmp_path, [claim], states={claim.id: "settled-upheld"})
+    run.chmod(0o755)
+    before = (run / "claims.jsonl").read_bytes()
+    before_mode = run.stat().st_mode
+
+    with pytest.raises(UsageError, match="malformed claim id"):
+        cmd_resolve(_args(run, list_claims=True))
+
+    assert (run / "claims.jsonl").read_bytes() == before
+    assert run.stat().st_mode == before_mode
+
+
+def test_resolve_next_quotes_a_spaced_run_directory(tmp_path, capsys):
+    claim = _claim("c-0001@1", "high")
+    run, _ledger = _run(tmp_path, [claim], states={claim.id: "settled-upheld"})
+    spaced = tmp_path / "run with space"
+    run.rename(spaced)
+
+    assert cmd_resolve(_args(spaced, next_claim=True)) == 0
+
+    output = capsys.readouterr().out
+    assert f"afriend resolve {shlex.quote(str(spaced))} --claim {shlex.quote(claim.id)}" in output
+
+
+def test_resolve_discovery_rejects_an_invalid_claim_severity_without_mutating(tmp_path):
+    claim = _claim("c-0001@1", "urgent")
+    run, _ledger = _run(tmp_path, [claim], states={claim.id: "settled-upheld"})
+    before = (run / "claims.jsonl").read_bytes()
+
+    with pytest.raises(UsageError, match="malformed claim severity"):
+        cmd_resolve(_args(run, list_claims=True))
+
+    assert (run / "claims.jsonl").read_bytes() == before
+
+
+def test_resolve_discovery_neutralizes_terminal_and_bidi_controls_in_display_fields(
+    tmp_path, capsys
+):
+    hostile = "safe\x1b]8;;https://evil.test\x07LINK\x1b]8;;\x07\u202eflip\x00end"
+    claim = replace(
+        _claim("c-0001@1", "high"),
+        claim=hostile,
+        location=hostile,
+        evidence=hostile,
+    )
+    run, _ledger = _run(tmp_path, [claim], states={claim.id: "settled-upheld"})
+
+    assert cmd_resolve(_args(run, list_claims=True)) == 0
+
+    output = capsys.readouterr().out
+    assert "\x1b" not in output
+    assert "\u202e" not in output
+    assert "\x00" not in output

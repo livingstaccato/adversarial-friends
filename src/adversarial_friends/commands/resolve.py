@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 from typing import Any
 
@@ -37,6 +38,7 @@ from ..ledger import (
     record_from_dict,
 )
 from ..outcomes import json_node_count
+from ..report import _sanitize_display
 from ..resolutions import (
     UNVERIFIABLE,
     parse_location,
@@ -101,6 +103,13 @@ def _claim_states(meta: dict[str, Any]) -> dict[str, str]:
 
 
 def _unresolved_claims(review: ReviewState, meta: dict[str, Any]) -> list[Claim]:
+    for claim in review.claims:
+        parse_claim_id(claim.id)
+        if claim.severity not in _SEVERITY_ORDER:
+            raise UsageError(
+                f"malformed claim severity: {claim.severity!r} "
+                f"(expected one of {', '.join(_SEVERITY_ORDER)})"
+            )
     states = _claim_states(meta)
     return sorted(
         review.blocking(states),
@@ -150,18 +159,25 @@ def _location(claim: Claim) -> str:
     return claim.location or "not recorded"
 
 
+def _display(value: object) -> str:
+    """Keep adversarial ledger prose to one safe terminal line."""
+    return _sanitize_display(value, single_line=True)
+
+
 def _render_claim(claim: Claim) -> list[str]:
     return [
-        f"{claim.id} [{claim.severity}] {claim.claim}",
-        f"  location: {_location(claim)}",
-        f"  evidence: {claim.evidence}",
+        f"{claim.id} [{claim.severity}] {_display(claim.claim)}",
+        f"  location: {_display(_location(claim))}",
+        f"  evidence: {_display(claim.evidence)}",
         f"  resolution requires: {_EVIDENCE_REQUIREMENT}",
     ]
 
 
 def _write_command(run_dir: Path, claim: Claim) -> str:
+    run_arg = shlex.quote(_display(str(run_dir)))
+    claim_arg = shlex.quote(claim.id)
     return (
-        f"afriend resolve {run_dir} --claim {claim.id} "
+        f"afriend resolve {run_arg} --claim {claim_arg} "
         f"--disposition <fixed|rejected|accepted-risk> --evidence PATH[:LINE]"
     )
 
@@ -180,7 +196,8 @@ def _cmd_discovery(args: argparse.Namespace, run_dir: Path, meta: dict[str, Any]
                 print()
             print("\n".join(_render_claim(claim)))
         print()
-        print(f"next: afriend resolve {run_dir} --next")
+        run_arg = shlex.quote(_display(str(run_dir)))
+        print(f"next: afriend resolve {run_arg} --next")
         return 0
 
     highest_priority = claims[0].severity
