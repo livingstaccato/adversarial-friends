@@ -149,21 +149,82 @@ def test_a_missing_system_path_is_skipped_entirely(tmp_path, policy):
     assert sandbox.system_binds(empty) == []
 
 
-def test_a_resolver_symlink_is_bound_with_a_regular_file_target(tmp_path, policy):
+@pytest.mark.parametrize(
+    ("link", "target"),
+    [
+        ("../run/systemd/resolve/stub-resolv.conf", "run/systemd/resolve/stub-resolv.conf"),
+        ("../run/resolvconf/resolv.conf", "run/resolvconf/resolv.conf"),
+        ("../run/NetworkManager/resolv.conf", "run/NetworkManager/resolv.conf"),
+    ],
+)
+def test_a_resolver_symlink_binds_the_host_source_at_its_namespace_target(
+    tmp_path, policy, link, target
+):
+    """A fake root's file must stay the bind source, while its link path is
+    the namespace destination. Binding `/run/...` for both only works when
+    the host root really is `/` and leaves synthetic layouts untestable.
+    """
     root = tmp_path / "root"
     (root / "etc").mkdir(parents=True)
-    (root / "run" / "systemd" / "resolve").mkdir(parents=True)
-    target = root / "run" / "systemd" / "resolve" / "stub-resolv.conf"
-    target.write_text("nameserver 127.0.0.1\n")
-    (root / "etc" / "resolv.conf").symlink_to("../run/systemd/resolve/stub-resolv.conf")
+    source = root / target
+    source.parent.mkdir(parents=True)
+    source.write_text("nameserver 127.0.0.1\n")
+    (root / "etc" / "resolv.conf").symlink_to(link)
 
     argv = sandbox.linux_argv(policy, root=root)
-    expected = [
-        "--ro-bind",
-        "/run/systemd/resolve/stub-resolv.conf",
-        "/run/systemd/resolve/stub-resolv.conf",
-    ]
+    expected = ["--ro-bind", str(source), f"/{target}"]
     assert [argv[index : index + 3] for index in range(len(argv) - 2)].count(expected) == 1
+
+
+_REAL_LINUX_BWRAP = pytest.mark.skipif(
+    not sys.platform.startswith("linux") or shutil.which(sandbox.BWRAP) is None,
+    reason="requires Linux with bubblewrap installed",
+)
+
+
+@_REAL_LINUX_BWRAP
+@pytest.mark.parametrize(
+    ("link", "target"),
+    [
+        ("../run/systemd/resolve/stub-resolv.conf", "run/systemd/resolve/stub-resolv.conf"),
+        ("../run/resolvconf/resolv.conf", "run/resolvconf/resolv.conf"),
+        ("../run/NetworkManager/resolv.conf", "run/NetworkManager/resolv.conf"),
+    ],
+)
+def test_bwrap_reads_a_synthetic_resolver_symlink_at_its_namespace_target(tmp_path, link, target):
+    """Regression proof: bwrap must follow `/etc/resolv.conf` to the fake
+    root's one-file bind, never to a broader host `/run` mount.
+    """
+    root = tmp_path / "root"
+    (root / "etc").mkdir(parents=True)
+    source = root / target
+    source.parent.mkdir(parents=True)
+    nameserver = "nameserver 192.0.2.53\n"
+    source.write_text(nameserver)
+    (root / "etc" / "resolv.conf").symlink_to(link)
+
+    argv = [
+        sandbox.BWRAP,
+        "--die-with-parent",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        *sandbox.system_binds(),
+        "--ro-bind",
+        str(root / "etc"),
+        "/etc",
+        *sandbox._resolver_binds(root),
+        "--",
+        "/bin/cat",
+        "/etc/resolv.conf",
+    ]
+    result = subprocess.run(argv, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == nameserver
 
 
 def test_a_regular_or_broken_resolver_target_adds_no_extra_bind(tmp_path, policy):

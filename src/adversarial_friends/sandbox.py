@@ -189,7 +189,7 @@ def _resolver_binds(root: Path = Path("/")) -> list[str]:
         # The link points somewhere outside the selected root, so binding it
         # is both hard to reason about and not required for this fix.
         return []
-    return ["--ro-bind", str(namespace_target), str(namespace_target)]
+    return ["--ro-bind", str(source), str(namespace_target)]
 
 
 def _add_declared(into: list[Path], raw: str) -> None:
