@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.4.0
+
+An interaction-focused release that makes Adversarial Friends easier to set
+up, observe, and steer without weakening the independent-review or
+deny-by-default authority boundaries.
+
+### Guided review sessions
+
+- Added safe built-in review profiles (`quick`, `balanced`, and `thorough`),
+  configurable session defaults, and constrained named profiles that cannot
+  select providers, rosters, models, processes, or authority.
+- Added `afriend init --guided` for a no-write setup preview and explicit
+  `--apply` for precisely selected configuration changes. Guided setup keeps
+  external tools denied and preserves normal roster overwrite protection.
+- Records selected profile provenance while keeping saved run settings
+  authoritative on resume.
+
+### Run visibility and resolution
+
+- Added private, append-only lifecycle events with safe correlation data,
+  terminal completion feedback, and event-backed `afriend status` with a
+  read-only watch mode.
+- Added `afriend resolve --list` and `--next` for read-only claim discovery.
+  Discovery preserves the existing evidence and disposition requirements for
+  actual resolutions.
+- Hardened live/resumed/legacy status reconstruction, untrusted event and
+  ledger parsing, terminal rendering, and suggested command quoting.
+
+### Product surface and assurance
+
+- Updated the five shipped skill entry points, plugin projection, routing
+  diagram, documentation, and activation evaluations for the current guided
+  workflow.
+- Added regression coverage for atomic guided setup, event privacy and
+  terminal durability, read-only inspection, profile validation, and bounded
+  discovery. The repository quality gate now verifies 2,102 tests.
+
 ## 0.3.1
 
 A confinement and review-scope correction release.
