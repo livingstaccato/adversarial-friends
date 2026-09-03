@@ -172,7 +172,10 @@ def test_progress_writes_safe_lifecycle_events_without_touching_human_output(tmp
         ("run_finished", "completed"),
     ]
     assert events[1].payload["provider"] == "fake"
+    assert events[1].payload["friend"] == "fake-security-0"
     assert events[1].payload["lens"] == "configured"
+    assert events[0].run_id == "run-progress"
+    assert events[0].timestamp.endswith("Z")
     assert "answered with 1 claim" not in store.events_path().read_text()
 
 
@@ -196,3 +199,24 @@ def test_lifecycle_events_redact_an_arbitrary_lens_and_are_observational(tmp_pat
 
     reporter.event_writer = BrokenWriter()  # type: ignore[assignment]
     reporter.round_finished(1, "still completes")
+
+
+def test_final_human_summary_respects_progress_setting():
+    stream = io.StringIO()
+    reporter = progress.Progress(stream=stream)
+    reporter.run_finished("completed", "inspect_report", duration_s=0.1)
+    assert "run completed" in stream.getvalue()
+    assert "inspect_report" in stream.getvalue()
+
+    halted = progress.Progress(stream=io.StringIO())
+    halted.run_finished("halted", "resume", duration_s=0.1)
+    assert "run halted" in halted.stream.getvalue()
+    assert "resume" in halted.stream.getvalue()
+
+    errored = progress.Progress(stream=io.StringIO())
+    errored.run_finished("error", "inspect_report", duration_s=0.1)
+    assert "run error" in errored.stream.getvalue()
+
+    quiet = progress.Progress(stream=io.StringIO(), enabled=False)
+    quiet.run_finished("halted", "resume", duration_s=0.1)
+    assert quiet.stream.getvalue() == ""

@@ -108,7 +108,11 @@ def test_report_run_writes_ordered_safe_lifecycle_events(tmp_path):
         "run_finished",
     ]
     assert events[0]["payload"] == {"mode": "report", "profile": "quick", "status": "started"}
+    assert events[0]["schema_version"] == 1
+    assert events[0]["run_id"] == run_dir.name
+    assert events[0]["timestamp"].endswith("Z")
     assert events[1]["payload"]["provider"] == "fake"
+    assert events[1]["payload"]["friend"] == "fake-good-0"
     assert events[1]["payload"]["lens"] == "configured"
     assert events[-1]["payload"]["next_action"] == "inspect_report"
     serialized = (run_dir / "events.jsonl").read_text()

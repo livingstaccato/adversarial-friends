@@ -778,6 +778,9 @@ def finish_run(
         states=cross.states if cross else None,
     )
     store.write_terminal_artifacts(meta, report)
+    if reporter is not None:
+        event_status, next_action = _terminal_event_summary(outcome.stop_reason.value)
+        reporter.run_finished(event_status, next_action, duration_s=outcome.duration_s)
     if args.json:
         # The path is still what a shell pipeline wants; --json is for a
         # caller that would otherwise have to read run.json itself.
@@ -792,9 +795,6 @@ def finish_run(
             "produced a usable answer"
         )
     exit_code = decide_exit(outcome, detail=detail)
-    if reporter is not None:
-        event_status, next_action = _terminal_event_summary(outcome.stop_reason.value)
-        reporter.run_finished(event_status, next_action, duration_s=outcome.duration_s)
     return exit_code
 
 

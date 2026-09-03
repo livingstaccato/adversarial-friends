@@ -118,7 +118,7 @@ class Progress:
         if writer is None:
             return
         try:
-            writer.append(EventRecord.create(event_type, payload))
+            writer.append(EventRecord.create(event_type, payload, run_id=writer.run_id))
         except Exception:
             # Events are observational. A full disk, a malformed runtime
             # projection, or a host-provided writer failure must not turn a
@@ -141,6 +141,7 @@ class Progress:
             "run_finished",
             {"status": status, "next_action": next_action, "duration_s": duration_s},
         )
+        self._emit(f"afriend: run {status} -- next action: {next_action}")
 
     # --- round lifecycle --------------------------------------------------
 
@@ -184,6 +185,7 @@ class Progress:
         self._event(
             "friend_finished" if succeeded else "friend_failed",
             {
+                "friend": name,
                 "provider": record.provider if record else "unknown",
                 "lens": record.lens if record else "unknown",
                 "round": record.round_no if record else 1,

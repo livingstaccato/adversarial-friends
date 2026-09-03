@@ -177,7 +177,7 @@ class RunStore:
 
     def events_writer(self) -> EventWriter:
         """Return the synchronized writer for this run's event stream."""
-        return EventWriter(self.events_path(), self.root)
+        return EventWriter(self.events_path(), self.root, self.run_id)
 
     def artifact_copy(self, source: Path) -> tuple[Path, str]:
         target_dir = self.run_dir / "artifact"

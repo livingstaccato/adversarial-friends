@@ -18,6 +18,7 @@ from adversarial_friends.errors import UsageError
 from adversarial_friends.failures import RepeatTracker
 from adversarial_friends.orchestrator import NeedsOrchestrator
 from adversarial_friends.outcomes import RunOutcome, terminal_outcome
+from adversarial_friends.progress import Progress
 from adversarial_friends.runstore import RunStore
 
 
@@ -330,3 +331,47 @@ def test_terminal_render_failure_preserves_the_prior_artifact_pair(monkeypatch, 
 
     assert meta_path.read_bytes() == before[0]
     assert report_path.read_bytes() == before[1]
+
+
+def test_broken_stdout_still_leaves_one_durable_terminal_event(monkeypatch, tmp_path):
+    store = RunStore(tmp_path, "run-broken-stdout")
+    reporter = Progress(event_writer=store.events_writer())
+    monkeypatch.setitem(
+        runmeta.__dict__,
+        "print",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(BrokenPipeError()),
+    )
+
+    with pytest.raises(BrokenPipeError):
+        runmeta.finish_run(
+            argparse.Namespace(mode="report", require_friends=None, json=False),
+            store,
+            {
+                "artifact": "spec.md",
+                "mode": "report",
+                "preset": "inherit",
+                "friends": [],
+                "downgrades": [],
+                "started_at": "2026-08-31T00:00:00Z",
+            },
+            None,
+            None,
+            True,
+            1,
+            ["fake-good-0"],
+            1,
+            0,
+            [],
+            Budget(max_calls=2, max_rounds=1, max_wall_clock_s=60),
+            1,
+            RepeatTracker(),
+            False,
+            False,
+            1.0,
+            reporter=reporter,
+        )
+
+    events = [json.loads(line) for line in store.events_path().read_text().splitlines()]
+    terminal = [event for event in events if event["type"] == "run_finished"]
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "completed"
