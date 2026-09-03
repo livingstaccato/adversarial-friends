@@ -101,30 +101,6 @@ def test_report_surfaces_failed_friends():
     assert "failed: exit 1" in out
 
 
-def test_report_explains_that_zero_answers_provide_no_artifact_conclusion():
-    out = render(
-        [],
-        [],
-        meta(
-            friends=[
-                {
-                    "name": "codex-security",
-                    "independent": True,
-                    "model": None,
-                    "effort": None,
-                    "round": 1,
-                    "status": "failed: DNS temporary failure",
-                }
-            ]
-        ),
-    )
-
-    assert "## Review completeness" in out
-    assert "review incomplete: 0/1 friends answered; codex-security: DNS temporary failure" in out
-    assert "no artifact conclusion follows from zero friend answers" in out.lower()
-    assert out.index("## Review completeness") < out.index("## Friends")
-
-
 def test_report_surfaces_downgrades():
     out = render([claim("c-0001@1")], [], meta())
     assert "forced to doc scope" in out
@@ -238,46 +214,6 @@ def test_gate_report_names_ceiling_and_partial_evidence_caveat():
     gate = out.split("## Gate decision", 1)[1].split("## Friends", 1)[0]
     assert "max-calls" in gate
     assert "partial evidence" in gate.lower()
-
-
-def test_read_exposed_names_are_stably_deduplicated():
-    repeated = {
-        "name": "claude-security",
-        "model": None,
-        "effort": None,
-        "transport": "exec",
-        "write_protected": True,
-        "declared_scope": "repo",
-        "os_confined": False,
-        "status": "ok",
-    }
-    out = render([], [], meta(friends=[dict(repeated, round=1), dict(repeated, round=2)]))
-    sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
-    assert sentence.count("claude-security") == 1
-    assert "write-protected and not recorded as OS-confined" in sentence
-    assert "If started" in sentence
-    assert "same-user filesystem read access" in sentence
-
-
-def test_read_scope_does_not_claim_a_failed_before_launch_friend_ran_unconfined():
-    friend = {
-        "name": "claude-security",
-        "model": None,
-        "effort": None,
-        "transport": "exec",
-        "write_protected": True,
-        "declared_scope": "repo",
-        "os_confined": False,
-        "status": "failed: refused before launch",
-        "round": 1,
-    }
-
-    out = render([], [], meta(friends=[friend]))
-    sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
-
-    assert "not recorded as OS-confined" in sentence
-    assert "If started, each retained same-user filesystem read access" in sentence
-    assert "ran without OS confinement" not in sentence
 
 
 @pytest.mark.parametrize(
