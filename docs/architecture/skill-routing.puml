@@ -10,27 +10,38 @@ skinparam rectangle {
 title Adversarial Friends skill routing
 
 rectangle "/afriend\nsole router" as router
+rectangle "session preflight\nfirst review or new loop iteration" as preflight #FFF8E1
 rectangle "review" as review
 rectangle "status" as status
 rectangle "configure" as configure
 rectangle "resolve" as resolve
 rectangle "afriend run" as run #E8F5E9
+rectangle "events.jsonl\nsafe lifecycle stream" as events #F3E5F5
+rectangle "completion feedback\ninspect, resolve, resume, retry" as feedback #FFF8E1
 rectangle "afriend doctor" as doctor #E8F5E9
+rectangle "afriend status" as runstatus #E8F5E9
 rectangle "afriend providers" as providers #E8F5E9
+rectangle "afriend init / profiles" as setup #E8F5E9
 rectangle "afriend resolve" as resolution #E8F5E9
 rectangle "afriend run --resume" as resume #E8F5E9
 
-router --> review : explicit review
+router --> preflight : first review
+preflight --> review : accept or task-only choice
 router --> status : explicit status
 router --> configure : explicit configuration
 router --> resolve : explicit resolution
 router --> resume : resume existing run
 review --> run
+run --> events : progress and terminal state
+events --> feedback : final event + report
 status --> doctor
+status --> runstatus : named run, read-only
 configure --> providers
+configure --> setup
 resolve --> resolution
 note bottom of router
   Conversational operation words route skills.
   They are not executable CLI aliases.
+  Preflight is descriptive, not an authority grant.
 end note
 @enduml

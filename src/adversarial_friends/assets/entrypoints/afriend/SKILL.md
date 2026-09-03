@@ -28,13 +28,15 @@ Route an explicit conversational operation before doing any work:
 | Conversation intent | Focused skill | Stable executable command |
 | --- | --- | --- |
 | review an artifact | `review` | `afriend run` |
-| status or readiness | `status` | `afriend doctor` |
-| provider configuration | `configure` | `afriend providers` |
-| resolve an existing run | `resolve` | `afriend resolve` |
+| named-run status | `status` | `afriend status <run-id-or-path>` |
+| provider readiness | `status` | `afriend doctor` |
+| setup, defaults, or profiles | `configure` | `afriend init --guided`, `afriend providers`, or `afriend profiles` |
+| inspect or resolve an existing run | `resolve` | `afriend resolve` |
 | resume an existing run | this router | `afriend run --resume <run-id>` |
 
 Phrases such as “afriend status” and “afriend review” are routing language,
-not new executable aliases. The CLI command names remain `doctor` and `run`.
+not new executable aliases. The CLI command names remain `status`, `doctor`,
+and `run`.
 Likewise, `afriend resume <run-id>` resumes the run with `afriend run --resume
 <run-id>`; it is not claim resolution and does not need a disposition or
 evidence.
@@ -50,6 +52,29 @@ Generic requests such as `review this`, `poke holes in this`, `give me a
 second opinion`, or architectural-decision language do not activate the skill
 when `afriend` and the full product name are absent. Those remain ordinary
 Codex work. Do not use this skill to generate a first review of code.
+
+## Session preflight and feedback
+
+On the first review request in a host task, and before every requested new
+loop iteration, pause before dispatch and state the resolved run:
+
+> About to start Adversarial Friends to review `<artifact>` in `<mode>` mode
+> with `<profile>`. Scope: `<repository snapshot|document only>`. Friends:
+> `<name, provider, lens, role>`; external tools: `<denied|explicit grant>`.
+
+Accept the resolved default, a task-only profile or mode, a task-only enabled
+roster, or stop. Do not repeat the preflight for later work in the same review
+session unless the user requests a new loop iteration. The preflight is
+descriptive: it does not grant provider enablement, external tools,
+unsafe-extra arguments, or sandbox exceptions. A direct CLI command remains
+non-interactive and uses its effective profile plus explicit flags.
+
+As a run progresses, report when each friend finishes or fails, including its
+provider, lens, result, and any downgrade. At completion, read the final
+`events.jsonl` record and `report.md`, then say what finished and whether the
+next action is to inspect, resolve, resume, fix configuration, retry, or start
+another iteration. Do not call a failed, incomplete, downgraded, or
+single-friend run a completed independent review.
 
 ## Running it
 
@@ -73,8 +98,23 @@ above, or directly selected by the user, and then invokes the CLI.
 
 `<artifact>` is a path to a file — a spec, a plan, a review someone else
 wrote, saved to disk. All four modes run; see `references/modes.md` for the
-full rules. `report` is the default conversational and CLI mode. Select
-another mode only when the user names it or clearly requests its semantics.
+full rules. The effective default profile is `quick`, whose mode is `report`.
+Select another mode only when the user names it or clearly requests its
+semantics.
+
+### Profiles
+
+`quick` is the default built-in profile and keeps one report fan-out.
+`balanced` selects `crossexam`; `thorough` selects `loop`. The user can set a
+persistent default in `~/.config/adversarial-friends/session.json`, or select
+one task-only with `afriend run <artifact> --profile NAME`. An explicit
+`--mode` wins over the profile's mode, as do explicit safe run settings.
+
+Use `afriend profiles list`, `show`, `create`, `update`, `delete`, and
+`set-default` for user-owned named profiles. A profile may express review-safe
+mode, preset, lenses, friend/timeout ceilings, and round/iteration ceilings;
+it cannot select providers, a friend roster, models, credentials, environment
+forwarding, external tools, unsafe arguments, or sandbox exceptions.
 
 Artifact location selects the automatic scope. An artifact inside a Git
 repository gets a repository snapshot; an artifact outside a Git repository
@@ -86,13 +126,15 @@ contents.
 
 Every mode dispatches the artifact to every discovered friend in parallel and
 writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
-or `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
-`artifact/` copy, and per friend under `round-N/`: `<friend>.prompt` (exactly
+or `--out DIR`) containing `events.jsonl`, `claims.jsonl`, `report.md`,
+`run.json`, a frozen `artifact/` copy, and per friend under `round-N/`:
+`<friend>.prompt` (exactly
 what it was asked), `.raw` (its unmodified stdout), `.err` (its stderr —
 always written, even when empty), `.meta` (argv, exit code, duration,
 timeout and orphan status), and `.sandbox` (the OS confinement policy it ran
-under, when one was applied). `afriend run` prints only the run directory
-path to stdout; read `report.md` from there and present the findings.
+under, when one was applied). By default, `afriend run` prints only the run
+directory path to stdout; `--json` prints the saved run metadata instead. Read
+`report.md` from the run directory and present the findings.
 
 ### Choose ready friends, not merely installed CLIs
 
@@ -142,9 +184,7 @@ acknowledgement.
 External-tool authority is independent of persistent and per-run provider
 enable/disable selection. Grants do not change provider defaults. Security
 grants are never restored by `--resume`: repeat the same normalized set
-exactly on the current command line. A run written by 0.2.0 cannot prove its
-inherited connector authority, so reports mark it `legacy-unknown` rather
-than claiming tools were denied.
+exactly on the current command line.
 
 ### Runtime depends on the run
 
@@ -199,10 +239,12 @@ default. A run cancelled by a signal exits `128 + signal number`.
 For `loop`, naturally reaching `--max-loop-iterations` without convergence is
 also a ceiling: it records that stop reason and exits `11`.
 
-A `gate` run exits `1` while any claim still needs an answer. Resolve them
-one at a time; each call re-reports what is left:
+A `gate` run exits `1` while any claim still needs an answer. Discover the
+unresolved claims, then resolve one at a time:
 
 ```bash
+afriend resolve <run-id> --list
+afriend resolve <run-id> --next
 afriend resolve <run-id> --claim c-0001@1 \
     --disposition fixed|rejected|accepted-risk --evidence src/auth.py:38
 ```
@@ -227,6 +269,20 @@ It lists every known provider and its effective readiness state: `ready`,
 reports whether schema and read-only enforcement are available and whether
 effort can be verified. `doctor` exits `0` if at least one provider is ready;
 it exits `3` if no provider is ready.
+
+To inspect a named run without dispatching or changing anything, use:
+
+```bash
+afriend status <run-id-or-path>
+afriend status <run-id-or-path> --watch
+afriend status <run-id-or-path> --json
+```
+
+`status` reports identity, mode, scope, profile, lifecycle state, friend
+completion or failure, current round, claim states, downgrades, and a next
+action. `--watch` tails new lifecycle events until the terminal event; an
+unterminated final JSONL line is simply still being written. Existing runs
+without `events.jsonl` remain inspectable from their saved artifacts.
 
 ## Reading the results like a reviewer, not a stenographer
 

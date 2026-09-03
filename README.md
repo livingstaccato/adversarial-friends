@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2096-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2101-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -99,18 +99,36 @@ reachability alone is insufficient because dispatch also requires a model.
 
 In an agent host, select `/afriend` to route an explicit Adversarial Friends
 request, or select `$adversarial-friends:afriend` directly. It hands review,
-status, provider configuration, and resolution requests to focused skills:
+status, setup/configuration, and resolution requests to focused skills:
 `review`, `status`, `configure`, and `resolve`.
 
 Conversational phrases such as `afriend review` and `afriend status` are
 routing language, not executable aliases: the stable CLI commands remain
-`afriend run` and `afriend doctor`.
+`afriend run`, `afriend status`, and `afriend doctor`.
 `afriend resume <run-id>` similarly routes to `afriend run --resume <run-id>`;
 it is not a claim resolution and needs no disposition or evidence.
 
 ```bash
-afriend run docs/my-design.md --mode report
+afriend run docs/my-design.md
 ```
+
+On the first review request in a host task, `/afriend` presents one compact
+preflight before dispatch:
+
+> About to start Adversarial Friends to review `<artifact>` in `<mode>` mode
+> with `<profile>`. Scope: `<repository snapshot|document only>`. Friends:
+> `<name, provider, lens, role>`; external tools: `<denied|explicit grant>`.
+
+You can accept it, choose a task-only profile or mode, change the task-only
+roster, or stop. It is shown again only before a requested new loop iteration.
+The preflight describes authority; it never grants external tools, provider
+enablement, unsafe arguments, or sandbox exceptions. Direct CLI runs stay
+non-interactive.
+
+The built-in profiles are `quick` (one `report` fan-out), `balanced`
+(`crossexam`), and `thorough` (`loop`). `quick` is the default. Use
+`--profile NAME` for one run; an explicit `--mode` wins over the profile's
+mode and other explicit safe run flags win over profile values.
 
 The host is the orchestrator. In Codex, Codex remains the orchestrator and is
 included as a friend by default. The report labels it
@@ -131,6 +149,32 @@ afriend providers disable opencode
 afriend providers set-model ollama qwen3:8b
 afriend providers clear-model ollama
 ```
+
+Set up those defaults with an inspectable no-write preview, then apply only
+the exact choices you name:
+
+```bash
+afriend init --guided
+afriend init --guided --default-profile balanced --enable-provider claude
+afriend init --guided --apply --default-profile balanced --enable-provider claude
+```
+
+Guided setup reports discovered providers, the Codex advisory-host role when
+applicable, built-in profiles, and that external tools remain denied. Plain
+`afriend init` remains the direct roster-generation command.
+
+Manage named user profiles separately:
+
+```bash
+afriend profiles list
+afriend profiles create focused --base quick --timeout 300
+afriend profiles set-default focused
+```
+
+Profiles can carry only review-safe mode, preset, lenses, friend/timeout
+ceilings, and round/iteration ceilings. They cannot select providers, a
+friend roster, models, credentials, forwarded environment, external tools,
+unsafe arguments, or sandbox exceptions.
 
 For one automatic roster, `--enable-provider NAME` and
 `--disable-provider NAME` override those defaults. Disabled providers are not
@@ -176,6 +220,22 @@ naming whatever is still outstanding, so a quiet run is distinguishable from
 a hung one. `--no-progress` silences it for a caller that captures both
 streams together; reducing `--timeout` turns slow friends into failures rather
 than making them faster.
+
+Each run also appends safe lifecycle records to `events.jsonl`: `run_started`,
+friend completion/failure, round completion, and `run_finished`. Records carry
+only identity, mode/profile, scope, status, round, duration, and next action;
+they never copy prompts, raw outputs, diagnostics, credentials, environment,
+or authority grants. After the run, inspect it without dispatching anything:
+
+```bash
+afriend status <run-id-or-path>
+afriend status <run-id-or-path> --watch
+afriend status <run-id-or-path> --json
+```
+
+`--watch` prints only new lifecycle events until the terminal event and treats
+an unterminated final event line as still being written. Runs without an event
+stream remain inspectable from `run.json`, `claims.jsonl`, and `report.md`.
 
 ---
 
@@ -277,6 +337,7 @@ as a reproducible defect.
 <run-dir>/
 ├── report.md          ← ranked findings, corroboration, downgrades
 ├── run.json           ← machine-readable: friends, statuses, downgrades
+├── events.jsonl       ← append-only safe lifecycle events
 ├── claims.jsonl       ← append-only ledger: claims, aliases
 ├── artifact/          ← frozen copy of what was reviewed, hashed
 └── round-1/
@@ -309,6 +370,8 @@ comes back thin, that's what you read — not a guess.
 ```bash
 afriend run docs/design.md --mode crossexam
 afriend run docs/design.md --mode gate       # exit 1 while anything blocks
+afriend resolve <run-id> --list
+afriend resolve <run-id> --next
 afriend resolve <run-id> --claim c-0001@1 \
     --disposition fixed --evidence src/auth.py:38
 ```
@@ -339,9 +402,7 @@ Resume verifies the original frozen artifact hash and saved Git snapshot
 before dispatch; it never substitutes current files. Security grants are
 also never restored from `run.json`: options such as
 `--allow-external-tools=PROVIDER` grants (or the global `=*` grant) must be
-repeated as the same normalized set. For 0.2.0 metadata, the
-report says external authority is `legacy-unknown` instead of inventing a
-historical guarantee.
+repeated as the same normalized set.
 
 Tired of `--friend` flags? `afriend init` writes a roster from what is
 actually installed, and `~/.config/adversarial-friends/roster.toml` is picked
@@ -374,9 +435,8 @@ That is an accepted
 best-effort limitation: Antigravity is policy-blocked by default, while
 `--allow-external-tools=agy` records it as `explicitly-allowed`.
 
-There is no `gemini` adapter: the `gemini` CLI returns an ineligible-tier
-error on the individual free tier, and Google's own supported path from there
-is Antigravity — which is `agy`.
+Antigravity is the shipped Google harness, identified as `agy` in CLI and
+provider configuration.
 
 ### Exit codes
 

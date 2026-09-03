@@ -9,11 +9,11 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 
 | Document | What it covers |
 |---|---|
-| [/afriend](../src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | The sole router and short selector; stable commands remain `afriend run` and `afriend doctor` |
-| [review](../src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Artifact reviews with `afriend run` |
-| [status](../src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only readiness and named-run inspection |
-| [configure](../src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Explicit persistent provider-default changes |
-| [resolve](../src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Named-run resolutions with supplied evidence |
+| [/afriend](../src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | The sole router, session preflight, lifecycle completion feedback, and stable CLI routing |
+| [review](../src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Artifact reviews with `afriend run` and task-only profile/mode choices |
+| [status](../src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only readiness with `doctor` and named-run inspection with `status` |
+| [configure](../src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Guided setup, explicit provider defaults, and safe named profiles |
+| [resolve](../src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Read-only claim discovery and named-run resolutions with supplied evidence |
 | [modes](../src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus claim states, ceilings, and exit codes |
 
 `afriend resume <run-id>` routes through `/afriend` to `afriend run --resume
@@ -51,7 +51,8 @@ quickstart, see the [top-level README](../README.md); come here for detail.
   `afriend resolve` fit together, and the two things a resolution can be
   refused for.
 - **[Skill routing](architecture/skill-routing.puml)** — how `/afriend` hands
-  explicit operations to focused skills and stable CLI commands.
+  explicit operations through session preflight to focused skills, event
+  feedback, and stable CLI commands.
 
 Rendered PNG and SVG are committed alongside each source. Regenerate with
 `make diagrams`.
@@ -65,12 +66,10 @@ Rendered PNG and SVG are committed alongside each source. Regenerate with
 | [design spec](superpowers/specs/2026-08-22-adversarial-friends-design.md) | The full design — including §19, the adversarial review history that produced it |
 | [core runner plan](superpowers/plans/2026-08-22-adversarial-friends-core-runner.md) | The 14-task implementation plan the runner was built from |
 
-> ⚠️ These two are **historical records**, not live documentation. They
-> describe the design and plan as written at the time, including paths and a
-> `bin/af` entry point that no longer exist — the tool now installs as the
-> `afriend` console script. They are excluded from `ruff format` so their
-> embedded code fences stay as originally written. Read them for *why*
-> decisions were made; read the pages above for *what is true now*.
+> ⚠️ These two are **historical records**, not live documentation. They are
+> excluded from `ruff format` so their embedded code fences stay as originally
+> written. Read them for *why* decisions were made; read the pages above for
+> *what is true now*.
 
 ---
 

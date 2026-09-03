@@ -54,10 +54,20 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
     assert "afriend resume" in body
     assert "afriend run --resume" in body
     assert "not new executable aliases" in body
-    assert "cli command names remain doctor and run" in body
+    assert "cli command names remain status, doctor, and run" in body
     for generic_request in ("review this", "poke holes", "second opinion"):
         assert generic_request in body
     assert "friend sent me this" in body
+
+
+def test_router_sets_session_expectations_before_dispatch_and_after_completion():
+    text = (ENTRYPOINTS / "afriend" / "SKILL.md").read_text()
+    lowered = " ".join(text.lower().split())
+    assert "about to start adversarial friends" in lowered
+    assert "first review request in a host task" in lowered
+    assert "new loop iteration" in lowered
+    assert "when each friend finishes" in lowered
+    assert "task-only" in lowered
 
 
 def test_focused_skills_hold_their_operational_boundaries():
@@ -76,6 +86,22 @@ def test_focused_skills_hold_their_operational_boundaries():
         assert phrase in resolve, phrase
     assert "afriend run --resume" in resolve
     assert "does not require a disposition or evidence" in resolve
+
+
+def test_focused_skills_route_the_new_user_workflows_to_stable_cli_commands():
+    status = " ".join((ENTRYPOINTS / "status" / "SKILL.md").read_text().lower().split())
+    configure = " ".join(
+        (ENTRYPOINTS / "configure" / "SKILL.md").read_text().lower().split()
+    )
+    resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
+
+    assert "afriend status <run-id-or-path>" in status
+    assert "--watch" in status
+    assert "afriend profiles" in configure
+    assert "afriend init --guided" in configure
+    assert "cannot encode" in configure
+    assert "afriend resolve <run-id> --list" in resolve
+    assert "afriend resolve <run-id> --next" in resolve
 
 
 def test_status_and_resolve_explain_how_to_inspect_a_named_run():

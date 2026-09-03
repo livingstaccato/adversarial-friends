@@ -1,6 +1,6 @@
 ---
 name: resolve
-description: Use only through direct qualified selection ($adversarial-friends:resolve) or explicit /afriend routing to record a disposition for a named run claim. Require user-supplied run, disposition, and evidence.
+description: Use only through direct qualified selection ($adversarial-friends:resolve) or explicit /afriend routing to inspect unresolved claims or record a disposition for a named run claim. Require user-supplied disposition and evidence before writing.
 ---
 
 # Adversarial Friends resolution
@@ -8,6 +8,18 @@ description: Use only through direct qualified selection ($adversarial-friends:r
 `afriend resume <run-id>` is not a resolution request. Route it to the router
 and run `afriend run --resume <run-id>`; it does not require a disposition or
 evidence.
+
+Discover unresolved claims from a named run before recording anything:
+
+```bash
+afriend resolve <run-id> --list
+afriend resolve <run-id> --next
+```
+
+`--list` is read-only and shows stable IDs, severity, summary, location, and
+recorded evidence. `--next` is read-only and selects a claim only when the
+highest-priority choice is unique; otherwise it prints the choices and records
+nothing.
 
 Resolve only a named run and claim, with a user-supplied disposition and
 concrete evidence location:

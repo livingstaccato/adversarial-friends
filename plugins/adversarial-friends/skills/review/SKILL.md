@@ -11,9 +11,12 @@ Review an exact supplied artifact with the stable command:
 afriend run <artifact>
 ```
 
-Use `report` unless the user explicitly names a higher-cost mode or clearly
-asks for its semantics. `crossexam`, `gate`, and `loop` have added rounds and
-may refuse before a run directory when the independent roster is insufficient.
+Use the effective `quick` profile unless the user explicitly selects a
+task-only profile, a higher-cost mode, or clearly asks for its semantics.
+`crossexam`, `gate`, and `loop` have added rounds and may refuse before a run
+directory when the independent roster is insufficient. `afriend run <artifact>
+--profile NAME` is a per-run selection; an explicit `--mode` wins over the
+profile's mode.
 Do not invent an artifact: use an existing path, an unambiguous task backing
 file, or complete content supplied by the user; otherwise ask for a path.
 

@@ -1,11 +1,11 @@
 ---
 name: configure
-description: Use only through direct qualified selection ($adversarial-friends:configure) or explicit /afriend routing to inspect or explicitly change provider defaults. Do not change settings without an exact requested change.
+description: Use only through direct qualified selection ($adversarial-friends:configure) or explicit /afriend routing to inspect or explicitly change guided setup, review profiles, or provider defaults. Do not change settings without an exact requested change.
 ---
 
 # Adversarial Friends configuration
 
-Inspect persistent defaults with:
+Inspect persistent provider defaults with:
 
 ```bash
 afriend providers list
@@ -24,3 +24,33 @@ default unless the user explicitly supplies `--allow-external-tools=PROVIDER`
 or global `--allow-external-tools=*`. That authority neither changes defaults
 nor follows from provider enablement. Codex's advisory host role does not
 alter these boundaries.
+
+For first-session setup, preview exact local changes without writing:
+
+```bash
+afriend init --guided
+afriend init --guided --default-profile balanced --enable-provider claude
+afriend init --guided --apply --default-profile balanced --enable-provider claude
+```
+
+The preview reports built-in profiles, discovered provider readiness, the host
+role, and the continuing external-tool denial. `--apply` writes only the
+listed provider defaults, optional Ollama model, selected default profile, and
+generated roster; it never dispatches friends or enables external tools.
+Plain `afriend init` remains the direct roster-generation command.
+
+Profiles are a separate persistent layer:
+
+```bash
+afriend profiles list
+afriend profiles show quick
+afriend profiles create focused --base quick --timeout 300
+afriend profiles set-default focused
+```
+
+Custom profiles inherit a built-in or custom base and can hold only review-safe
+mode, preset, lenses, `max_friends`, `require_friends`, timeout, and
+round/iteration ceilings. They cannot encode a provider, `--friend`, model,
+credential, environment forwarding, external-tool authority, unsafe arguments,
+or sandbox exception. Make a persistent change only for the exact
+user-requested selection; use `--profile NAME` for a per-run choice.

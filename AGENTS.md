@@ -11,8 +11,11 @@ Use `/afriend` or `$adversarial-friends:afriend` for explicit product routing;
 the five selectable skills are `afriend`, `review`, `status`, `configure`,
 and `resolve`. Conversational `afriend review` and `afriend status` route to
 focused skills and are not executable aliases: use `afriend run <artifact>`
-and `afriend doctor`. All four modes -- `report`, `crossexam`, `gate`, `loop`
--- ship; see `src/adversarial_friends/assets/entrypoints/afriend/references/modes.md`.
+for a review, `afriend status <run-id-or-path>` for a run, and `afriend doctor`
+for readiness. Use `afriend init --guided` for a no-write setup preview and
+`afriend profiles` for safe named profiles. All four modes -- `report`,
+`crossexam`, `gate`, `loop` -- ship; see
+`src/adversarial_friends/assets/entrypoints/afriend/references/modes.md`.
 `afriend resume <run-id>` routes to `afriend run --resume <run-id>`, not to
 claim resolution; it requires neither disposition nor evidence.
 

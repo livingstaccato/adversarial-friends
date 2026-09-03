@@ -294,6 +294,25 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     assert "adversarial friends" not in negative_prompts
 
 
+def test_evals_cover_guided_session_and_focused_current_workflows():
+    cases = json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
+    outputs = " ".join(case["expected_output"].lower() for case in cases)
+    prompts = " ".join(case["prompt"].lower() for case in cases)
+
+    for phrase in (
+        "first-session preflight",
+        "task-only",
+        "afriend status <run-id-or-path>",
+        "afriend doctor",
+        "afriend init --guided",
+        "profile encode provider authority",
+        "afriend resolve <run-id> --list",
+        "unique highest-priority",
+    ):
+        assert phrase in outputs, phrase
+    assert "$adversarial-friends:status run-123" in prompts
+
+
 def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespace():
     evals = json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
     positives = [case for case in evals if case["should_trigger"]]
@@ -340,6 +359,24 @@ def test_current_docs_describe_only_the_five_skill_surface_and_stable_cli():
     assert "not executable aliases" in current
 
 
+def test_current_docs_explain_profiles_guided_setup_events_and_run_status():
+    """The public README is the CLI's current user-facing contract."""
+    readme = REPO.joinpath("README.md").read_text()
+    for phrase in (
+        "`quick`",
+        "`balanced`",
+        "`thorough`",
+        "afriend init --guided",
+        "afriend init --guided --apply",
+        "afriend status <run-id-or-path>",
+        "`events.jsonl`",
+        "afriend profiles",
+        "afriend resolve <run-id> --list",
+        "afriend resolve <run-id> --next",
+    ):
+        assert phrase in readme, phrase
+
+
 def test_skill_routing_diagram_labels_all_skills_and_commands():
     source = (REPO / "docs" / "architecture" / "skill-routing.puml").read_text()
     visible = _svg_visible_text(REPO / "docs" / "architecture" / "skill-routing.svg")
@@ -351,6 +388,14 @@ def test_skill_routing_diagram_labels_all_skills_and_commands():
         assert label in visible
     assert "afriend run --resume" in source
     assert "afriend run --resume" in visible
+
+
+def test_skill_routing_diagram_includes_preflight_events_and_read_only_status():
+    source = (REPO / "docs" / "architecture" / "skill-routing.puml").read_text()
+    visible = _svg_visible_text(REPO / "docs" / "architecture" / "skill-routing.svg")
+    for label in ("session preflight", "events.jsonl", "afriend status"):
+        assert label in source
+        assert label in visible
 
 
 def test_resume_routes_to_run_without_claim_resolution_inputs():
@@ -505,7 +550,6 @@ def test_contract_first_provider_and_authority_guidance_is_shipped():
         "external tools are denied by default",
         "reachable-unconfigured",
         "policy-blocked",
-        "legacy-unknown",
         "snapshot",
     ):
         assert phrase in joined, phrase

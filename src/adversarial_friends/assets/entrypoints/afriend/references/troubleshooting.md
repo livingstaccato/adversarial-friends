@@ -35,8 +35,6 @@ dispatch; the old valueless form is invalid. The grant may expose
 provider-managed integrations that the runner cannot inventory completely,
 and it does not change provider defaults. A resume never restores authority:
 repeat the same normalized grant set exactly on the resume command line.
-Metadata from 0.2.0 is reported as `legacy-unknown`, because those runs did
-not capture enough authority evidence to make a denial claim.
 
 `--unsafe-extra-args` requires `--i-accept-unsandboxed` and the global `*`
 grant; a provider-scoped grant is insufficient because arbitrary extra flags
@@ -223,13 +221,12 @@ a downgrade: a bare model behind an endpoint has no filesystem access to
 constrain, so no read-only flag was emitted and nothing was enforced.
 Containment comes from doc scope — it is handed only the artifact text.
 
-## gemini does not work
+## Using Antigravity
 
-There is no `gemini` adapter in this build — not even a stub. The `gemini`
-CLI returns `IneligibleTierError` on the individual free tier ("this client
-is no longer supported… migrate to the Antigravity suite"), and Google's own
-supported path from there is Antigravity. Use `agy`, which is Google's
-Antigravity CLI and is a fully shipped adapter.
+The Antigravity provider is named `agy` in the CLI and provider configuration.
+Use it as `--friend agy:security` or select it for automatic discovery. Its
+controlled reviewer is staged into the isolated run workspace; see the
+external-tools section above for its explicit authority boundary.
 
 ## A run directory already exists
 

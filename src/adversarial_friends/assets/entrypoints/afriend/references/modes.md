@@ -7,8 +7,11 @@
 | `gate` | **implemented** | Cross-examination, then every surviving non-advisory claim needs an explicit resolution before the gate clears. |
 | `loop` | **implemented** | Cross-examination, repeated until two consecutive rounds surface nothing new. |
 
-`report` is the default when `--mode` is omitted. Use another mode only when
-the operator names it or deliberately requests its semantics.
+The effective default profile is `quick`, which selects `report`. `balanced`
+selects `crossexam`; `thorough` selects `loop`. Use `afriend run <artifact>
+--profile NAME` for a per-run choice. An explicit `--mode` wins over a
+profile's mode; explicit safe run flags win over profile settings. In other
+words, `report` is the default effective mode for a new installation.
 
 ## Minimum roster
 
@@ -223,8 +226,6 @@ and passed environment variables are the exceptions. These authority grants
 must be repeated exactly on the current command line. For example, repeat
 `--allow-external-tools=agy` only when the halted invocation recorded that
 grant; omitting it, changing the provider set, or newly adding it is refused.
-Historical 0.2.0 runs report external authority as `legacy-unknown` because
-their metadata did not record enough evidence to claim denial.
 
 Round 1 is not re-run. Its claims are read back from the ledger, so the
 adjudication applies to the ids you were actually shown.
@@ -386,6 +387,37 @@ this authority, and these grants do not change provider defaults.
 | `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
 | `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |
 
+### Guided setup and profiles
+
+`afriend init --guided` previews setup with no writes. It reports the
+available built-in profiles, provider readiness, the advisory host role when
+detected, and that external tools remain denied. Add exact selections and
+`--apply` to persist only those selections plus the generated roster:
+
+```bash
+afriend init --guided --default-profile balanced --enable-provider claude
+afriend init --guided --apply --default-profile balanced --enable-provider claude
+```
+
+Plain `afriend init` writes only a discovered roster. `afriend profiles list`,
+`show`, `create`, `update`, `delete`, and `set-default` manage named profiles
+in the user configuration. Their safe values are mode, preset, lenses,
+friend/timeout ceilings, and round/iteration ceilings; profiles cannot select
+providers, friends, models, credentials, forwarded environment, external
+tools, unsafe arguments, or sandbox exceptions.
+
+### Run status and claim discovery
+
+`afriend status <run-id-or-path>` is read-only inspection. It reports mode,
+scope, profile, lifecycle state, friends, rounds, claims, downgrades, and a
+recommended next action. `--json` returns a versioned machine view; `--watch`
+follows new `events.jsonl` records until the terminal event and treats an
+unterminated tail as still being written.
+
+`afriend resolve <run-id> --list` shows unresolved claims without writing.
+`--next` shows a claim only when the highest-priority choice is unique. A
+resolution still needs `--claim`, a user-supplied disposition, and evidence.
+
 `afriend doctor` takes `--json` and `--gc`. GC removes run directories with
 no `report.md` — every path out of a run writes one, so its absence means the
 process died. A run halted for the orchestrator keeps its report and survives.
@@ -402,9 +434,6 @@ the runner cannot know what an unvalidated flag re-enabled. Use the `=` form:
 cost reporting nobody has captured, and a flag that silently never fires is
 worse than none — you would set it and believe you were protected. Use
 `--max-calls`, which is derived from your roster and actually enforced.
-
-Not in this build: interactive setup. `afriend init` writes a roster and
-stops there.
 
 Resuming is narrower than it looks. `--resume` takes an orchestrator halt and
 nothing else — a run that ended any other way starts over.
