@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from runmeta_helpers import _resume_args, _resume_meta, _run_dir, load_fixture
 
 from adversarial_friends.adapters import FriendSpec
 from adversarial_friends.authority import DENY_ALL
@@ -19,12 +20,6 @@ from adversarial_friends.commands.runmeta import (
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Claim, Ledger
 from adversarial_friends.snapshots import SnapshotIdentity
-
-FIXTURES = Path(__file__).with_name("fixtures")
-
-
-def load_fixture(name: str) -> dict[str, object]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def test_v020_terminal_meta_is_readable_and_marks_unknowns():
@@ -284,53 +279,6 @@ def test_fresh_metadata_records_the_resolved_profile(tmp_path):
 
     assert meta["profile"] == "balanced"
     assert meta["invocation"]["profile"] == "balanced"
-
-
-def _resume_args(run_dir: Path) -> SimpleNamespace:
-    return SimpleNamespace(
-        resume=str(run_dir),
-        out=None,
-        artifact=None,
-        friend=[],
-        allow_external_tools=[],
-        allow_unsandboxed_friend=False,
-        unsafe_extra_args=None,
-        i_accept_unsandboxed=False,
-        pass_env=[],
-    )
-
-
-def _run_dir(tmp_path: Path, meta: dict[str, object]) -> Path:
-    run_dir = tmp_path / "run-v020"
-    run_dir.mkdir()
-    round_dir = run_dir / "round-1"
-    round_dir.mkdir()
-    (round_dir / "REQUEST.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "run_id": run_dir.name,
-                "round": 1,
-                "question": "merge",
-            }
-        ),
-        encoding="utf-8",
-    )
-    (run_dir / "run.json").write_text(json.dumps(meta), encoding="utf-8")
-    return run_dir
-
-
-def _resume_meta() -> dict[str, object]:
-    meta = load_fixture("run_meta_v020_halted.json")
-    meta["invocation"].update(
-        {
-            "allow_unsandboxed_friend": False,
-            "i_accept_unsandboxed": False,
-            "unsafe_extra_args": None,
-            "pass_env": [],
-        }
-    )
-    return meta
 
 
 def test_resume_keeps_the_saved_profile_without_reading_a_new_default(tmp_path, monkeypatch):

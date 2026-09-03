@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..adapters import FriendSpec
 from ..authority import AuthorityPolicy
-from ..ceilings import BUDGET_EXHAUSTED, Budget
+from ..ceilings import Budget
 from ..cliargs import MERGE_CHOICES, RUN_MODES
 from ..errors import UsageError
 from ..failures import RepeatTracker
 from ..ledger import Claim
-from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
+from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..presets import PRESETS
 from ..readiness import can_be_host_provider
 from ..report import render
@@ -33,7 +33,7 @@ from ..sessionconfig import load as load_session_config
 from ..snapshots import SnapshotIdentity, record_snapshot
 from ..themes import MAX_THEME_PROPOSALS, ThemeProposal, bounded_theme_metadata
 from ..trust import MODEL_RE, validate_roster_entry
-from ..verdicts import TERMINAL_STATES, judges_for, loop_should_terminate
+from ..verdicts import judges_for, loop_should_terminate
 from . import resumevalidation
 from .checkpoint import (
     legacy_successful_friend_ids,
@@ -46,6 +46,7 @@ from .runmeta_migration import (
     CURRENT_SCHEMA_VERSION as CURRENT_SCHEMA_VERSION,
     migrate_meta as migrate_meta,
 )
+from .runmeta_outcome import build_terminal_outcome, finalize_meta
 
 if TYPE_CHECKING:
     from ..progress import Progress
@@ -649,37 +650,6 @@ def loop_is_done(streak: int, claims: list[Any], cross: Any, roster: list[str]) 
     return loop_should_terminate(streak, unresolved_loop_states(claims, cross, roster))
 
 
-def finalize_meta(
-    meta: dict[str, Any],
-    *,
-    budget: Budget,
-    downgrades: list[str],
-    cross: "CrossexamOutcome | None",
-) -> dict[str, Any]:
-    """Fold every mode's end-of-run fields into `meta`, in place.
-
-    Extracted from cmd_run for the same reason the rest of this module was:
-    the run loop crossed the then-current line cap again, and this block is data
-    assembly with no control flow of its own -- it reads finished state and
-    writes keys. Keeping it beside the rest of run.json's shape puts every
-    field that reaches that file in one place, which is where a reader looks
-    when a key is missing.
-
-    Mutates and returns the same dict rather than building a new one: the
-    caller passes the base metadata and expects its keys to survive, and a
-    copy here would silently drop anything added between the two points.
-    """
-    if budget.exhausted_by:
-        reason = f"{BUDGET_EXHAUSTED}: {budget.exhausted_by}"
-        if reason not in downgrades:
-            downgrades.append(reason)
-    if cross is not None:
-        meta["claim_states"] = cross.states
-        meta["amendment_notes"] = cross.notes
-        meta["incomplete"] = cross.incomplete
-    return meta
-
-
 def _finished_at() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -734,49 +704,28 @@ def finish_run(
     meta["succeeded_friends"] = len(successful_friend_ids)
     meta["required_friends"] = args.require_friends
     meta["active_elapsed_s"] = active_elapsed_s
-    unresolved = bool(
-        cross is not None
-        and (
-            cross.incomplete or any(state not in TERMINAL_STATES for state in cross.states.values())
-        )
-    )
-    quorum_failed = bool(
-        args.require_friends is not None
-        and succeeded_friends is not None
-        and succeeded_friends < args.require_friends
-    )
     finished_at = _finished_at()
     started_at = str(meta.get("started_at", finished_at))
-    outcome: RunOutcome = terminal_outcome(
+    outcome, quorum_failed = build_terminal_outcome(
         mode=args.mode,
-        converged=(
-            loop_converged
-            if args.mode == "loop"
-            else any_success
-            and not unresolved
-            and auth_abort is None
-            and abort_signum is None
-            and budget.exhausted_by is None
-            and runtime_error is None
-        ),
+        cross=cross,
         loop_exhausted=loop_exhausted,
-        budget_reason=budget.exhausted_by,
-        blocking_ids=[claim.id for claim in blocking],
+        loop_converged=loop_converged,
         any_success=any_success,
-        unresolved=unresolved,
-        auth_abort=auth_abort is not None,
+        auth_abort=auth_abort,
         abort_signum=abort_signum,
-        runtime_error=runtime_error is not None,
-        quorum_failed=quorum_failed,
+        runtime_error=runtime_error,
+        require_friends=args.require_friends,
+        succeeded_friends=succeeded_friends,
+        blocking_ids=[claim.id for claim in blocking],
         started_at=started_at,
         finished_at=finished_at,
-        duration_s=active_elapsed_s,
-        attempted_calls=budget.calls,
-        spent_calls=budget.calls,
+        active_elapsed_s=active_elapsed_s,
         iterations_run=iterations_run,
-        rounds_run=max(rounds_reached, cross.rounds_run if cross is not None else 0),
-        dry_streak=streak,
+        rounds_reached=rounds_reached,
+        streak=streak,
         repeat_tracker=tracker.snapshot(),
+        budget=budget,
     )
     # Finalization adds fields after the fresh base was bounded. Refit both
     # before RunOutcome validates its input and after it adds terminal fields.

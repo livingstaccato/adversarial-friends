@@ -3,6 +3,7 @@ import shutil
 import subprocess
 
 import pytest
+from report_helpers import claim, meta
 
 from adversarial_friends.ledger import Claim
 from adversarial_friends.report import (
@@ -32,56 +33,6 @@ def _unescaped_pipe_count(line: str) -> int:
     """Count `|` column separators, ignoring any that are backslash-escaped
     (`\\|`) as part of a cell's own content."""
     return len(re.findall(r"(?<!\\)\|", line))
-
-
-def claim(cid, severity="high"):
-    return Claim(
-        id=cid,
-        supersedes=None,
-        origin=["codex/ops"],
-        lens="ops",
-        round=1,
-        advisory=False,
-        severity=severity,
-        claim="the guard is missing",
-        location="src/a.py:42",
-        evidence="src/a.py:38",
-        failure_scenario="expired token passes",
-        suggested_fix="check exp",
-    )
-
-
-def meta(**over):
-    base = {
-        "mode": "report",
-        "preset": "inherit",
-        "artifact": "spec.md",
-        "friends": [
-            {
-                "name": "codex-ops",
-                "model": "gpt-5.6-sol",
-                "effort": "high",
-                "independent": False,
-                "host_self_review": True,
-                "readonly": True,
-                "scope": "repo",
-                "status": "ok",
-            },
-            {
-                "name": "opencode-security",
-                "model": None,
-                "effort": "unverified",
-                "independent": True,
-                "host_self_review": False,
-                "readonly": False,
-                "scope": "doc",
-                "status": "failed: exit 1",
-            },
-        ],
-        "downgrades": ["opencode: no read-only capability, forced to doc scope"],
-    }
-    base.update(over)
-    return base
 
 
 def test_report_lists_findings_by_severity():
