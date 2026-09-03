@@ -103,20 +103,29 @@ def test_focused_skills_route_the_new_user_workflows_to_stable_cli_commands():
 
 
 def test_status_and_resolve_explain_how_to_inspect_a_named_run():
-    for name in ("status", "resolve"):
-        text = " ".join((ENTRYPOINTS / name / "SKILL.md").read_text().lower().split())
-        for phrase in (
-            "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
-            "--out",
-            "report.md",
-            "run.json",
-            "claims.jsonl",
-        ):
-            assert phrase in text, (name, phrase)
     status = " ".join((ENTRYPOINTS / "status" / "SKILL.md").read_text().lower().split())
     resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
+
+    for phrase in (
+        "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
+        "--out",
+        "run.json",
+        "claims.jsonl",
+    ):
+        assert phrase in status, ("status", phrase)
+    assert "report.md" not in status
+    assert "or reads a report as lifecycle evidence" in status
+
+    for phrase in (
+        "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
+        "--out",
+        "report.md",
+        "run.json",
+        "claims.jsonl",
+    ):
+        assert phrase in resolve, ("resolve", phrase)
     assert "doctor is readiness only" in status
-    assert "per-friend metadata/error" in status
+    assert "per-friend completion/failure" in status
     assert "c-0001@1" in resolve
 
 
