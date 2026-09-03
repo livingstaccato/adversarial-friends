@@ -345,7 +345,8 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     state, outcome, reported_action = _state(meta, events)
     downgrades = meta.get("downgrades")
     friends = _friends(meta, events)
-    review_completeness = from_friends(meta.get("friends", []))
+    saved_friends = meta.get("friends")
+    review_completeness = from_friends(saved_friends if isinstance(saved_friends, list) else [])
     rows = friends["rows"]
     assert isinstance(rows, list)
     started_scope = started.payload.get("scope") if started is not None else None

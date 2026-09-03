@@ -139,6 +139,19 @@ def test_status_projects_persisted_zero_response_completeness_safely(tmp_path, c
     assert "DNS temporary failure" in status._render(summary)
 
 
+@pytest.mark.parametrize("saved_friends", [None, 7], ids=("null", "scalar"))
+def test_status_ignores_nonlist_persisted_friends_for_completeness(tmp_path, capsys, saved_friends):
+    root = tmp_path / "runs"
+    run = _run(root, events=False)
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    meta["friends"] = saved_friends
+    (run / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    assert json.loads(capsys.readouterr().out)["review_completeness"] is None
+
+
 def test_status_projects_safe_legacy_friend_metadata_without_events(tmp_path, capsys):
     root = tmp_path / "runs"
     run = _run(root, events=False)
