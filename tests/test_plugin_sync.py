@@ -87,3 +87,27 @@ def test_verification_rejects_nested_plugin_symlink_without_following_it(tmp_pat
     )
     assert module.main([]) == 2
     assert outside.read_text() == "untouched"
+
+
+def test_verification_rejects_literal_skills_symlink_without_certifying_victim(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    victim = tmp_path / "victim"
+    expected = victim / "afriend" / "SKILL.md"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("expected")
+    skills = plugin / "skills"
+    try:
+        skills.symlink_to(victim, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported")
+    monkeypatch.setattr(module, "PLUGIN_ROOT", plugin)
+    monkeypatch.setattr(module, "SKILLS", skills)
+    monkeypatch.setattr(
+        module, "expected_plugin_files", lambda: {Path("afriend/SKILL.md"): b"expected"}
+    )
+    assert module.main([]) == 2
+    assert expected.read_text() == "expected"

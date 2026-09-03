@@ -113,6 +113,8 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         expected = expected_plugin_files()
+        if not argv and SKILLS.is_symlink():
+            raise ValueError(f"plugin skills target is a symlink: {SKILLS}")
         return copy_expected(expected) if argv else report_difference(collect(SKILLS), expected)
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
