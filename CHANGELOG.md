@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1
+
+A reliability release that makes Linux-confined friends retain host resolver
+configuration and makes incomplete reviews explicit instead of silently
+appearing clean.
+
+### Linux confinement and DNS
+
+- Resolves the host resolver configuration and read-only binds its actual
+  target into Linux `bwrap` confinement, covering systemd-resolved,
+  resolvconf, and NetworkManager layouts.
+- Adds regression coverage for those resolver layouts, including a real Linux
+  `bwrap` runtime check.
+
+### Incomplete-review reporting and safety clarity
+
+- Reports an explicit, sanitized `0/N friends answered` outcome in reports,
+  status, and terminal output; `--failure-summary report-only` keeps that
+  outcome in the saved report while suppressing the terminal line.
+- Preserves terminal failure precedence and tolerates malformed historical
+  friend rows during status reconstruction.
+- Clarifies that `--allow-unsandboxed-friend` is a fallback only when no OS
+  confinement mechanism is available; it never disables available confinement
+  and does not imply read protection.
+
 ## 0.4.0
 
 An interaction-focused release that makes Adversarial Friends easier to set
