@@ -26,8 +26,10 @@ from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
 from ..readiness import can_be_host_provider
 from ..report import render
+from ..reviewprofiles import get as get_review_profile, names as review_profile_names
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
+from ..sessionconfig import load as load_session_config
 from ..snapshots import SnapshotIdentity, record_snapshot
 from ..themes import MAX_THEME_PROPOSALS, ThemeProposal, bounded_theme_metadata
 from ..trust import MODEL_RE, validate_roster_entry
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
 
 _RESUMABLE_ARGS = (
     "mode",
+    "profile",
     "preset",
     "merge",
     "timeout",
@@ -91,7 +94,7 @@ _SECURITY_GRANTS: dict[str, tuple[type, object]] = {
     "pass_env": (list, []),
 }
 
-_OPTIONAL_STRINGS = {"preset", "host_provider", "model", "effort", "roster"}
+_OPTIONAL_STRINGS = {"preset", "profile", "host_provider", "model", "effort", "roster"}
 _STRING_SETTINGS = {"mode", "merge"}
 _BOOL_SETTINGS = {"attributed", "keep"}
 _OPTIONAL_BOOLS = {"include_self"}
@@ -141,6 +144,7 @@ def _base_meta(
         "lifecycle_state": "running",
         "started_at": started_at or _finished_at(),
         "mode": args.mode,
+        "profile": getattr(args, "profile", None),
         # The preset ACTUALLY used, not the flag: it defaults per mode (gate
         # defaults to thorough, §7), so printing the flag would report
         # `None` for a run that emitted high-effort flags everywhere.
@@ -526,6 +530,22 @@ def _validate_positive(name: str, value: object) -> None:
         raise UsageError(f"--{option}={value!r}: expected a positive integer")
 
 
+def _resolve_fresh_profile(args: argparse.Namespace) -> None:
+    """Apply the safe profile default before any run state can be created."""
+    requested = getattr(args, "profile", None)
+    profile_name = requested if requested is not None else load_session_config().default_profile
+    profile = get_review_profile(profile_name)
+    if profile is None:
+        known = ", ".join(review_profile_names())
+        raise UsageError(f"unknown review profile {profile_name!r}; known profiles: {known}")
+    args.profile = profile.name
+    # Parser-created namespaces carry this false default. Library callers
+    # that construct a Namespace themselves already supplied ``mode`` and
+    # retain that explicit setting for backward compatibility.
+    if not getattr(args, "_mode_explicit", True):
+        args.mode = profile.mode
+
+
 def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Path]:
     """Everything that can be refused before a single friend is dispatched.
 
@@ -539,6 +559,8 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
         # grants are checked against this invocation inside _restore_args and
         # are never restored from metadata.
         args = _restore_args(args)
+    else:
+        _resolve_fresh_profile(args)
     for name in (
         "timeout",
         "max_friends",

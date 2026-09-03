@@ -23,6 +23,21 @@ RUN_MODES = ("report", "crossexam", "gate", "loop")
 MERGE_CHOICES = ("exact", "orchestrator")
 
 
+class _ExplicitModeAction(argparse.Action):
+    """Remember that a caller chose ``--mode`` instead of accepting its default."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        del parser, option_string
+        setattr(namespace, self.dest, values)
+        namespace._mode_explicit = True
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="afriend")
     parser.add_argument("--version", action="version", version=f"afriend {__version__}")
@@ -33,7 +48,19 @@ def build_parser() -> argparse.ArgumentParser:
     # artifact, so requiring one again would invite passing a different
     # file than the run actually reviewed.
     run_p.add_argument("artifact", nargs="?", default=None)
-    run_p.add_argument("--mode", default="report", choices=list(RUN_MODES))
+    run_p.set_defaults(_mode_explicit=False)
+    run_p.add_argument(
+        "--mode",
+        default="report",
+        choices=list(RUN_MODES),
+        action=_ExplicitModeAction,
+    )
+    run_p.add_argument(
+        "--profile",
+        default=None,
+        metavar="NAME",
+        help="use a built-in review profile for this run",
+    )
     # §10.1: the default depends on the mode (gate defaults to thorough), so
     # it is resolved after parsing rather than baked in here -- None means
     # "the operator did not say".

@@ -144,6 +144,20 @@ def test_provider_selection_overrides_are_repeatable():
     assert args.disable_provider == ["claude"]
 
 
+def test_profile_and_explicit_mode_are_parsed_separately():
+    parser = cliargs.build_parser()
+
+    defaulted = parser.parse_args(["run", "spec.md", "--profile", "balanced"])
+    explicit = parser.parse_args(["run", "spec.md", "--profile", "balanced", "--mode", "gate"])
+
+    assert defaulted.profile == "balanced"
+    assert defaulted.mode == "report"
+    assert defaulted._mode_explicit is False
+    assert explicit.profile == "balanced"
+    assert explicit.mode == "gate"
+    assert explicit._mode_explicit is True
+
+
 def test_host_provider_parses_and_is_resumable():
     args = cliargs.build_parser().parse_args(["run", "spec.md", "--host-provider", "wrapper-agent"])
     assert args.host_provider == "wrapper-agent"

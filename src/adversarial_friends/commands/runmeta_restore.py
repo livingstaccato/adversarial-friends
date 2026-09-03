@@ -162,6 +162,10 @@ def restore_args(args: argparse.Namespace) -> argparse.Namespace:
     for name in _RESUMABLE_ARGS:
         if name in saved:
             setattr(restored, name, saved[name])
+    # A profile is descriptive provenance, never a current-session input on
+    # resume. Older metadata predates the field, so retain that absence
+    # rather than consulting a changed user default or a resume CLI flag.
+    restored.profile = saved.get("profile")
     restored.artifact = artifact
     restored.friend = friends
     # Restore the frozen concrete roster; re-resolving its mutable inputs

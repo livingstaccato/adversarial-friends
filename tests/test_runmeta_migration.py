@@ -14,6 +14,7 @@ from adversarial_friends.commands.runmeta import (
     _base_meta,
     _validated_roster_entries,
     migrate_meta,
+    validate_run_args,
 )
 from adversarial_friends.errors import UsageError
 from adversarial_friends.ledger import Claim, Ledger
@@ -247,7 +248,7 @@ def test_fresh_metadata_freezes_detected_host_and_effective_self_inclusion(tmp_p
     )
 
     meta = _base_meta(
-        SimpleNamespace(mode="report", merge="exact", friend=[]),
+        SimpleNamespace(mode="report", profile="quick", merge="exact", friend=[]),
         artifact,
         snapshot.artifact_hash,
         [],
@@ -262,6 +263,27 @@ def test_fresh_metadata_freezes_detected_host_and_effective_self_inclusion(tmp_p
 
     assert meta["detected_host"] == "codex"
     assert meta["effective_include_self"] is True
+
+
+def test_fresh_metadata_records_the_resolved_profile(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    snapshot = SnapshotIdentity(None, None, None, str(artifact), "sha256:" + "2" * 64)
+
+    meta = _base_meta(
+        SimpleNamespace(mode="crossexam", profile="balanced", merge="exact", friend=[]),
+        artifact,
+        snapshot.artifact_hash,
+        [],
+        [],
+        [],
+        snapshot,
+        [snapshot],
+        DENY_ALL,
+    )
+
+    assert meta["profile"] == "balanced"
+    assert meta["invocation"]["profile"] == "balanced"
 
 
 def _resume_args(run_dir: Path) -> SimpleNamespace:
@@ -309,6 +331,30 @@ def _resume_meta() -> dict[str, object]:
         }
     )
     return meta
+
+
+def test_resume_keeps_the_saved_profile_without_reading_a_new_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    saved = SimpleNamespace(
+        resume="saved-run",
+        artifact=str(tmp_path / "saved-spec.md"),
+        mode="loop",
+        profile="thorough",
+        timeout=900,
+        max_friends=None,
+        max_calls=None,
+        max_wall_clock=7200,
+        max_loop_iterations=5,
+        require_friends=None,
+        max_rounds=3,
+        model=None,
+    )
+    monkeypatch.setattr("adversarial_friends.commands.runmeta._restore_args", lambda _args: saved)
+
+    restored, _ = validate_run_args(SimpleNamespace(resume="saved-run"))
+
+    assert restored.profile == "thorough"
+    assert restored.mode == "loop"
 
 
 def _legacy_host_resume_meta(mode: str, *, frozen_host: bool) -> dict[str, object]:
