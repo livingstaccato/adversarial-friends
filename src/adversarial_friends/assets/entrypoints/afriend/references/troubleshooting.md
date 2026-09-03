@@ -162,10 +162,10 @@ Three ways out, best first:
    `bwrap` (`bubblewrap`) on Linux. Note that Ubuntu 24.04 and later also
    restrict unprivileged user namespaces, which bwrap needs:
    `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-2. **Use a verified self-confining provider.** A provider with a verified
-   read-only mode does not need `--allow-unsandboxed-friend`: it can still
-   enforce write protection when no OS sandbox is available. Where an adapter
-   also opts into OS confinement, that adds read protection.
+2. **Use a provider with a verified read-only/write-protection mode.** It does
+   not need `--allow-unsandboxed-friend`: its mode controls writes, not
+   filesystem reads, and does not replace OS read confinement. Where an
+   adapter also opts into OS confinement, that adds read protection.
 3. **`--allow-unsandboxed-friend`.** This is explicit risk acceptance, not a
    normal fix. It stamps every affected provider in the report; that provider
    runs without OS confinement and retains same-user filesystem read access.

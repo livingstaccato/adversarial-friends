@@ -254,8 +254,30 @@ def test_read_exposed_names_are_stably_deduplicated():
     out = render([], [], meta(friends=[dict(repeated, round=1), dict(repeated, round=2)]))
     sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
     assert sentence.count("claude-security") == 1
-    assert "write-protected, but ran without OS confinement" in sentence
+    assert "write-protected and not recorded as OS-confined" in sentence
+    assert "If started" in sentence
     assert "same-user filesystem read access" in sentence
+
+
+def test_read_scope_does_not_claim_a_failed_before_launch_friend_ran_unconfined():
+    friend = {
+        "name": "claude-security",
+        "model": None,
+        "effort": None,
+        "transport": "exec",
+        "write_protected": True,
+        "declared_scope": "repo",
+        "os_confined": False,
+        "status": "failed: refused before launch",
+        "round": 1,
+    }
+
+    out = render([], [], meta(friends=[friend]))
+    sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
+
+    assert "not recorded as OS-confined" in sentence
+    assert "If started, each retained same-user filesystem read access" in sentence
+    assert "ran without OS confinement" not in sentence
 
 
 @pytest.mark.parametrize(

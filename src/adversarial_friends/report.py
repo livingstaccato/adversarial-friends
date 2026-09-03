@@ -528,9 +528,11 @@ def render(
             [
                 "",
                 "**Filesystem read scope:** "
+                + "The following executable friends are write-protected and not recorded "
+                "as OS-confined: "
                 + ", ".join(_escape_cell(name) for name in read_exposed)
-                + " were write-protected, but ran without OS confinement; each retained "
-                "same-user filesystem read access outside the declared prompt scope.",
+                + ". If started, each retained same-user filesystem read access outside "
+                "the declared prompt scope.",
             ]
         )
     lines.append("")

@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2123-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2125-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -275,9 +275,11 @@ read-only. If `/etc/resolv.conf` resolves to a safe regular file elsewhere on
 the host, the sandbox exposes that resolver target read-only too. DNS therefore
 continues to work without granting general access to the host filesystem.
 
-For a provider without a verified read-only mode, make `sandbox-exec` (macOS)
-or `bwrap` (Linux) available, or choose a verified self-confining provider.
-A provider with a verified read-only mode does not need
+For a provider without a verified read-only/write-protection mode, make
+`sandbox-exec` (macOS) or `bwrap` (Linux) available, or choose a provider
+with a verified read-only/write-protection mode. That mode controls writes,
+not filesystem reads, and does not replace OS read confinement. A provider
+with a verified read-only/write-protection mode does not need
 `--allow-unsandboxed-friend`. That flag is explicit risk acceptance, not a
 normal fix: the affected provider runs without OS confinement and retains
 same-user filesystem read access.

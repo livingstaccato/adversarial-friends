@@ -309,10 +309,12 @@ what it was doing wrong rather than treating the run as complete.
 Its CLI has no read-only mode, so nothing constrains what it reads, and an
 artifact under review is untrusted text that could tell it to read anything
 the user can. Prefer making `sandbox-exec` (macOS) or `bwrap` (Linux)
-available, or using a verified self-confining provider. A provider with a
-verified read-only mode does not need `--allow-unsandboxed-friend`; that flag
-is explicit risk acceptance, not a normal fix, and lets the affected provider
-run without OS confinement with same-user filesystem read access.
+available, or using a provider with a verified read-only/write-protection
+mode. That mode controls writes, not filesystem reads, and does not replace OS
+read confinement. A provider with that verified mode does not need
+`--allow-unsandboxed-friend`; that flag is explicit risk acceptance, not a
+normal fix, and lets the affected provider run without OS confinement with
+same-user filesystem read access.
 
 **Duplicates are under-merged on purpose.** The default merge only combines
 claims with identical text and location, so two friends describing one defect

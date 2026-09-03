@@ -385,7 +385,7 @@ this authority, and these grants do not change provider defaults.
 | `--allow-external-tools=PROVIDER` | Explicitly inherit that provider's managed tools and connectors for this run; repeat per provider, or use `=*` globally |
 | `--pass-env VAR` (repeatable) | Allow an exported `VAR` through the filtered environment to every executable friend process; HTTP friends have no child environment |
 | `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
-| `--allow-unsandboxed-friend` | Explicit risk acceptance for a provider without a verified read-only mode: it runs without OS confinement and retains same-user filesystem read access (§12.2) |
+| `--allow-unsandboxed-friend` | Explicit risk acceptance for a provider without a verified read-only mode: only permits fallback when OS confinement is unavailable; it does not disable an available OS sandbox. In that fallback, it retains same-user filesystem read access (§12.2) |
 | `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |
 
 ### Guided setup and profiles
