@@ -65,3 +65,25 @@ def test_copy_rolls_back_when_staged_replace_fails(tmp_path, monkeypatch):
     assert old.read_text() == "old"
     assert not list(plugin.glob(".skills-stage-*"))
     assert not list(plugin.glob(".skills-backup-*"))
+
+
+def test_verification_rejects_nested_plugin_symlink_without_following_it(tmp_path, monkeypatch):
+    module = _module()
+    plugin = tmp_path / "plugin"
+    skills = plugin / "skills"
+    target = skills / "afriend" / "SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("expected")
+    outside = tmp_path / "outside"
+    outside.write_text("untouched")
+    try:
+        (skills / "afriend" / "outside.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unsupported")
+    monkeypatch.setattr(module, "PLUGIN_ROOT", plugin)
+    monkeypatch.setattr(module, "SKILLS", skills)
+    monkeypatch.setattr(
+        module, "expected_plugin_files", lambda: {Path("afriend/SKILL.md"): b"expected"}
+    )
+    assert module.main([]) == 2
+    assert outside.read_text() == "untouched"

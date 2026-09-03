@@ -42,11 +42,13 @@ def expected_plugin_files() -> dict[Path, bytes]:
 def collect(root: Path) -> dict[Path, bytes]:
     if not root.is_dir():
         return {}
-    return {
-        path.relative_to(root): path.read_bytes()
-        for path in root.rglob("*")
-        if path.is_file() and not path.is_symlink() and path.name != "__init__.py"
-    }
+    files: dict[Path, bytes] = {}
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"plugin skills tree contains a symlink: {path}")
+        if path.is_file() and path.name != "__init__.py":
+            files[path.relative_to(root)] = path.read_bytes()
+    return files
 
 
 def report_difference(actual: dict[Path, bytes], expected: dict[Path, bytes]) -> int:
