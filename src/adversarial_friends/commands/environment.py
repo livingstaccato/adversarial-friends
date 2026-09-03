@@ -27,6 +27,14 @@ from ..snapshots import SnapshotIdentity
 _SignalHandler = Callable[[int, FrameType | None], Any] | int | None
 
 
+def snapshot_scope_downgrade_note(artifact_name: str) -> str:
+    """The precise doc-scope warning message used for this reason."""
+    return (
+        f"{artifact_name} is not inside a git repository; every friend was "
+        "downgraded to doc scope (no repository to snapshot or read)."
+    )
+
+
 def _resolve_repo_root(artifact: Path) -> Path | None:
     """Return the git repository root enclosing `artifact`, or None if it
     is not inside a git repository at all.
@@ -73,10 +81,7 @@ def reconcile_snapshot_scope(
     """
     if identity.repo_root is not None:
         return identity.repo_root, specs
-    note = (
-        f"{artifact.name} is not inside a git repository; every friend was "
-        "downgraded to doc scope (no repository to snapshot or read)."
-    )
+    note = snapshot_scope_downgrade_note(artifact.name)
     if note not in downgrades:
         downgrades.append(note)
     return None, [dataclasses.replace(spec, scope="doc") for spec in specs]

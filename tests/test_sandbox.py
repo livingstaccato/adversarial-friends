@@ -149,6 +149,47 @@ def test_a_missing_system_path_is_skipped_entirely(tmp_path, policy):
     assert sandbox.system_binds(empty) == []
 
 
+def test_a_resolver_symlink_is_bound_with_a_regular_file_target(tmp_path, policy):
+    root = tmp_path / "root"
+    (root / "etc").mkdir(parents=True)
+    (root / "run" / "systemd" / "resolve").mkdir(parents=True)
+    target = root / "run" / "systemd" / "resolve" / "stub-resolv.conf"
+    target.write_text("nameserver 127.0.0.1\n")
+    (root / "etc" / "resolv.conf").symlink_to("../run/systemd/resolve/stub-resolv.conf")
+
+    argv = sandbox.linux_argv(policy, root=root)
+    expected = [
+        "--ro-bind",
+        "/run/systemd/resolve/stub-resolv.conf",
+        "/run/systemd/resolve/stub-resolv.conf",
+    ]
+    assert [argv[index : index + 3] for index in range(len(argv) - 2)].count(expected) == 1
+
+
+def test_a_regular_or_broken_resolver_target_adds_no_extra_bind(tmp_path, policy):
+    regular = tmp_path / "regular"
+    (regular / "etc").mkdir(parents=True)
+    (regular / "etc" / "resolv.conf").write_text("nameserver 1.1.1.1\n")
+    broken = tmp_path / "broken"
+    (broken / "etc").mkdir(parents=True)
+    (broken / "etc" / "resolv.conf").symlink_to("../run/missing")
+
+    assert "/run/systemd/resolve/stub-resolv.conf" not in sandbox.linux_argv(policy, root=regular)
+    assert "/run/missing" not in sandbox.linux_argv(policy, root=broken)
+
+
+def test_an_unreadable_resolver_target_is_not_bound(tmp_path, policy, monkeypatch):
+    root = tmp_path / "root"
+    (root / "etc").mkdir(parents=True)
+    (root / "run" / "systemd" / "resolve").mkdir(parents=True)
+    target = root / "run" / "systemd" / "resolve" / "stub-resolv.conf"
+    target.write_text("nameserver 127.0.0.1\n")
+    (root / "etc" / "resolv.conf").symlink_to("../run/systemd/resolve/stub-resolv.conf")
+    monkeypatch.setattr(sandbox.os, "access", lambda path, mode: path != target)
+
+    assert str(target) not in sandbox.linux_argv(policy, root=root)
+
+
 def test_bwrap_tolerates_a_missing_declared_read_path(tmp_path):
     """An adapter-declared config directory the operator never created must
     not refuse a friend that would otherwise have worked. bwrap fails

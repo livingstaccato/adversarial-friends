@@ -17,6 +17,19 @@ def test_readme_leads_with_the_banner():
     assert first.startswith("![adversarial-friends]")
 
 
+def test_scope_selection_docs_explain_artifact_location_and_snapshot_rules():
+    readme = REPO.joinpath("README.md").read_text()
+    skill = REPO / "src" / "adversarial_friends" / "assets" / "SKILL.md"
+    troubleshooting = (
+        REPO / "src" / "adversarial_friends" / "assets" / "references" / "troubleshooting.md"
+    ).read_text()
+
+    assert "outside a Git repository" in readme
+    assert "repository snapshot" in skill.read_text()
+    assert "untracked" in troubleshooting
+    assert "ignored" in troubleshooting
+
+
 def test_all_brand_sizes_exist():
     brand = REPO / "docs" / "images" / "brand"
     banner = brand / "adversarial-friends-banner.png"

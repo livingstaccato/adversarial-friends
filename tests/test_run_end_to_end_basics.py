@@ -275,6 +275,24 @@ def test_artifact_outside_git_repo_downgrades_every_friend_to_doc_scope(tmp_path
     assert "doc scope" in report.lower()
 
 
+def test_artifact_outside_git_repo_prints_a_scope_warning_to_stderr_by_default(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good")
+    assert result.returncode == 0, result.stderr
+    assert "warning: doc scope only" in result.stderr
+    assert "no repository was detected" in result.stderr
+    assert "explicitly repo-scope" not in result.stderr
+
+
+def test_artifact_outside_git_repo_scope_warning_prints_with_no_progress(tmp_path):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n")
+    result = run_af(tmp_path, artifact, "--friend", "fake:good", "--no-progress")
+    assert result.returncode == 0, result.stderr
+    assert "warning: doc scope only" in result.stderr
+
+
 def test_artifact_in_a_nested_subdirectory_of_a_repo_resolves_the_real_root(tmp_path):
     """isolation.snapshot_commit requires a repository ROOT and raises for
     a nested subdirectory. cmd_run must resolve the real root itself

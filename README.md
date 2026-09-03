@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1985-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1992-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -189,6 +189,13 @@ Every friend gets its **own** prompt built from its **own** lens, runs in its
 The snapshot includes **untracked** files (`git stash create` omits them), and
 the working tree is never touched — a friend reviewing your repo can't see a
 half-staged index or scribble on your checkout.
+
+Artifact location selects scope automatically. A path outside a Git repository
+produces a visible doc-scope warning and friends receive only its text; a path
+inside one receives a repository snapshot. Put the artifact in the repository
+when the review needs code context. Normal untracked, non-ignored files are
+included in a snapshot. Gitignored artifacts are intentionally excluded and
+fail rather than falling back to a stale `HEAD` version.
 
 <details>
 <summary>Full run flow, step by step</summary>

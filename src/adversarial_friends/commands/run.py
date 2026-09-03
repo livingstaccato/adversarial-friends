@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import shutil
 import signal
+import sys
 import time
 from typing import Any
 import uuid
@@ -51,6 +52,7 @@ from .environment import (
     clock_offset,
     freeze_revision,
     reconcile_snapshot_scope,
+    snapshot_scope_downgrade_note,
 )
 from .haltstate import loop_position, write_halt
 from .resume import resume_iteration
@@ -159,7 +161,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             resume_meta,
             source_artifact=artifact if resume_meta is None else None,
         )
-        repo_root, specs = reconcile_snapshot_scope(artifact, snapshot, specs, downgrades)
         digest = snapshot.artifact_hash
         snapshot_history = (
             history_from_meta(resume_meta, snapshot) if resume_meta is not None else [snapshot]
@@ -180,6 +181,26 @@ def cmd_run(args: argparse.Namespace) -> int:
         schema_file = schema_path(store.run_dir)
         artifact_text = _read_artifact_text(frozen)
 
+        warning_seen = False
+
+        def _warn_doc_scope() -> None:
+            nonlocal warning_seen
+            if warning_seen:
+                return
+            note = snapshot_scope_downgrade_note(artifact.name)
+            if note in downgrades:
+                print(
+                    "afriend: warning: doc scope only -- no repository was detected for "
+                    f"the artifact '{artifact.name}'. Friends can only read the artifact "
+                    "text, not repository code. Place the artifact file inside the "
+                    "repository you want reviewed to get full scope.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                warning_seen = True
+
+        repo_root, specs = reconcile_snapshot_scope(artifact, snapshot, specs, downgrades)
+        _warn_doc_scope()
         # The snapshot serves two independent purposes, and taking it only
         # for the first one was a bug: repo-scope friends are checked out
         # from it, AND `afriend resolve` compares a resolution's location
@@ -237,6 +258,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             started=run_started,
             prior_elapsed_s=float(getattr(args, "_resume_active_elapsed_s", 0.0)),
         )
+
         # The same `max_iterations` the derived default uses, so the
         # warning and the default cannot disagree about what a run costs.
         unreachable = warn_if_unreachable(
@@ -385,6 +407,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 _, round_specs = reconcile_snapshot_scope(
                     artifact, snapshot, round_specs, downgrades
                 )
+                _warn_doc_scope()
                 snapshot_sha = snapshot.commit
                 if revision.downgrade is not None:
                     downgrades.append(revision.downgrade)

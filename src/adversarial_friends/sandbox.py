@@ -151,6 +151,47 @@ def system_binds(root: Path = Path("/")) -> list[str]:
     return binds + symlinks
 
 
+def _resolver_binds(root: Path = Path("/")) -> list[str]:
+    """Return optional extra binds for a symlinked `/etc/resolv.conf`.
+
+    On many Linuxes `systemd-resolved` makes `/etc/resolv.conf` a symlink into
+    `/run/systemd/resolve/stub-resolv.conf`, and that target is not in
+    `system_binds()` today. In an unshared namespace, following that symlink
+    reads ENOENT and DNS lookups fail even for legitimate traffic. We bind that
+    one target file explicitly so DNS works without broadening the namespace.
+
+    Failure is non-fatal by design: if the symlink target disappears, is
+    unreadable, or points to a directory, sandbox setup proceeds without this
+    extra bind rather than refusing to run.
+    """
+    conf = root / "etc" / "resolv.conf"
+    if not conf.is_symlink():
+        return []
+    try:
+        target = conf.readlink()
+    except OSError:
+        return []
+    target_path = Path(target)
+    source = (
+        root / target_path.relative_to("/").as_posix()
+        if target_path.is_absolute()
+        else conf.parent / target_path
+    )
+    try:
+        source = source.resolve()
+    except OSError:
+        return []
+    if not source.is_file() or not os.access(source, os.R_OK):
+        return []
+    try:
+        namespace_target = Path("/") / source.relative_to(root)
+    except ValueError:
+        # The link points somewhere outside the selected root, so binding it
+        # is both hard to reason about and not required for this fix.
+        return []
+    return ["--ro-bind", str(namespace_target), str(namespace_target)]
+
+
 def _add_declared(into: list[Path], raw: str) -> None:
     """Expand one adapter-declared path and add it, with its real path.
 
@@ -314,6 +355,7 @@ def linux_argv(policy: SandboxPolicy, root: Path = Path("/")) -> list[str]:
         "/tmp",
     ]
     argv += system_binds(root)
+    argv.extend(_resolver_binds(root))
     for read_path in policy.read_paths:
         argv += ["--ro-bind-try", str(read_path), str(read_path)]
     argv += ["--bind", str(policy.workdir), str(policy.workdir)]

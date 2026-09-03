@@ -7,7 +7,9 @@ its siblings test_run_end_to_end_basics.py and
 test_run_end_to_end_lenses.py) share.
 """
 
+from contextlib import redirect_stderr
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -269,6 +271,59 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
     assert {friend["declared_scope"] for friend in meta["friends"]} == {"doc"}
     assert {spec["scope"] for spec in meta["roster"]} == {"doc"}
     assert any("no repository to snapshot or read" in note for note in meta["downgrades"])
+
+
+def test_loop_reports_doc_scope_warning_once_when_scope_drops_after_first_iteration(
+    monkeypatch, tmp_path
+):
+    from adversarial_friends.commands import run as run_module
+
+    repo = _git_repo(tmp_path / "repo")
+    inside = repo / "inside.md"
+    inside.write_text("# inside repository bytes\n")
+    link = repo / "spec.md"
+    link.symlink_to(inside)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# successor outside bytes\n")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    real_freeze = run_module.freeze_revision
+    seen = 0
+
+    def retarget_before_second_round(*args, **kwargs):
+        nonlocal seen
+        if seen == 1:
+            link.unlink()
+            link.symlink_to(outside)
+        seen += 1
+        return real_freeze(*args, **kwargs)
+
+    monkeypatch.setattr(run_module, "freeze_revision", retarget_before_second_round)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(link),
+            "--mode",
+            "loop",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_uphold_a",
+            "--friend",
+            "fake:judge_uphold_b",
+            "--max-loop-iterations",
+            "2",
+            "--no-progress",
+        ]
+    )
+
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        assert cli.cmd_run(parsed) == 11
+    assert stderr.getvalue().count("warning: doc scope only") == 1
+    assert "no repository was detected" in stderr.getvalue()
 
 
 def test_doc_scope_friend_actually_runs_inside_its_own_private_directory(tmp_path):

@@ -114,6 +114,19 @@ repository. `afriend doctor` reports this honestly: `readonly=False` for
 Because it cannot confine itself, it is confined by the OS instead — see the
 next section.
 
+## The run says "doc scope only"
+
+Artifact location selects scope automatically. An artifact inside a Git
+repository gets a repository snapshot. An artifact outside a Git repository
+gets doc scope only: friends can read the artifact text, not the repository
+code. Place the artifact file inside the repository you want reviewed when
+code context is required.
+
+Normal untracked, non-ignored files are included in that snapshot. Gitignored
+files are deliberately excluded; when the artifact itself is ignored, the run
+fails rather than silently falling back to a stale `HEAD` copy. Remove the
+ignore rule or use a non-ignored review artifact if it needs to be reviewed.
+
 ## A friend is refused: "no OS sandbox is available"
 
 ```

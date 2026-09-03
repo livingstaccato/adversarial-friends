@@ -58,6 +58,14 @@ wrote, saved to disk. All four modes run; see `references/modes.md` for the
 full rules. `report` is the default conversational and CLI mode. Select
 another mode only when the user names it or clearly requests its semantics.
 
+Artifact location selects the automatic scope. An artifact inside a Git
+repository gets a repository snapshot; an artifact outside a Git repository
+gets doc scope only, with a warning before friends start. Put it inside the
+target repository when code inspection is intended. Normal untracked,
+non-ignored files are included in the snapshot. Gitignored artifacts are
+deliberately excluded and fail rather than silently reviewing stale `HEAD`
+contents.
+
 Every mode dispatches the artifact to every discovered friend in parallel and
 writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
 or `--out DIR`) containing `claims.jsonl`, `report.md`, `run.json`, a frozen
