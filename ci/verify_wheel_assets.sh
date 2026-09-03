@@ -25,9 +25,14 @@ for directory, pattern in (("adapters", "*.toml"), ("harnesses", "*.md"), ("lens
         expected.add(str(Path("adversarial_friends/assets") / path.relative_to(assets)))
 
 with zipfile.ZipFile(wheel) as archive:
+    names = archive.namelist()
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        print("error: wheel has duplicate archive members:", *duplicates, sep="\n  ", file=sys.stderr)
+        raise SystemExit(1)
     actual = {
         name
-        for name in archive.namelist()
+        for name in names
         if name.startswith("adversarial_friends/assets/") and name.endswith((".md", ".toml"))
     }
 

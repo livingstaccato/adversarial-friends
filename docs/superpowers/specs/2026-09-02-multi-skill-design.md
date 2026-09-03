@@ -111,9 +111,9 @@ one.  It never invents a resolution or represents an attestation as proof the
 underlying defect is fixed.
 
 The host remains the orchestrator.  In Codex, its self-review is advisory;
-independent-friend and judging-mode requirements remain unchanged.  Providers
-remain deny-by-default and external tools remain denied unless explicitly
-authorized.
+independent-friend and judging-mode requirements remain unchanged. Provider
+selection follows effective configured defaults; external tools remain denied
+unless explicitly authorized.
 
 ## Documentation and diagrams
 

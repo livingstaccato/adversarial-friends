@@ -15,16 +15,23 @@ SKILLS = PLUGIN_ROOT / "skills"
 
 
 def project_tree(source: Path, destination: Path) -> dict[Path, bytes]:
-    """Return source bytes mapped under a relative plugin destination."""
-    return {
-        destination / path.relative_to(source): path.read_bytes()
-        for path in source.rglob("*")
-        if path.is_file() and path.name != "__init__.py" and "__pycache__" not in path.parts
-    }
+    """Return source bytes mapped under a relative plugin destination.
+
+    Canonical packaging data must be regular files and directories: following a
+    symlink here could copy material outside the reviewed source tree.
+    """
+    if source.is_symlink():
+        raise ValueError(f"canonical source is a symlink: {source}")
+    files: dict[Path, bytes] = {}
+    for path in source.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"canonical source contains a symlink: {path}")
+        if path.is_file() and path.name != "__init__.py" and "__pycache__" not in path.parts:
+            files[destination / path.relative_to(source)] = path.read_bytes()
+    return files
 
 
 def expected_plugin_files() -> dict[Path, bytes]:
-    """Build the only allowed file map beneath the plugin's skills directory."""
     expected = project_tree(ASSETS / "entrypoints", Path())
     expected |= project_tree(ASSETS / "adapters", Path("afriend/adapters"))
     expected |= project_tree(ASSETS / "harnesses", Path("afriend/harnesses"))
@@ -38,7 +45,7 @@ def collect(root: Path) -> dict[Path, bytes]:
     return {
         path.relative_to(root): path.read_bytes()
         for path in root.rglob("*")
-        if path.is_file() and path.name != "__init__.py" and "__pycache__" not in path.parts
+        if path.is_file() and not path.is_symlink() and path.name != "__init__.py"
     }
 
 
@@ -58,57 +65,56 @@ def report_difference(actual: dict[Path, bytes], expected: dict[Path, bytes]) ->
     ):
         if paths:
             print(f"  {heading}:", file=sys.stderr)
-            for path in paths:
-                print(f"    {path}", file=sys.stderr)
+            print(*(f"    {path}" for path in paths), sep="\n", file=sys.stderr)
     return 1
 
 
-def is_inside_plugin(path: Path) -> bool:
-    try:
-        path.resolve().relative_to(PLUGIN_ROOT.resolve())
-    except ValueError:
-        return False
-    return True
-
-
 def copy_expected(expected: dict[Path, bytes]) -> int:
-    """Stage, validate, then replace exactly the resolved plugin skills directory."""
+    """Stage and validate, then replace skills with rollback on rename failure."""
     plugin_root = PLUGIN_ROOT.resolve()
-    skills = SKILLS.resolve()
-    if not plugin_root.is_dir() or not is_inside_plugin(skills) or skills.parent != plugin_root:
-        print("error: resolved skills target is outside the plugin root", file=sys.stderr)
+    if not plugin_root.is_dir() or SKILLS.is_symlink():
+        print("error: plugin skills target is unsafe", file=sys.stderr)
+        return 2
+    if SKILLS.exists() and not SKILLS.is_dir():
+        print("error: plugin skills target is not a directory", file=sys.stderr)
         return 2
     stage_parent = Path(tempfile.mkdtemp(prefix=".skills-stage-", dir=plugin_root))
+    backup: Path | None = None
     try:
-        staged_skills = stage_parent / "skills"
+        staged = stage_parent / "skills"
         for relative, payload in expected.items():
-            target = staged_skills / relative
-            if not is_inside_plugin(target) or not target.resolve().is_relative_to(
-                stage_parent.resolve()
-            ):
-                print(f"error: unsafe projected path: {relative}", file=sys.stderr)
-                return 2
+            target = staged / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
-        if report_difference(collect(staged_skills), expected):
-            print("error: staged plugin projection failed validation", file=sys.stderr)
+        if report_difference(collect(staged), expected):
             return 2
-        if skills.exists():
-            shutil.rmtree(skills)
-        staged_skills.replace(skills)
+        if SKILLS.exists():
+            backup = Path(tempfile.mkdtemp(prefix=".skills-backup-", dir=plugin_root))
+            backup.rmdir()
+            SKILLS.replace(backup)
+        try:
+            staged.replace(SKILLS)
+        except OSError:
+            if backup is not None and backup.exists() and not SKILLS.exists():
+                backup.replace(SKILLS)
+            raise
+        if backup is not None:
+            shutil.rmtree(backup)
+        return report_difference(collect(SKILLS), expected)
     finally:
         shutil.rmtree(stage_parent, ignore_errors=True)
-    return report_difference(collect(SKILLS), expected)
 
 
 def main(argv: list[str]) -> int:
     if argv not in ([], ["--copy"]):
         print("usage: check_plugin_sync.py [--copy]", file=sys.stderr)
         return 2
-    expected = expected_plugin_files()
-    if argv == ["--copy"]:
-        return copy_expected(expected)
-    return report_difference(collect(SKILLS), expected)
+    try:
+        expected = expected_plugin_files()
+        return copy_expected(expected) if argv else report_difference(collect(SKILLS), expected)
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

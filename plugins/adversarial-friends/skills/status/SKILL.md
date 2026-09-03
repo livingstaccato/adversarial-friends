@@ -1,6 +1,6 @@
 ---
 name: status
-description: Use when Adversarial Friends is directly selected to inspect provider readiness or a named existing run, or when /afriend routes explicit status intent. This is a read-only operational skill.
+description: Use only through direct qualified selection ($adversarial-friends:status) or explicit /afriend routing to inspect provider readiness or a named existing run. This is read-only.
 ---
 
 # Adversarial Friends status
@@ -17,5 +17,7 @@ probed. When the user supplies a named run or run directory, inspect its
 recorded outcome and recommend the next action; never invent a run identity.
 
 This skill is read-only: it never dispatches friends and never changes
-configuration. Codex remains an advisory host orchestrator, and external
-tools remain denied by default unless a past run records explicit authority.
+configuration. Codex remains an advisory host orchestrator. A past run's
+authority record is descriptive only: external tools are denied for a new
+`afriend run --resume` invocation unless the same normalized grant is supplied
+again on that command line.

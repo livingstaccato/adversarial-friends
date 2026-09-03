@@ -1,6 +1,6 @@
 ---
 name: review
-description: Use when Adversarial Friends is directly selected to review a supplied artifact, or when /afriend routes explicit review intent. Do not use for generic review requests without an explicit product trigger.
+description: Use only through direct qualified selection ($adversarial-friends:review) or explicit /afriend routing for a supplied artifact. Do not use for generic review requests.
 ---
 
 # Adversarial Friends review
@@ -23,7 +23,7 @@ scope warnings, ceilings, and incomplete judging results rather than treating
 them as successful independent review.
 
 Codex is the orchestrator; its host self-review is advisory and cannot satisfy
-independent-friend, judging, gate, or loop requirements. Providers are
-deny-by-default. External tools are denied by default and require explicit
+independent-friend, judging, gate, or loop requirements. Provider selection
+follows effective configured defaults. External tools are denied by default and require explicit
 `--allow-external-tools=PROVIDER` or the explicit global `*` authority; never
 infer that authority from provider selection or sandboxing.

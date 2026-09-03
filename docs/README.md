@@ -19,10 +19,10 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 `afriend resume <run-id>` routes through `/afriend` to `afriend run --resume
 <run-id>`; it is not a claim-resolution disposition and needs no evidence.
 
-> These entrypoints live under `src/adversarial_friends/assets/` because they ship
-> **inside the wheel** as package data — the runner resolves them at runtime
-> via `importlib.resources`, and they are mirrored into `plugins/` for plugin
-> loaders. Edit them there, never in the mirror.
+> These entrypoints ship **inside the wheel** as package and plugin distribution
+> payload. The runtime resolves adapters, lenses, and staged harness workspace
+> assets via `importlib.resources`; it does not resolve entrypoint skills at
+> runtime. Edit canonical assets here, never the plugin projection.
 
 ---
 

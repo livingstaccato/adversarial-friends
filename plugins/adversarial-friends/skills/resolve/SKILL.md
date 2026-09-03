@@ -1,6 +1,6 @@
 ---
 name: resolve
-description: Use when Adversarial Friends is directly selected to record a disposition for a named run claim, or when /afriend routes explicit resolution intent. Require user-supplied run, disposition, and evidence.
+description: Use only through direct qualified selection ($adversarial-friends:resolve) or explicit /afriend routing to record a disposition for a named run claim. Require user-supplied run, disposition, and evidence.
 ---
 
 # Adversarial Friends resolution
@@ -23,5 +23,5 @@ an attestation, not proof that a defect is fixed, so report the recorded
 location-changed, location-unchanged, or unverifiable outcome honestly.
 
 This skill does not dispatch a new review or change provider defaults. Codex
-remains advisory, providers are deny-by-default, and external-tool authority
+remains advisory, provider selection follows effective configured defaults, and external-tool authority
 must be explicit for any separate run.

@@ -1,6 +1,6 @@
 ---
 name: afriend
-description: Use for /afriend, when the user directly selects this skill, explicit afriend or “a friend” requests, and named Adversarial Friends requests. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, or architecture requests without those explicit triggers.
+description: Use for /afriend, when the user directly selects this skill, explicit afriend requests, operative “ask/use a friend to …” requests, and explicit requests to use Adversarial Friends. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, architecture requests, or incidental mentions of a friend.
 ---
 
 # /afriend — Adversarial Friends router
@@ -17,8 +17,9 @@ they disagree are usually where the real problem is.
 
 `/afriend` is the short direct selector and the only router. Activate only for
 direct selection, command-like intent that starts with `afriend` or uses
-`afriend to ...`, an explicit “a friend” request, or a request that names
-**Adversarial Friends**. Equivalent review forms include `afriend this plan`,
+`afriend to ...`, an operative “ask/use a friend to …” request, or an explicit
+request to use **Adversarial Friends**. An incidental mention such as “a friend
+sent me this” does not activate this skill. Equivalent review forms include `afriend this plan`,
 `afriend to this plan`, `afriend docs/design.md`, and `afriend to
 docs/design.md with crossexam`.
 

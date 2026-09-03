@@ -41,7 +41,12 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
     body = " ".join(text.lower().replace("`", "").split())
 
     assert "/afriend" in text
-    for trigger in ("explicit afriend", "a friend", "adversarial friends", "directly selects"):
+    for trigger in (
+        "explicit afriend",
+        "ask/use a friend",
+        "adversarial friends",
+        "directly selects",
+    ):
         assert trigger in description, trigger
     for operation in ("review", "status", "configure", "resolve"):
         assert operation in body
@@ -52,6 +57,7 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
     assert "cli command names remain doctor and run" in body
     for generic_request in ("review this", "poke holes", "second opinion"):
         assert generic_request in body
+    assert "friend sent me this" in body
 
 
 def test_focused_skills_hold_their_operational_boundaries():

@@ -278,9 +278,16 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
 
     assert "/afriend" in positive_prompts
     assert "afriend to" in positive_prompts
+    assert "ask a friend to" in positive_prompts
     assert "adversarial friends" in positive_prompts
     assert "$adversarial-friends:afriend" in positive_prompts
-    for phrase in ("review this", "challenge this", "poke holes", "second opinion"):
+    for phrase in (
+        "review this",
+        "challenge this",
+        "poke holes",
+        "second opinion",
+        "a friend sent me",
+    ):
         assert phrase in negative_prompts, phrase
     assert all("af run" not in case["expected_output"].lower() for case in evals)
     assert "afriend" not in negative_prompts
@@ -361,6 +368,12 @@ def test_resume_routes_to_run_without_claim_resolution_inputs():
     assert resume_eval["skill"] == "afriend"
     assert resume_eval["requires_artifact"] is False
     assert "afriend run --resume" in resume_eval["expected_output"]
+
+
+def test_status_describes_resume_authority_as_current_command_line_grant():
+    status = " ".join((ENTRYPOINTS / "status" / "SKILL.md").read_text().lower().split())
+    assert "past run's authority record is descriptive only" in status
+    assert "same normalized grant is supplied again" in status
 
 
 def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_contract():
