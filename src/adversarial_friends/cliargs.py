@@ -230,8 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--allow-unsandboxed-friend",
         action="store_true",
-        help="explicitly allow a provider without a read-only mode to run without OS "
-        "confinement; it retains same-user filesystem read access",
+        help="fallback-only when no OS confinement mechanism is available: permit a provider "
+        "without a read-only mode to run without confinement; it never disables an available "
+        "bwrap or sandbox-exec. On fallback, it retains same-user filesystem read access",
     )
     run_p.add_argument(
         "--allow-external-tools",

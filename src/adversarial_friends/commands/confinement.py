@@ -74,7 +74,8 @@ def confinement_downgrades(
                 f"{', '.join(passed_to_some)}. They are NOT in this run's withheld "
                 "record."
             )
-    if unconfined and sandbox.detect() is None:
+    mechanism = sandbox.detect() if unconfined else None
+    if unconfined and mechanism is None:
         # No mechanism, so these friends get no FILESYSTEM confinement. Their
         # environment is still filtered -- that is not what a sandbox does.
         downgrades.append(
@@ -83,9 +84,10 @@ def confinement_downgrades(
             + " is not confined: each can read anything this user can. Their "
             "environment is still filtered."
         )
-    if unconfined and args.allow_unsandboxed_friend:
+    if unconfined and args.allow_unsandboxed_friend and mechanism is None:
         downgrades.append(
-            "--allow-unsandboxed-friend was passed: "
+            "--allow-unsandboxed-friend was passed as fallback only when no OS confinement "
+            "mechanism is available; it never disables an available bwrap or sandbox-exec: "
             + ", ".join(s.name for s in unconfined)
             + " may run with no OS confinement and retain same-user filesystem "
             "read access. The artifact under "

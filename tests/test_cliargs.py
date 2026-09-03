@@ -103,6 +103,8 @@ def test_unsandboxed_friend_help_names_lost_confinement_and_read_authority():
 
     assert "OS confinement" in help_text
     assert "same-user filesystem read access" in help_text
+    assert "only when no OS confinement mechanism is available" in help_text
+    assert "never disables an available bwrap or sandbox-exec" in help_text
 
 
 def test_fake_scope_suffix_still_wins_over_model_parsing(registry):

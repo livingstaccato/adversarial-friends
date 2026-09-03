@@ -498,6 +498,34 @@ def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
     assert outcome.os_confined is False
 
 
+def test_override_does_not_disable_available_confinement(monkeypatch, tmp_path):
+    from adversarial_friends import dispatch
+
+    wrapped = []
+    monkeypatch.setattr(sandbox, "detect", lambda *a, **k: sandbox.BWRAP)
+
+    def _wrap(argv, *_args, **_kwargs):
+        wrapped.append(list(argv))
+        return argv
+
+    monkeypatch.setattr(sandbox, "wrap", _wrap)
+    registry = {"unconfinable": _unconfinable_adapter(binary="true")}
+    prompt = tmp_path / "p.prompt"
+    prompt.write_text("hi")
+    _spec, _cap, outcome, _policy = dispatch._dispatch(
+        _spec_for(),
+        tmp_path,
+        registry,
+        None,
+        prompt,
+        tmp_path / "s.json",
+        allow_unsandboxed=True,
+    )
+
+    assert wrapped
+    assert outcome.os_confined is True
+
+
 def test_confinement_is_recorded_only_after_the_command_is_wrapped(monkeypatch, tmp_path):
     from adversarial_friends import dispatch
 
