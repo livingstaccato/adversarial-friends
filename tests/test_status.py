@@ -381,6 +381,54 @@ def test_repo_started_run_keeps_its_scope_after_a_friend_event(tmp_path, capsys)
     assert summary["friends"]["rows"][0]["scope"] == "unknown"
 
 
+def test_status_and_watch_use_only_the_latest_lifecycle_invocation(tmp_path, capsys):
+    root = tmp_path / "runs"
+    run = _run(root, state="waiting-for-orchestrator", events=False)
+    first_start = _event(
+        "run_started",
+        {"mode": "report", "profile": "quick", "scope": "doc", "status": "started"},
+    )
+    first_finish = _event("run_finished", {"status": "halted", "next_action": "resume"})
+    resumed_start = _event(
+        "run_started",
+        {"mode": "crossexam", "profile": "balanced", "scope": "repo", "status": "started"},
+    )
+    resumed_finish = _event(
+        "run_finished", {"status": "completed", "next_action": "inspect_report"}
+    )
+    (run / "events.jsonl").write_text(
+        first_start + "\n" + first_finish + "\n" + resumed_start + "\n", encoding="utf-8"
+    )
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["state"] == "live"
+    assert summary["mode"] == "crossexam"
+    assert summary["profile"] == "balanced"
+    assert summary["scope"] == "repo"
+    observed = list(
+        status.watch_events(
+            run / "events.jsonl",
+            root=root,
+            poll_s=0,
+            start_at_end=True,
+            snapshots=[
+                first_start + "\n" + first_finish + "\n" + resumed_start + "\n",
+                first_start
+                + "\n"
+                + first_finish
+                + "\n"
+                + resumed_start
+                + "\n"
+                + resumed_finish
+                + "\n",
+            ],
+        )
+    )
+    assert [event.type for event in observed] == ["run_finished"]
+
+
 def test_status_surfaces_safe_scope_rounds_and_finished_friend_rows(tmp_path, capsys):
     root = tmp_path / "runs"
     run = _run(root)

@@ -274,6 +274,14 @@ def _rounds(
     return {"current": current, "final": current if state in {"terminal", "halted"} else None}
 
 
+def _latest_invocation(events: list[EventRecord]) -> list[EventRecord]:
+    """Discard completed earlier attempts when a halted run has resumed."""
+    for index in range(len(events) - 1, -1, -1):
+        if events[index].type == "run_started":
+            return events[index:]
+    return events
+
+
 def _state(meta: dict[str, Any], events: list[EventRecord]) -> tuple[str, str | None, str | None]:
     finished = next((event for event in reversed(events) if event.type == "run_finished"), None)
     if finished is not None:
@@ -284,12 +292,14 @@ def _state(meta: dict[str, Any], events: list[EventRecord]) -> tuple[str, str | 
             status if isinstance(status, str) else None,
             action if isinstance(action, str) else None,
         )
+    if events:
+        return "live", None, None
     lifecycle = meta.get("lifecycle_state")
     if lifecycle == "terminal":
         return "terminal", None, None
     if isinstance(lifecycle, str) and ("waiting" in lifecycle or "halt" in lifecycle):
         return "halted", None, "resume"
-    if lifecycle == "running" or events:
+    if lifecycle == "running":
         return "live", None, None
     return "legacy", None, None
 
@@ -319,7 +329,7 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     meta, has_metadata = _read_optional_json(
         run_dir / "run.json", root=root, label="saved run metadata"
     )
-    events = _read_events(run_dir / "events.jsonl", root=root)
+    events = _latest_invocation(_read_events(run_dir / "events.jsonl", root=root))
     if not has_metadata and not events:
         raise UsageError(f"{run_dir} is not a run directory: no run.json or valid lifecycle events")
     claims = _claim_counts(_read_ledger(run_dir / "claims.jsonl", root=root))
@@ -327,9 +337,9 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     mode = meta.get("mode") if isinstance(meta.get("mode"), str) else None
     profile = meta.get("profile") if isinstance(meta.get("profile"), str) else None
     if started is not None:
-        if mode is None and isinstance(started.payload.get("mode"), str):
+        if isinstance(started.payload.get("mode"), str):
             mode = started.payload["mode"]
-        if profile is None and isinstance(started.payload.get("profile"), str):
+        if isinstance(started.payload.get("profile"), str):
             profile = started.payload["profile"]
     state, outcome, reported_action = _state(meta, events)
     downgrades = meta.get("downgrades")
@@ -403,7 +413,7 @@ def watch_events(
                 except (json.JSONDecodeError, UsageError, TypeError, ValueError) as exc:
                     raise UsageError(f"{temporary.name} line {line_no}: {exc}") from exc
         if initial and start_at_end:
-            if any(event.type == "run_finished" for event in events):
+            if any(event.type == "run_finished" for event in _latest_invocation(events)):
                 return
             emitted = len(events)
         initial = False
