@@ -217,10 +217,13 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
     disabled = set(getattr(args, "disable_provider", []))
     ollama_model = getattr(args, "ollama_model", None)
 
-    if default_profile is not None and reviewprofiles.get(default_profile) is None:
-        raise UsageError(
-            f"default profile must be one of {list(reviewprofiles.names())}; got {default_profile!r}"
-        )
+    if default_profile is not None:
+        session = sessionconfig.load()
+        if reviewprofiles.resolve(default_profile, session.profiles) is None:
+            known_profiles = [*reviewprofiles.names(), *sorted(session.profiles)]
+            raise UsageError(
+                f"default profile must be one of {known_profiles}; got {default_profile!r}"
+            )
     for name in sorted(enabled | disabled):
         if name not in known:
             raise UsageError(f"provider must be one of {sorted(known)}; got {name!r}")

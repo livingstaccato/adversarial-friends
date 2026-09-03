@@ -26,7 +26,7 @@ from ..outcomes import MAX_JSON_SAFE_INTEGER, RunOutcome, terminal_outcome
 from ..presets import PRESETS
 from ..readiness import can_be_host_provider
 from ..report import render
-from ..reviewprofiles import get as get_review_profile, names as review_profile_names
+from ..reviewprofiles import names as review_profile_names, resolve as resolve_review_profile
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
 from ..sessionconfig import load as load_session_config
@@ -534,8 +534,9 @@ def _validate_positive(name: str, value: object) -> None:
 def _resolve_fresh_profile(args: argparse.Namespace) -> None:
     """Apply the safe profile default before any run state can be created."""
     requested = getattr(args, "profile", None)
-    profile_name = requested if requested is not None else load_session_config().default_profile
-    profile = get_review_profile(profile_name)
+    config = load_session_config()
+    profile_name = requested if requested is not None else config.default_profile
+    profile = resolve_review_profile(profile_name, config.profiles)
     if profile is None:
         known = ", ".join(review_profile_names())
         raise UsageError(f"unknown review profile {profile_name!r}; known profiles: {known}")
@@ -545,6 +546,15 @@ def _resolve_fresh_profile(args: argparse.Namespace) -> None:
     # retain that explicit setting for backward compatibility.
     if not getattr(args, "_mode_explicit", True):
         args.mode = profile.mode
+    explicit: set[str] = set(getattr(args, "_profile_settings_explicit", set()))
+    for field, value in profile.settings.items():
+        target = "lens" if field == "lenses" else field
+        if target not in explicit:
+            if field == "lenses":
+                assert isinstance(value, (list, tuple))
+                setattr(args, target, list(value))
+            else:
+                setattr(args, target, value)
 
 
 def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Path]:

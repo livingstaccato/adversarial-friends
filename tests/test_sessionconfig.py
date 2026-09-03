@@ -22,7 +22,8 @@ def test_set_default_round_trips_with_atomic_json_contract(tmp_path, monkeypatch
     assert sessionconfig.load(reviewprofiles.names()).default_profile == "balanced"
     assert json.loads(sessionconfig.config_path().read_text(encoding="utf-8")) == {
         "default_profile": "balanced",
-        "version": 1,
+        "profiles": {},
+        "version": 2,
     }
     assert list(sessionconfig.config_path().parent.glob("*.tmp")) == []
 
@@ -82,7 +83,7 @@ def test_builtin_profiles_only_define_safe_run_defaults():
     )
     assert reviewprofiles.get("unknown") is None
     for profile in reviewprofiles.builtins().values():
-        assert tuple(vars(profile)) == ("name", "mode")
+        assert tuple(vars(profile)) == ("name", "mode", "settings")
         assert "provider" not in vars(profile)
         assert "friend" not in vars(profile)
         assert "credential" not in vars(profile)

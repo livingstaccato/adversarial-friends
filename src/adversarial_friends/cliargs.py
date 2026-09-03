@@ -38,6 +38,27 @@ class _ExplicitModeAction(argparse.Action):
         namespace._mode_explicit = True
 
 
+class _ExplicitProfileSettingAction(argparse.Action):
+    """Track a run flag so profile defaults cannot replace an explicit choice."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        del parser, option_string
+        current = getattr(namespace, self.dest, None)
+        if isinstance(current, list):
+            current.append(values)
+        else:
+            setattr(namespace, self.dest, values)
+        explicit = set(getattr(namespace, "_profile_settings_explicit", set()))
+        explicit.add(self.dest)
+        namespace._profile_settings_explicit = explicit
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="afriend")
     parser.add_argument("--version", action="version", version=f"afriend {__version__}")
@@ -48,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     # artifact, so requiring one again would invite passing a different
     # file than the run actually reviewed.
     run_p.add_argument("artifact", nargs="?", default=None)
-    run_p.set_defaults(_mode_explicit=False)
+    run_p.set_defaults(_mode_explicit=False, _profile_settings_explicit=set())
     run_p.add_argument(
         "--mode",
         default="report",
@@ -64,7 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     # §10.1: the default depends on the mode (gate defaults to thorough), so
     # it is resolved after parsing rather than baked in here -- None means
     # "the operator did not say".
-    run_p.add_argument("--preset", default=None, choices=list(PRESETS))
+    run_p.add_argument(
+        "--preset", default=None, choices=list(PRESETS), action=_ExplicitProfileSettingAction
+    )
     run_p.add_argument(
         "--friend",
         action="append",
@@ -109,9 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--effort", default=None, help="override every friend's effort")
     # §8.1: shape discovery without naming individual friends.
     run_p.add_argument(
-        "--lens", action="append", default=[], help="restrict discovery to these lenses"
+        "--lens",
+        action=_ExplicitProfileSettingAction,
+        default=[],
+        help="restrict discovery to these lenses",
     )
-    run_p.add_argument("--max-friends", type=int, default=None, metavar="N")
+    run_p.add_argument(
+        "--max-friends", type=int, default=None, metavar="N", action=_ExplicitProfileSettingAction
+    )
     # A floor, not a ceiling. Without it, a run where 1 of 50 friends
     # answered (everyone else misconfigured, rate-limited, or down) exits 0
     # the same as a run where 50 of 50 did -- the report says plainly that
@@ -126,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
+        action=_ExplicitProfileSettingAction,
         help="fail the run (exit 12) if fewer than N friends produce a usable answer",
     )
     # §12.4: worktrees and the run directory are removed at run end unless
@@ -175,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PROVIDER",
         help="allow provider-managed tools for PROVIDER (repeatable; '*' allows all)",
     )
-    run_p.add_argument("--timeout", type=int, default=900)
+    run_p.add_argument("--timeout", type=int, default=900, action=_ExplicitProfileSettingAction)
     run_p.add_argument("--out", default=None)
     # Progress is ON by default and goes to stderr. A crossexam is silent
     # for tens of minutes otherwise, and a silent run cannot be told from a
@@ -199,10 +228,22 @@ def build_parser() -> argparse.ArgumentParser:
     # because its default is DERIVED from the roster size (see
     # ceilings.derive_max_calls): a constant here is exactly the bug §7.4
     # calls out, where the shipped default tripped its own ceiling mid-run.
-    run_p.add_argument("--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS)
-    run_p.add_argument("--max-calls", type=int, default=None)
-    run_p.add_argument("--max-wall-clock", type=int, default=DEFAULT_MAX_WALL_CLOCK_S)
-    run_p.add_argument("--max-loop-iterations", type=int, default=DEFAULT_MAX_LOOP_ITERATIONS)
+    run_p.add_argument(
+        "--max-rounds", type=int, default=DEFAULT_MAX_ROUNDS, action=_ExplicitProfileSettingAction
+    )
+    run_p.add_argument("--max-calls", type=int, default=None, action=_ExplicitProfileSettingAction)
+    run_p.add_argument(
+        "--max-wall-clock",
+        type=int,
+        default=DEFAULT_MAX_WALL_CLOCK_S,
+        action=_ExplicitProfileSettingAction,
+    )
+    run_p.add_argument(
+        "--max-loop-iterations",
+        type=int,
+        default=DEFAULT_MAX_LOOP_ITERATIONS,
+        action=_ExplicitProfileSettingAction,
+    )
 
     # §7.5. Appends a Resolution to a finished run's ledger and re-reports
     # the gate. Separate from `run` because resolving happens after a human
@@ -276,7 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
     status_p.add_argument("run_id", metavar="RUN_ID_OR_PATH")
     status_p.add_argument("--out", default=None, help="run root, if not the default")
     status_p.add_argument("--json", action="store_true", help="machine-readable output")
-    status_p.add_argument("--watch", action="store_true", help="follow lifecycle events until finished")
+    status_p.add_argument(
+        "--watch", action="store_true", help="follow lifecycle events until finished"
+    )
 
     providers_p = sub.add_parser("providers")
     provider_sub = providers_p.add_subparsers(dest="provider_command", required=True)
@@ -288,6 +331,31 @@ def build_parser() -> argparse.ArgumentParser:
     set_model_p = provider_sub.add_parser("set-model")
     set_model_p.add_argument("name", metavar="NAME")
     set_model_p.add_argument("model", metavar="MODEL")
+
+    profiles_p = sub.add_parser("profiles")
+    profiles_sub = profiles_p.add_subparsers(dest="profiles_command", required=True)
+    list_profiles_p = profiles_sub.add_parser("list")
+    list_profiles_p.add_argument("--json", action="store_true")
+    show_profiles_p = profiles_sub.add_parser("show")
+    show_profiles_p.add_argument("name", metavar="NAME")
+    show_profiles_p.add_argument("--json", action="store_true")
+    for action in ("create", "update"):
+        profile_p = profiles_sub.add_parser(action)
+        profile_p.add_argument("name", metavar="NAME")
+        profile_p.add_argument("--base", default=None, metavar="NAME")
+        profile_p.add_argument("--mode", choices=list(RUN_MODES), default=None)
+        profile_p.add_argument("--preset", choices=list(PRESETS), default=None)
+        profile_p.add_argument("--lens", action="append", default=None, metavar="NAME")
+        profile_p.add_argument("--max-friends", type=int, default=None, metavar="N")
+        profile_p.add_argument("--require-friends", type=int, default=None, metavar="N")
+        profile_p.add_argument("--timeout", type=int, default=None, metavar="SECONDS")
+        profile_p.add_argument("--max-rounds", type=int, default=None, metavar="N")
+        profile_p.add_argument("--max-calls", type=int, default=None, metavar="N")
+        profile_p.add_argument("--max-wall-clock", type=int, default=None, metavar="SECONDS")
+        profile_p.add_argument("--max-loop-iterations", type=int, default=None, metavar="N")
+    profiles_sub.choices["create"].set_defaults(base_required=True)
+    profiles_sub.add_parser("delete").add_argument("name", metavar="NAME")
+    profiles_sub.add_parser("set-default").add_argument("name", metavar="NAME")
     return parser
 
 
