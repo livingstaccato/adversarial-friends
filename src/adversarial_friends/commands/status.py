@@ -12,10 +12,11 @@ from typing import Any
 
 from ..errors import UsageError
 from ..events import EventRecord, read_events
+from ..ids import FRIEND_NAME_RE
 from ..jsonio import MAX_JSON_FILE_BYTES, decode_json_object
 from ..ledger import Claim, Resolution, record_from_dict
 from ..runstore import default_root
-from ..secureio import secure_open_directory, secure_read_bytes
+from ..secureio import secure_open_directory, secure_read_bytes, secure_regular_exists
 
 STATUS_SCHEMA_VERSION = 1
 _POLL_S = 0.25
@@ -77,6 +78,16 @@ def _read_json(path: Path, *, root: Path, label: str) -> dict[str, Any]:
     return decode_json_object(payload, path=path, label=label)
 
 
+def _read_optional_json(path: Path, *, root: Path, label: str) -> dict[str, Any]:
+    """A run can expose events before its initial metadata checkpoint."""
+    try:
+        return _read_json(path, root=root, label=label)
+    except UsageError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return {}
+        raise
+
+
 def _read_ledger(path: Path, *, root: Path) -> list[Claim | Resolution]:
     """Read the two record types status needs without constructing a Ledger.
 
@@ -119,16 +130,76 @@ def _claim_counts(records: Iterable[Claim | Resolution]) -> dict[str, object]:
     return {"total": len(claims), "by_status": dict(sorted(counts.items()))}
 
 
-def _friends(meta: dict[str, Any]) -> dict[str, int]:
-    rows = meta.get("friends")
-    if not isinstance(rows, list):
-        return {"total": 0, "finished": 0, "failed": 0}
-    statuses = [row.get("status") for row in rows if isinstance(row, dict)]
-    failed = sum(
-        isinstance(value, str) and value.lower().startswith("failed") for value in statuses
-    )
-    finished = sum(isinstance(value, str) and bool(value) for value in statuses)
-    return {"total": len(rows), "finished": finished, "failed": failed}
+def _roster_rows(meta: dict[str, Any]) -> dict[str, dict[str, object]]:
+    """Project only the fixed, safe roster fields into a status response."""
+    roster = meta.get("roster")
+    if not isinstance(roster, list):
+        return {}
+    rows: dict[str, dict[str, object]] = {}
+    for entry in roster:
+        if not isinstance(entry, dict):
+            continue
+        name, provider, scope = entry.get("name"), entry.get("cli"), entry.get("scope")
+        if (
+            not isinstance(name, str)
+            or FRIEND_NAME_RE.fullmatch(name) is None
+            or not isinstance(provider, str)
+            or FRIEND_NAME_RE.fullmatch(provider) is None
+            or scope not in {"doc", "repo"}
+        ):
+            continue
+        rows[name] = {
+            "name": name,
+            "provider": provider,
+            "scope": scope,
+            "round": 0,
+            "status": "pending",
+        }
+    return rows
+
+
+def _friends(meta: dict[str, Any], events: Iterable[EventRecord]) -> dict[str, object]:
+    rows = _roster_rows(meta)
+    for event in events:
+        if event.type not in {"friend_finished", "friend_failed"}:
+            continue
+        payload = event.payload
+        name = payload["friend"]
+        provider = payload["provider"]
+        round_no = payload["round"]
+        event_status = payload["status"]
+        assert isinstance(name, str)
+        assert isinstance(provider, str)
+        assert isinstance(round_no, int)
+        assert isinstance(event_status, str)
+        row = rows.setdefault(
+            name,
+            {"name": name, "provider": provider, "scope": "doc", "round": 0, "status": "pending"},
+        )
+        prior_round = row["round"]
+        assert isinstance(prior_round, int)
+        row["round"] = max(prior_round, round_no)
+        row["status"] = event_status
+    ordered = [rows[name] for name in sorted(rows)]
+    failed = sum(row["status"] == "failed" for row in ordered)
+    finished = sum(row["status"] in {"succeeded", "failed"} for row in ordered)
+    return {"total": len(ordered), "finished": finished, "failed": failed, "rows": ordered}
+
+
+def _rounds(
+    meta: dict[str, Any], events: Iterable[EventRecord], state: str
+) -> dict[str, int | None]:
+    saved = meta.get("rounds_run")
+    saved_rounds = saved if type(saved) is int and saved >= 0 else 0
+    observed: list[int] = []
+    for event in events:
+        if event.type not in {"friend_finished", "friend_failed", "round_finished"}:
+            continue
+        round_no = event.payload["round"]
+        assert isinstance(round_no, int)
+        observed.append(round_no)
+    current = max([saved_rounds, *observed], default=0)
+    return {"current": current, "final": current if state in {"terminal", "halted"} else None}
 
 
 def _state(meta: dict[str, Any], events: list[EventRecord]) -> tuple[str, str | None, str | None]:
@@ -173,13 +244,25 @@ def _next_action(
 
 def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     """Reconstruct a stable status schema entirely from existing artifacts."""
-    meta = _read_json(run_dir / "run.json", root=root, label="saved run metadata")
+    meta = _read_optional_json(run_dir / "run.json", root=root, label="saved run metadata")
     events = read_events(run_dir / "events.jsonl", root=root)
     claims = _claim_counts(_read_ledger(run_dir / "claims.jsonl", root=root))
+    started = next((event for event in events if event.type == "run_started"), None)
     mode = meta.get("mode") if isinstance(meta.get("mode"), str) else None
     profile = meta.get("profile") if isinstance(meta.get("profile"), str) else None
+    if started is not None:
+        if mode is None and isinstance(started.payload.get("mode"), str):
+            mode = started.payload["mode"]
+        if profile is None and isinstance(started.payload.get("profile"), str):
+            profile = started.payload["profile"]
     state, outcome, reported_action = _state(meta, events)
     downgrades = meta.get("downgrades")
+    friends = _friends(meta, events)
+    rows = friends["rows"]
+    assert isinstance(rows, list)
+    scope = (
+        "repo" if any(row["scope"] == "repo" for row in rows if isinstance(row, dict)) else "doc"
+    )
     return {
         "version": STATUS_SCHEMA_VERSION,
         "run_id": run_dir.name,
@@ -189,7 +272,9 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
         "mode": mode,
         "profile": profile,
         "claims": claims,
-        "friends": _friends(meta),
+        "scope": scope,
+        "rounds": _rounds(meta, events, state),
+        "friends": friends,
         "downgrades": list(downgrades)
         if isinstance(downgrades, list) and all(isinstance(item, str) for item in downgrades)
         else [],
@@ -258,10 +343,20 @@ def _render(summary: dict[str, object]) -> str:
     claim_text = ", ".join(f"{name}={count}" for name, count in by_status.items()) or "none"
     lines = [
         f"{summary['run_id']}: {summary['state']}{outcome}",
-        f"mode: {summary['mode'] or 'unknown'}  profile: {summary['profile'] or 'legacy'}",
+        f"mode: {summary['mode'] or 'unknown'}  profile: {summary['profile'] or 'legacy'}  scope: {summary['scope']}",
         f"claims: {claims['total']} ({claim_text})",
         f"next: {summary['next_action']}",
     ]
+    rounds = summary["rounds"]
+    if isinstance(rounds, dict):
+        lines.append(f"rounds: current={rounds['current']} final={rounds['final']}")
+    friends = summary["friends"]
+    if isinstance(friends, dict) and isinstance(friends.get("rows"), list):
+        for row in friends["rows"]:
+            if isinstance(row, dict) and row.get("status") in {"succeeded", "failed"}:
+                lines.append(
+                    f"friend: {row['name']} {row['status']} scope={row['scope']} round={row['round']}"
+                )
     downgrades = summary["downgrades"]
     if isinstance(downgrades, list) and downgrades:
         lines.append("downgrades:")
@@ -276,7 +371,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:
         print(_render(summary))
-    if getattr(args, "watch", False) and summary["state"] == "live":
-        for event in watch_events(run_dir / "events.jsonl", root=root, start_at_end=True):
+    events_path = run_dir / "events.jsonl"
+    if getattr(args, "watch", False) and not secure_regular_exists(events_path, root=root):
+        print("afriend: live events unavailable; status cannot watch this run.", file=sys.stderr)
+    elif getattr(args, "watch", False) and summary["state"] == "live":
+        for event in watch_events(events_path, root=root, start_at_end=True):
             print(f"afriend: {event.type} {dict(event.payload)}", file=sys.stderr)
     return 0

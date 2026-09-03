@@ -3,12 +3,15 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
+from adversarial_friends import cli
 from adversarial_friends.commands import status
 from adversarial_friends.errors import UsageError
-from adversarial_friends.events import EventRecord
+from adversarial_friends.events import EventRecord, EventWriter
+from adversarial_friends.progress import Progress
 
 
 def _args(run_id: str, *, out: Path | None = None, json_output: bool = False, watch: bool = False):
@@ -161,3 +164,162 @@ def test_watch_started_at_end_does_not_repeat_prior_progress(tmp_path):
     )
 
     assert [event.type for event in observed] == ["run_finished"]
+
+
+def test_status_summarizes_a_live_event_first_run_before_run_json_exists(tmp_path, capsys):
+    """cmd_run writes this durable event before its first run.json checkpoint."""
+    root = tmp_path / "runs"
+    run = root / "run-status"
+    run.mkdir(parents=True)
+    writer = EventWriter(run / "events.jsonl", root, "run-status")
+    writer.append(
+        EventRecord.create(
+            "run_started",
+            {"mode": "crossexam", "profile": "balanced", "status": "started"},
+            run_id="run-status",
+        )
+    )
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["state"] == "live"
+    assert summary["mode"] == "crossexam"
+    assert summary["profile"] == "balanced"
+    assert summary["rounds"] == {"current": 0, "final": None}
+
+
+def test_cmd_run_exposes_an_event_first_status_checkpoint(monkeypatch, tmp_path, capsys):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    root = tmp_path / "runs"
+    fake = Path(__file__).with_name("fake_friend.py")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {fake}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    observed: list[dict[str, object]] = []
+    original = Progress.run_started
+
+    def inspect_before_metadata(self, mode: str, profile: str) -> None:
+        original(self, mode, profile)
+        run = next(root.iterdir())
+        assert not (run / "run.json").exists()
+        observed.append(status.summarize(run, root=root))
+
+    monkeypatch.setattr(Progress, "run_started", inspect_before_metadata)
+
+    assert (
+        cli.main(
+            [
+                "run",
+                str(artifact),
+                "--out",
+                str(root),
+                "--friend",
+                "fake:good",
+                "--no-progress",
+            ]
+        )
+        == 0
+    )
+
+    assert observed[0]["state"] == "live"
+    assert observed[0]["mode"] == "report"
+    assert observed[0]["profile"] == "quick"
+    assert observed[0]["rounds"] == {
+        "current": 0,
+        "final": None,
+    }
+    capsys.readouterr()
+
+
+def test_status_surfaces_safe_scope_rounds_and_finished_friend_rows(tmp_path, capsys):
+    root = tmp_path / "runs"
+    run = _run(root)
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    meta["rounds_run"] = 2
+    meta["roster"] = [
+        {
+            "name": "fake-doc-0",
+            "cli": "fake",
+            "lens": "security",
+            "scope": "doc",
+            "model": None,
+            "effort": None,
+            "timeout": 1,
+        },
+        {
+            "name": "fake-repo-0",
+            "cli": "fake",
+            "lens": "ops",
+            "scope": "repo",
+            "model": None,
+            "effort": None,
+            "timeout": 1,
+        },
+    ]
+    (run / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+    (run / "events.jsonl").write_text(
+        _event("run_started", {"mode": "report", "profile": "quick", "status": "started"})
+        + "\n"
+        + _event(
+            "friend_finished",
+            {
+                "friend": "fake-doc-0",
+                "provider": "fake",
+                "lens": "configured",
+                "round": 1,
+                "duration_s": 1.0,
+                "status": "succeeded",
+            },
+        )
+        + "\n"
+        + _event(
+            "friend_failed",
+            {
+                "friend": "fake-repo-0",
+                "provider": "fake",
+                "lens": "configured",
+                "round": 2,
+                "duration_s": 2.0,
+                "status": "failed",
+            },
+        )
+        + "\n"
+        + _event("round_finished", {"round": 2, "status": "completed"})
+        + "\n"
+        + _event("run_finished", {"status": "completed", "next_action": "inspect_report"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["scope"] == "repo"
+    assert summary["rounds"] == {"current": 2, "final": 2}
+    assert summary["friends"]["rows"] == [
+        {
+            "name": "fake-doc-0",
+            "provider": "fake",
+            "scope": "doc",
+            "round": 1,
+            "status": "succeeded",
+        },
+        {
+            "name": "fake-repo-0",
+            "provider": "fake",
+            "scope": "repo",
+            "round": 2,
+            "status": "failed",
+        },
+    ]
+
+
+@pytest.mark.parametrize("state", ["terminal", "running"])
+def test_watch_reports_unavailable_events_and_returns(tmp_path, capsys, state):
+    root = tmp_path / "runs"
+    _run(root, state=state, events=False)
+
+    assert status.cmd_status(_args("run-status", out=root, watch=True)) == 0
+
+    assert "live events unavailable" in capsys.readouterr().err
