@@ -5,6 +5,10 @@ description: Use when Adversarial Friends is directly selected to record a dispo
 
 # Adversarial Friends resolution
 
+`afriend resume <run-id>` is not a resolution request. Route it to the router
+and run `afriend run --resume <run-id>`; it does not require a disposition or
+evidence.
+
 Resolve only a named run and claim, with a user-supplied disposition and
 concrete evidence location:
 

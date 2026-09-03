@@ -13,6 +13,8 @@ and `resolve`. Conversational `afriend review` and `afriend status` route to
 focused skills and are not executable aliases: use `afriend run <artifact>`
 and `afriend doctor`. All four modes -- `report`, `crossexam`, `gate`, `loop`
 -- ship; see `src/adversarial_friends/assets/entrypoints/afriend/references/modes.md`.
+`afriend resume <run-id>` routes to `afriend run --resume <run-id>`, not to
+claim resolution; it requires neither disposition nor evidence.
 
 ## Layout
 

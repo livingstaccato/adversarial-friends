@@ -342,6 +342,25 @@ def test_skill_routing_diagram_labels_all_skills_and_commands():
     for label in ("afriend run", "afriend doctor", "afriend providers", "afriend resolve"):
         assert label in source
         assert label in visible
+    assert "afriend run --resume" in source
+    assert "afriend run --resume" in visible
+
+
+def test_resume_routes_to_run_without_claim_resolution_inputs():
+    router = (AFRIEND / "SKILL.md").read_text().lower()
+    resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
+    assert "afriend resume" in router
+    assert "afriend run --resume" in router
+    assert "afriend run --resume" in resolve
+    assert "does not require a disposition or evidence" in resolve
+    resume_eval = next(
+        case
+        for case in json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
+        if case["prompt"].startswith("afriend resume")
+    )
+    assert resume_eval["skill"] == "afriend"
+    assert resume_eval["requires_artifact"] is False
+    assert "afriend run --resume" in resume_eval["expected_output"]
 
 
 def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_contract():

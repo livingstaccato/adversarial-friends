@@ -30,9 +30,13 @@ Route an explicit conversational operation before doing any work:
 | status or readiness | `status` | `afriend doctor` |
 | provider configuration | `configure` | `afriend providers` |
 | resolve an existing run | `resolve` | `afriend resolve` |
+| resume an existing run | this router | `afriend run --resume <run-id>` |
 
 Phrases such as “afriend status” and “afriend review” are routing language,
 not new executable aliases. The CLI command names remain `doctor` and `run`.
+Likewise, `afriend resume <run-id>` resumes the run with `afriend run --resume
+<run-id>`; it is not claim resolution and does not need a disposition or
+evidence.
 
 Conversational shorthand maps to `afriend run`; it is not a new CLI alias. If
 the request names an existing path, pass that path to `afriend run`. If “this”

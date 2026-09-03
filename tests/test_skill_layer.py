@@ -46,6 +46,8 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
     for operation in ("review", "status", "configure", "resolve"):
         assert operation in body
     assert "afriend run" in body
+    assert "afriend resume" in body
+    assert "afriend run --resume" in body
     assert "not new executable aliases" in body
     assert "cli command names remain doctor and run" in body
     for generic_request in ("review this", "poke holes", "second opinion"):
@@ -66,6 +68,8 @@ def test_focused_skills_hold_their_operational_boundaries():
         assert phrase in configure, phrase
     for phrase in ("named run", "user-supplied disposition", "evidence", "never invent"):
         assert phrase in resolve, phrase
+    assert "afriend run --resume" in resolve
+    assert "does not require a disposition or evidence" in resolve
 
 
 def test_afriend_references_are_colocated_and_old_source_paths_are_absent():

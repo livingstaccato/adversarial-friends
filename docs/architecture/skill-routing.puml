@@ -18,11 +18,13 @@ rectangle "afriend run" as run #E8F5E9
 rectangle "afriend doctor" as doctor #E8F5E9
 rectangle "afriend providers" as providers #E8F5E9
 rectangle "afriend resolve" as resolution #E8F5E9
+rectangle "afriend run --resume" as resume #E8F5E9
 
 router --> review : explicit review
 router --> status : explicit status
 router --> configure : explicit configuration
 router --> resolve : explicit resolution
+router --> resume : resume existing run
 review --> run
 status --> doctor
 configure --> providers

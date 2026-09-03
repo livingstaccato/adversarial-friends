@@ -16,6 +16,9 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 | [resolve](../src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Named-run resolutions with supplied evidence |
 | [modes](../src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus claim states, ceilings, and exit codes |
 
+`afriend resume <run-id>` routes through `/afriend` to `afriend run --resume
+<run-id>`; it is not a claim-resolution disposition and needs no evidence.
+
 > These entrypoints live under `src/adversarial_friends/assets/` because they ship
 > **inside the wheel** as package data — the runner resolves them at runtime
 > via `importlib.resources`, and they are mirrored into `plugins/` for plugin
