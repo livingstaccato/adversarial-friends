@@ -26,6 +26,7 @@ from ..outcomes import MAX_JSON_SAFE_INTEGER
 from ..presets import PRESETS
 from ..readiness import can_be_host_provider
 from ..report import render
+from ..reviewcompleteness import from_friends
 from ..reviewprofiles import names as review_profile_names, resolve as resolve_review_profile
 from ..reviewstate import ReviewState
 from ..runstore import RunStore
@@ -46,7 +47,7 @@ from .runmeta_migration import (
     CURRENT_SCHEMA_VERSION as CURRENT_SCHEMA_VERSION,
     migrate_meta as migrate_meta,
 )
-from .runmeta_outcome import build_terminal_outcome, finalize_meta
+from .runmeta_outcome import _terminal_event_summary, build_terminal_outcome, finalize_meta
 
 if TYPE_CHECKING:
     from ..progress import Progress
@@ -704,6 +705,9 @@ def finish_run(
     meta["succeeded_friends"] = len(successful_friend_ids)
     meta["required_friends"] = args.require_friends
     meta["active_elapsed_s"] = active_elapsed_s
+    review_completeness = from_friends(meta.get("friends", []))
+    if review_completeness is not None:
+        meta["review_completeness"] = review_completeness
     finished_at = _finished_at()
     started_at = str(meta.get("started_at", finished_at))
     outcome, quorum_failed = build_terminal_outcome(
@@ -753,20 +757,14 @@ def finish_run(
             f"only {succeeded_friends} of {args.require_friends} required friends "
             "produced a usable answer"
         )
+    elif (
+        detail is None
+        and outcome.ceiling_hit is None
+        and getattr(args, "failure_summary", "terminal") == "terminal"
+        and review_completeness is not None
+    ):
+        message = review_completeness["message"]
+        assert isinstance(message, str)
+        detail = message
     exit_code = decide_exit(outcome, detail=detail)
     return exit_code
-
-
-def _terminal_event_summary(stop_reason: str) -> tuple[str, str]:
-    """Project terminal state into the intentionally small event vocabulary."""
-    if stop_reason == "completed":
-        return "completed", "inspect_report"
-    if stop_reason == "gate-blocked":
-        return "blocked", "resolve"
-    if stop_reason in {"max-loop-iterations", "max-calls", "max-wall-clock", "interrupted"}:
-        return "incomplete", "resume"
-    if stop_reason == "auth-abort":
-        return "halted", "fix_configuration"
-    if stop_reason == "runtime-error":
-        return "error", "inspect_report"
-    return "incomplete", "inspect_report"

@@ -103,12 +103,53 @@ def test_status_json_is_versioned_and_uses_legacy_artifacts_when_events_are_abse
     assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["version"] == 1
+    assert payload["version"] == 2
     assert payload["state"] == "terminal"
     assert payload["mode"] == "report"
     assert payload["profile"] == "quick"
     assert payload["claims"] == {"by_status": {"pending": 1}, "total": 1}
     assert payload["downgrades"] == ["doc scope only"]
+
+
+def test_status_projects_persisted_zero_response_completeness_safely(tmp_path, capsys):
+    root = tmp_path / "runs"
+    run = _run(root, events=False)
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    meta["friends"] = [
+        {
+            "name": "codex-security",
+            "independent": True,
+            "round": 1,
+            "status": "failed: DNS temporary failure",
+        }
+    ]
+    meta["review_completeness"] = {
+        "state": "incomplete",
+        "answered": 0,
+        "dispatched": 1,
+        "reasons": ["codex-security: DNS temporary failure"],
+        "message": "review incomplete: 0/1 friends answered; codex-security: DNS temporary failure",
+    }
+    (run / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["review_completeness"] == meta["review_completeness"]
+    assert "DNS temporary failure" in status._render(summary)
+
+
+@pytest.mark.parametrize("saved_friends", [None, 7], ids=("null", "scalar"))
+def test_status_ignores_nonlist_persisted_friends_for_completeness(tmp_path, capsys, saved_friends):
+    root = tmp_path / "runs"
+    run = _run(root, events=False)
+    meta = json.loads((run / "run.json").read_text(encoding="utf-8"))
+    meta["friends"] = saved_friends
+    (run / "run.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    assert status.cmd_status(_args("run-status", out=root, json_output=True)) == 0
+
+    assert json.loads(capsys.readouterr().out)["review_completeness"] is None
 
 
 def test_status_projects_safe_legacy_friend_metadata_without_events(tmp_path, capsys):

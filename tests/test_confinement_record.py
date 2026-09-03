@@ -77,6 +77,35 @@ def test_no_mechanism_means_no_filesystem_confinement_but_still_a_filtered_env(e
     assert any("environment is still filtered" in d for d in downgrades), downgrades
 
 
+def test_explicit_unsandboxed_override_records_retained_read_authority(env, monkeypatch):
+    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: None)
+    registry = {"opencode": _adapter("opencode")}
+    downgrades: list[str] = []
+
+    confinement_downgrades(
+        _args(allow_unsandboxed_friend=True), [_spec("opencode")], registry, downgrades
+    )
+
+    override = next(d for d in downgrades if d.startswith("--allow-unsandboxed-friend"))
+    assert "fallback only when no OS confinement mechanism is available" in override
+    assert "never disables an available bwrap or sandbox-exec" in override
+    assert "no OS confinement" in override
+    assert "same-user filesystem read access" in override
+
+
+def test_override_with_available_confinement_records_no_unconfined_warning(env, monkeypatch):
+    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    registry = {"opencode": _adapter("opencode")}
+    downgrades: list[str] = []
+
+    confinement_downgrades(
+        _args(allow_unsandboxed_friend=True), [_spec("opencode")], registry, downgrades
+    )
+
+    assert not any(d.startswith("--allow-unsandboxed-friend") for d in downgrades)
+    assert not any("not confined" in d for d in downgrades)
+
+
 def test_a_variable_only_one_adapter_receives_is_named_not_folded_in(env, monkeypatch):
     """Withheld means no executable friend got it. One that a single adapter's
     pass list lets through is reported separately rather than counted as

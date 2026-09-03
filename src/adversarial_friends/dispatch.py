@@ -132,6 +132,7 @@ _ANSI_ESCAPE_RE = re.compile(
 # CR/LF remain until splitlines chooses the last useful diagnostics; every
 # other C0/C1 control becomes inert spacing rather than a terminal action.
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+_BIDI_CONTROL_RE = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 def _defang_autolinks(text: str) -> str:
@@ -143,6 +144,11 @@ def _defang_autolinks(text: str) -> str:
 def _strip_terminal_controls(text: str) -> str:
     """Remove ANSI escapes and neutralize remaining C0/C1 terminal controls."""
     return _TERMINAL_CONTROL_RE.sub(" ", _ANSI_ESCAPE_RE.sub("", text))
+
+
+def sanitize_display(text: str) -> str:
+    """Remove terminal and bidirectional controls from bounded display text."""
+    return _BIDI_CONTROL_RE.sub("", _strip_terminal_controls(text))
 
 
 def _exception_outcome(argv: list[str], exc: BaseException) -> SpawnResult:
@@ -204,7 +210,7 @@ def _stderr_tail(stderr: str, max_lines: int = 2, max_chars: int = STDERR_TAIL_C
     autolinks are defanged (see _INLINE_MARKDOWN_STRIP and
     _defang_autolinks above) before the length cap is applied, so
     `max_chars` bounds what a reader actually sees."""
-    cleaned = _strip_terminal_controls(stderr)
+    cleaned = sanitize_display(stderr)
     lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
     tail = " | ".join(lines[-max_lines:])
     tail = _defang_autolinks(tail.translate(_INLINE_MARKDOWN_STRIP))

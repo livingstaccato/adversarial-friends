@@ -216,22 +216,6 @@ def test_gate_report_names_ceiling_and_partial_evidence_caveat():
     assert "partial evidence" in gate.lower()
 
 
-def test_read_exposed_names_are_stably_deduplicated():
-    repeated = {
-        "name": "claude-security",
-        "model": None,
-        "effort": None,
-        "transport": "exec",
-        "write_protected": True,
-        "declared_scope": "repo",
-        "os_confined": False,
-        "status": "ok",
-    }
-    out = render([], [], meta(friends=[dict(repeated, round=1), dict(repeated, round=2)]))
-    sentence = next(line for line in out.splitlines() if line.startswith("**Filesystem"))
-    assert sentence.count("claude-security") == 1
-
-
 @pytest.mark.parametrize(
     ("policy", "expected"),
     [

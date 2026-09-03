@@ -32,8 +32,9 @@ import re
 from typing import Any
 import unicodedata
 
-from .dispatch import _strip_terminal_controls
+from .dispatch import sanitize_display
 from .ledger import Claim, Verdict
+from .reviewcompleteness import from_friends
 from .reviewstate import ReviewState
 from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
 
@@ -88,7 +89,6 @@ _BLOCK_LEADER_RE = re.compile(
     r"|<"
     r")"
 )
-_BIDI_CONTROL_RE = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _URI_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*)://")
 _ACTIVE_URI_RE = re.compile(r"(?i)\b(javascript|vbscript|data):")
 _BARE_WWW_RE = re.compile(r"(?i)\bwww\.")
@@ -101,8 +101,7 @@ _EMAIL_RE = re.compile(
 
 def _sanitize_display(value: object, *, single_line: bool = False) -> str:
     """Neutralize terminal/display controls before any Markdown escaping."""
-    text = _strip_terminal_controls(str(value))
-    text = _BIDI_CONTROL_RE.sub("", text)
+    text = sanitize_display(str(value))
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     if single_line:
         return text.replace("\n", " ")
@@ -135,7 +134,7 @@ def _escape_cell(value: object) -> str:
 
 def _escape_status_cell(value: object) -> str:
     """Defense in depth for a status rendered without resume validation."""
-    text = _escape_cell(_strip_terminal_controls(str(value))).replace("`", "&#96;")
+    text = _escape_cell(sanitize_display(str(value))).replace("`", "&#96;")
     text = text.replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r"(?i)\b([a-z][a-z0-9+.-]*)://", r"\1: //", text)
     text = re.sub(r"(?i)\bwww\.", "www .", text)
@@ -465,6 +464,20 @@ def render(
             ]
         )
     lines.extend(_external_authority_lines(run_meta))
+    review_completeness = from_friends(run_meta.get("friends", []))
+    if review_completeness is not None:
+        message = review_completeness["message"]
+        assert isinstance(message, str)
+        lines.extend(
+            [
+                "## Review completeness",
+                "",
+                _escape_block(message),
+                "",
+                "No artifact conclusion follows from zero friend answers.",
+                "",
+            ]
+        )
     lines.append("## Friends")
     lines.append("")
     lines.append(
@@ -515,9 +528,11 @@ def render(
             [
                 "",
                 "**Filesystem read scope:** "
+                + "The following executable friends are write-protected and not recorded "
+                "as OS-confined: "
                 + ", ".join(_escape_cell(name) for name in read_exposed)
-                + " were write-protected but not OS-confined; each retained "
-                "same-user filesystem read access outside the declared prompt scope.",
+                + ". If started, each retained same-user filesystem read access outside "
+                "the declared prompt scope.",
             ]
         )
     lines.append("")

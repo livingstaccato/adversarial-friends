@@ -186,6 +186,12 @@ def build_parser() -> argparse.ArgumentParser:
     # asked otherwise. Keeping them is how you inspect what a friend saw.
     run_p.add_argument("--keep", action="store_true", help="keep friend worktrees for inspection")
     run_p.add_argument("--json", action="store_true", help="print run.json instead of the path")
+    run_p.add_argument(
+        "--failure-summary",
+        choices=["terminal", "report-only"],
+        default="terminal",
+        help="where to show a zero-response review summary (default: terminal)",
+    )
     # §13's escape hatch, and the only way arbitrary flags ever reach a
     # friend. Command line ONLY -- never from any file -- and only together
     # with the acknowledgement below.
@@ -221,7 +227,13 @@ def build_parser() -> argparse.ArgumentParser:
     # §12.2. A friend with no read-only mode of its own is refused when the
     # OS offers no way to confine it; this accepts that risk explicitly and
     # stamps every affected friend in the report.
-    run_p.add_argument("--allow-unsandboxed-friend", action="store_true")
+    run_p.add_argument(
+        "--allow-unsandboxed-friend",
+        action="store_true",
+        help="fallback-only when no OS confinement mechanism is available: permit a provider "
+        "without a read-only mode to run without confinement; it never disables an available "
+        "bwrap or sandbox-exec. On fallback, it retains same-user filesystem read access",
+    )
     run_p.add_argument(
         "--allow-external-tools",
         action="append",

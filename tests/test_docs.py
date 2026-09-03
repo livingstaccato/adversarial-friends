@@ -32,6 +32,13 @@ def test_scope_selection_docs_explain_artifact_location_and_snapshot_rules():
     assert "ignored" in troubleshooting
 
 
+def test_modes_docs_explain_zero_response_failure_summary_output():
+    modes = (AFRIEND / "references" / "modes.md").read_text()
+
+    assert "--failure-summary terminal" in modes
+    assert "--failure-summary report-only" in modes
+
+
 def test_all_brand_sizes_exist():
     brand = REPO / "docs" / "images" / "brand"
     banner = brand / "adversarial-friends-banner.png"
@@ -645,6 +652,23 @@ def test_modes_explains_resume_authority_exception_and_doctor_readiness():
     assert "exits 0 if at least one provider is ready" in modes
     assert "exits 3 if no provider is ready" in modes
     assert "no other flags" not in modes
+
+
+def test_unsafe_override_docs_keep_write_protection_separate_from_read_confinement():
+    readme = " ".join(REPO.joinpath("README.md").read_text().lower().replace("`", "").split())
+    skill = " ".join((AFRIEND / "SKILL.md").read_text().lower().replace("`", "").split())
+    troubleshooting = " ".join(
+        (AFRIEND / "references" / "troubleshooting.md").read_text().lower().replace("`", "").split()
+    )
+    modes = " ".join(
+        (AFRIEND / "references" / "modes.md").read_text().lower().replace("`", "").split()
+    )
+
+    assert "verified self-confining provider" not in " ".join((readme, skill, troubleshooting))
+    assert "mode controls writes, not filesystem reads" in readme
+    assert "does not replace os read confinement" in skill
+    assert "only permits fallback when os confinement is unavailable" in modes
+    assert "does not disable an available os sandbox" in modes
 
 
 def test_operator_docs_explain_advisory_host_and_independent_authority():

@@ -378,13 +378,14 @@ this authority, and these grants do not change provider defaults.
 | `--require-friends N` | Fail the run (exit 12) if fewer than `N` friends answered; opt-in, unset by default |
 | `--keep` | Leave friend worktrees under the run directory to inspect |
 | `--json` | Print run.json instead of the run directory path |
+| `--failure-summary terminal`, `--failure-summary report-only` | For a zero-response review, `terminal` (the default) prints the incomplete summary to stderr; `report-only` keeps it in run metadata, `report.md`, and status only |
 | `--attributed` | Show judges who wrote each claim (§5 defaults to blind) |
 | `--include-self`, `--exclude-self` | Mutually exclusive overrides for host participation; host review remains advisory and non-independent |
 | `--enable-provider NAME`, `--disable-provider NAME` | Override persistent provider policy for this automatic roster only |
 | `--allow-external-tools=PROVIDER` | Explicitly inherit that provider's managed tools and connectors for this run; repeat per provider, or use `=*` globally |
 | `--pass-env VAR` (repeatable) | Allow an exported `VAR` through the filtered environment to every executable friend process; HTTP friends have no child environment |
 | `--no-progress` | Suppress the per-friend progress on stderr; stdout is unaffected |
-| `--allow-unsandboxed-friend` | Accept a friend the OS cannot confine (§12.2) |
+| `--allow-unsandboxed-friend` | Explicit risk acceptance for a provider without a verified read-only mode: only permits fallback when OS confinement is unavailable; it does not disable an available OS sandbox. In that fallback, it retains same-user filesystem read access (§12.2) |
 | `--unsafe-extra-args='...'` | Pass unvalidated flags; needs `--i-accept-unsandboxed` |
 
 ### Guided setup and profiles

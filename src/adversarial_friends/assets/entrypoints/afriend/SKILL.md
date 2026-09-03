@@ -308,9 +308,13 @@ what it was doing wrong rather than treating the run as complete.
 `refused: ... no OS sandbox ... available to confine it` was never started.
 Its CLI has no read-only mode, so nothing constrains what it reads, and an
 artifact under review is untrusted text that could tell it to read anything
-the user can. Do not suggest `--allow-unsandboxed-friend` as the fix without
-saying what it gives up; installing `bubblewrap`, or using a friend that
-confines itself, is the better answer for an artifact the user did not write.
+the user can. Prefer making `sandbox-exec` (macOS) or `bwrap` (Linux)
+available, or using a provider with a verified read-only/write-protection
+mode. That mode controls writes, not filesystem reads, and does not replace OS
+read confinement. A provider with that verified mode does not need
+`--allow-unsandboxed-friend`; that flag is explicit risk acceptance, not a
+normal fix, and lets the affected provider run without OS confinement with
+same-user filesystem read access.
 
 **Duplicates are under-merged on purpose.** The default merge only combines
 claims with identical text and location, so two friends describing one defect

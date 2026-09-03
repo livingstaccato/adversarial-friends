@@ -92,6 +92,21 @@ def test_pass_env_help_names_every_exec_friend_not_only_os_confined_friends():
     assert "confined friends" not in help_text
 
 
+def test_unsandboxed_friend_help_names_lost_confinement_and_read_authority():
+    parser = cliargs.build_parser()
+    subcommands = next(
+        action
+        for action in parser._actions
+        if isinstance(action, cliargs.argparse._SubParsersAction)
+    )
+    help_text = " ".join(subcommands.choices["run"].format_help().split())
+
+    assert "OS confinement" in help_text
+    assert "same-user filesystem read access" in help_text
+    assert "only when no OS confinement mechanism is available" in help_text
+    assert "never disables an available bwrap or sandbox-exec" in help_text
+
+
 def test_fake_scope_suffix_still_wins_over_model_parsing(registry):
     """`fake:<mode>:repo` predates the model slot and is handled in its own
     branch, so the third slot keeps meaning scope there and never leaks into
@@ -162,3 +177,20 @@ def test_host_provider_parses_and_is_resumable():
     args = cliargs.build_parser().parse_args(["run", "spec.md", "--host-provider", "wrapper-agent"])
     assert args.host_provider == "wrapper-agent"
     assert "host_provider" in _RESUMABLE_ARGS
+
+
+def test_failure_summary_defaults_to_terminal_and_accepts_report_only():
+    parser = cliargs.build_parser()
+
+    assert parser.parse_args(["run", "spec.md"]).failure_summary == "terminal"
+    assert (
+        parser.parse_args(["run", "spec.md", "--failure-summary", "report-only"]).failure_summary
+        == "report-only"
+    )
+
+
+def test_failure_summary_rejects_unknown_policy():
+    with pytest.raises(SystemExit) as raised:
+        cliargs.build_parser().parse_args(["run", "spec.md", "--failure-summary", "quiet"])
+
+    assert raised.value.code == 2
