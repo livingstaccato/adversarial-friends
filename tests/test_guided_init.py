@@ -190,6 +190,32 @@ def test_guided_apply_does_not_persist_settings_when_no_roster_can_be_generated(
     assert not target.exists()
 
 
+def test_guided_apply_stages_a_roster_against_requested_provider_enablement(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    target = tmp_path / "roster.toml"
+    known = _known()
+    providerconfig.set_enabled("codex", False, known=known)
+
+    def only_enabled_codex(_registry, policy, **_kwargs):
+        if not policy.setting("codex").enabled:
+            return {}
+        return {
+            "codex": readiness.FriendReadiness(
+                "codex", readiness.ReadinessState.READY, "available", "/bin/codex", None
+            )
+        }
+
+    monkeypatch.setattr(init_module, "assess_all", only_enabled_codex)
+
+    assert (
+        init_module.cmd_init(_args("--apply", "--enable-provider", "codex", "--out", str(target)))
+        == 0
+    )
+
+    assert 'cli = "codex"' in target.read_text(encoding="utf-8")
+    assert providerconfig.load(known).setting("codex").enabled is True
+
+
 def test_guided_apply_force_replaces_the_existing_roster(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     target = tmp_path / "roster.toml"

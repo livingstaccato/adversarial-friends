@@ -69,11 +69,16 @@ def _write_roster(args: argparse.Namespace, *, target: Path | None = None) -> tu
     return target, count
 
 
-def _render_roster(args: argparse.Namespace) -> tuple[str, int]:
+def _render_roster(
+    args: argparse.Namespace,
+    *,
+    registry: dict[str, Adapter] | None = None,
+    policy: providerconfig.ProviderPolicy | None = None,
+) -> tuple[str, int]:
     """Perform normal discovery and return a roster before anything is written."""
 
-    registry = load_adapters(ADAPTER_DIR)
-    policy = providerconfig.load(registry)
+    registry = load_adapters(ADAPTER_DIR) if registry is None else registry
+    policy = providerconfig.load(registry) if policy is None else policy
     authority_policy = AuthorityPolicy.deny_all()
     include_self = effective_host_inclusion(detect_host(os.environ))
     readiness = assess_all(
@@ -185,6 +190,24 @@ def _fsync_directory(directory: Path) -> None:
                 os.close(descriptor)
 
 
+def _prospective_provider_policy(
+    policy: providerconfig.ProviderPolicy,
+    *,
+    enabled: set[str],
+    disabled: set[str],
+    ollama_model: str | None,
+) -> providerconfig.ProviderPolicy:
+    """Apply only guided selections in memory before deciding a roster exists."""
+    settings = dict(policy.providers)
+    for name in enabled:
+        settings[name] = providerconfig.ProviderSetting(True, policy.setting(name).model)
+    for name in disabled:
+        settings[name] = providerconfig.ProviderSetting(False, policy.setting(name).model)
+    if ollama_model is not None:
+        settings["ollama"] = providerconfig.ProviderSetting(True, ollama_model)
+    return providerconfig.ProviderPolicy(settings)
+
+
 def _cmd_guided_init(args: argparse.Namespace) -> int:
     """Preview or persist only explicitly selected, local setup defaults."""
     registry = load_adapters(ADAPTER_DIR)
@@ -226,6 +249,14 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
     if provider_changes:
         changes["providers"] = provider_changes
 
+    current_policy = providerconfig.load(known)
+    prospective_policy = _prospective_provider_policy(
+        current_policy,
+        enabled=enabled,
+        disabled=disabled,
+        ollama_model=ollama_model,
+    )
+
     applying = bool(getattr(args, "apply", False))
     target = _roster_target(args) if applying else None
     files_before: dict[Path, bool] = {}
@@ -241,7 +272,11 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
     if applying:
         # Discovery happens first: an empty or otherwise invalid roster is a
         # refusal before any preference document can be changed.
-        roster_contents, _ = _render_roster(args)
+        roster_contents, _ = _render_roster(
+            args,
+            registry=registry,
+            policy=prospective_policy,
+        )
         assert target is not None
         with _staged_roster(target, roster_contents) as staged:
             # Parse every configuration document needed by this transaction
