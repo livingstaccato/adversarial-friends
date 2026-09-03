@@ -38,6 +38,20 @@ def test_custom_profile_inherits_builtin_and_only_overrides_safe_settings(tmp_pa
     }
 
 
+def test_base_only_custom_profile_is_a_valid_alias(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    assert main(["profiles", "create", "fast", "--base", "quick"]) == 0
+    resolved = reviewprofiles.resolve("fast", sessionconfig.load().profiles)
+
+    assert resolved is not None
+    assert resolved.mode == "report"
+    assert dict(resolved.settings) == {}
+    capsys.readouterr()
+    assert main(["profiles", "list"]) == 0
+    assert "fast  custom  inherits quick" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("profile", "message"),
     [

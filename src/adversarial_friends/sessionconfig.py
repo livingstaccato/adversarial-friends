@@ -100,8 +100,6 @@ def _validated_profiles(path: Path, value: object) -> Mapping[str, Mapping[str, 
         base = raw_definition.get("base")
         if not isinstance(base, str) or not base:
             raise _invalid(path, f"profiles.{name}.base", "must be a non-empty string", got=base)
-        if len(raw_definition) == 1:
-            raise _invalid(path, f"profiles.{name}", "must override at least one safe field")
         validated: dict[str, object] = {"base": base}
         for field, setting in raw_definition.items():
             if field == "base":

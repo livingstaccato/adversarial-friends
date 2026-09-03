@@ -76,8 +76,6 @@ def cmd_profiles(args: argparse.Namespace) -> int:
         values = _settings(args)
         if args.base is None:
             raise UsageError("profiles create requires --base NAME")
-        if not values:
-            raise UsageError("profiles create requires at least one safe setting")
         sessionconfig.create_profile(args.name, args.base, values)
         print(f"created review profile {args.name}")
         return 0
