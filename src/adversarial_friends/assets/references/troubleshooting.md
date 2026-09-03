@@ -127,6 +127,19 @@ files are deliberately excluded; when the artifact itself is ignored, the run
 fails rather than silently falling back to a stale `HEAD` copy. Remove the
 ignore rule or use a non-ignored review artifact if it needs to be reviewed.
 
+## A confined Linux friend cannot resolve its model endpoint
+
+Linux confinement uses `bwrap`. Some systems make `/etc/resolv.conf` a
+symlink to a generated file outside `/etc`; without that file, the confined
+CLI can start but cannot resolve a model endpoint. The runner follows that
+link only when it resolves to a readable regular file and exposes the resolved
+resolver target read-only inside the sandbox. It does not expose the containing
+directory or broaden the rest of the host filesystem.
+
+If DNS still fails, inspect `round-N/<friend>.sandbox` for the exact bwrap
+arguments, then run `afriend doctor` to separate a resolver failure from an
+unavailable provider or missing credential.
+
 ## A friend is refused: "no OS sandbox is available"
 
 ```

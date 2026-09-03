@@ -517,6 +517,29 @@ def test_live_docs_describe_scope_based_isolation_and_exec_environment_filtering
     assert "adapter has a real read-only mode?" not in diagram
 
 
+def test_live_docs_and_run_flow_explain_doc_scope_warning_and_confined_dns():
+    """The artifact-scope warning and Linux resolver bind are user-visible
+    safeguards, not implementation trivia.  Both prose and the diagram must
+    describe them so a thin review or a DNS failure can be diagnosed.
+    """
+    readme = " ".join(REPO.joinpath("README.md").read_text().lower().split())
+    diagram = " ".join(
+        REPO.joinpath("docs/architecture/run-flow.puml")
+        .read_text()
+        .lower()
+        .replace("\\n", " ")
+        .split()
+    )
+    visible = _svg_visible_text(REPO / "docs" / "architecture" / "run-flow.svg").lower()
+
+    assert "doc-scope warning" in readme
+    assert "resolv.conf" in readme
+    assert "resolver target" in readme
+    assert "warn on stderr before dispatch" in diagram
+    assert "resolver target" in diagram
+    assert "resolver target" in visible
+
+
 def test_modes_explains_resume_authority_exception_and_doctor_readiness():
     modes = " ".join(
         REPO.joinpath("src/adversarial_friends/assets/references/modes.md")

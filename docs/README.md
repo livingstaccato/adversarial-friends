@@ -32,8 +32,9 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 - **[Module architecture](architecture/components.puml)** — which module owns
   what, and how a run threads through them.
 - **[Run flow](architecture/run-flow.puml)** — how `afriend run` admits
-  providers, applies scoped authority, stages harnesses, dispatches a report
-  fan-out, and records downgrades.
+  providers, warns when an artifact is doc-scoped, applies scoped authority,
+  stages harnesses, preserves DNS under Linux confinement, dispatches a
+  report fan-out, and records downgrades.
 - **[Claim lifecycle](architecture/claim-lifecycle.puml)** — how two friends
   finding the same defect become one corroborated claim without losing either
   attribution.

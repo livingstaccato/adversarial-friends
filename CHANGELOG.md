@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1
+
+A confinement and review-scope correction release.
+
+- Preserved DNS for Linux `bwrap`-confined friends by read-only binding a safe
+  resolved `/etc/resolv.conf` target when the host uses a symlinked resolver
+  configuration.
+- Made a doc-scoped run explicit before dispatch: an artifact outside a Git
+  repository emits one stderr warning that friends can inspect only the
+  artifact, not repository code.
+- Updated the live documentation, architecture diagrams, and troubleshooting
+  guidance for the scope and resolver contracts. Antigravity is named as the
+  product while retaining `agy` where the CLI identifier is required.
+
 ## 0.3.0
 
 An authority-focused release that makes Adversarial Friends easier to invoke

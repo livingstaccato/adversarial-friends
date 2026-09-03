@@ -60,7 +60,7 @@ partition "Resolve the roster" {
 
 partition "Prepare" {
   :install SIGINT/SIGTERM handlers;
-  :resolve the artifact's git root\n(none → force all friends to doc scope);<<#FFE0B2>>
+  :resolve the artifact's git root\n(none → force all friends to doc scope\nand warn on stderr before dispatch);<<#FFE0B2>>
   :create run dir, copy + hash artifact;
   :per friend: build its OWN prompt from\nits OWN lens, write round-1/<friend>.prompt\n(missing lens → generic prompt, downgrade);<<#FFE0B2>>
   :if a repository exists, take one snapshot\ncommit (tracked + untracked) for friend\nworktrees and later resolution evidence;
@@ -77,11 +77,11 @@ partition "Dispatch — parallel, one thread per friend" {
     Antigravity's staged reviewer is defense in depth.
     It does not prove provider-managed tools
     are disabled, so Antigravity still needs a scoped
-    explicit authority grant in 0.3.0.
+    explicit authority grant.
   end note
   :re-enforce this provider's authority at dispatch;
   :build argv and filtered child environment;
-  :separately apply adapter read-only flags\nand, where required, OS filesystem\nconfinement as secondary controls;
+  :separately apply adapter read-only flags\nand, where required, OS filesystem\nconfinement as secondary controls; Linux\nbwrap exposes a safe resolver target\nread-only when /etc/resolv.conf resolves outside /etc;
   :capability = what was actually emitted,\nnever re-derived from requested scope;
   :spawn in its own process group\ndeadline = ""--timeout"" + 60s grace;
   if (timed out / aborted?) then (yes)

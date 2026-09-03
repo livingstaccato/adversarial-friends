@@ -2,14 +2,15 @@
 
 # Adversarial Friends
 
-> Hand your spec, plan, or review to agent CLIs — `claude`, `codex`, `agy`,
+> Hand your spec, plan, or review to agent CLIs — `claude`, `codex`,
+> Antigravity (`agy`),
 > `opencode` — under adversarial lenses, then merge their critiques into one
 > ranked findings report.
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1992-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1993-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -44,7 +45,7 @@ This tool's own design spec was built exactly this way:
 |---|---|
 | `codex` | 17 findings |
 | `claude` | 15 findings, plus one marked `unproven` — *"lens leaks attribution"* |
-| `agy` | independently reproduced two of `claude`'s findings, **and** caught a shared-worktree race neither of the other two flagged |
+| Antigravity (`agy`) | independently reproduced two of `claude`'s findings, **and** caught a shared-worktree race neither of the other two flagged |
 
 That `unproven` claim was later confirmed and fixed. No single reviewer's pass
 would have surfaced all of it — see the [revision history in the design
@@ -191,11 +192,17 @@ the working tree is never touched — a friend reviewing your repo can't see a
 half-staged index or scribble on your checkout.
 
 Artifact location selects scope automatically. A path outside a Git repository
-produces a visible doc-scope warning and friends receive only its text; a path
-inside one receives a repository snapshot. Put the artifact in the repository
-when the review needs code context. Normal untracked, non-ignored files are
-included in a snapshot. Gitignored artifacts are intentionally excluded and
-fail rather than falling back to a stale `HEAD` version.
+produces a visible doc-scope warning on stderr before friends start and friends
+receive only its text; a path inside one receives a repository snapshot. Put
+the artifact in the repository when the review needs code context. Normal
+untracked, non-ignored files are included in a snapshot. Gitignored artifacts
+are intentionally excluded and fail rather than falling back to a stale `HEAD`
+version.
+
+On Linux, a confined friend uses `bwrap` with the required system paths
+read-only. If `/etc/resolv.conf` resolves to a safe regular file elsewhere on
+the host, the sandbox exposes that resolver target read-only too. DNS therefore
+continues to work without granting general access to the host filesystem.
 
 <details>
 <summary>Full run flow, step by step</summary>

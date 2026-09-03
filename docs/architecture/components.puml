@@ -29,7 +29,7 @@ title adversarial_friends — module architecture
 package "Entry" {
   rectangle "cli.py\n<size:11>thin entry + re-exports</size>" as CLI
   rectangle "cliargs.py\n<size:11>parser, friend specs</size>" as ARGS
-  rectangle "commands/run.py\n<size:11>run orchestration</size>" as RUN
+  rectangle "commands/run.py + environment.py\n<size:11>run orchestration + scope warning</size>" as RUN
   rectangle "commands/doctor.py\n<size:11>readiness diagnostics</size>" as DOC
 }
 
@@ -47,7 +47,7 @@ package "Execute" {
   rectangle "prompt.py\n<size:11>lens prose → prompt</size>" as PROMPT
   rectangle "isolation.py\n<size:11>snapshot, worktrees</size>" as ISO
   rectangle "workspaceassets.py\n<size:11>digest-pinned harness staging</size>" as WSA
-  rectangle "sandbox.py + childenv.py\n<size:11>OS policy + env allowlist</size>" as SANDBOX
+  rectangle "sandbox.py + childenv.py\n<size:11>OS policy, resolver binds + env allowlist</size>" as SANDBOX
   rectangle "dispatch.py\n<size:11>argv → process</size>" as DISP
   rectangle "spawn.py\n<size:11>process groups, reaping</size>" as SPAWN
   rectangle "http_transport.py\n<size:11>bounded endpoint process</size>" as HTTPX
@@ -64,7 +64,7 @@ package "Interpret & record" {
 }
 
 database "assets/\nadapters · harnesses · lenses\nreferences · SKILL.md" as ASSETS #FFF8E1
-cloud "exec friend CLIs\nclaude · codex · agy · opencode" as FRIENDS #E8F5E9
+cloud "exec friend CLIs\nclaude · codex · Antigravity (agy) · opencode" as FRIENDS #E8F5E9
 cloud "Ollama HTTP endpoint" as HTTP #E8F5E9
 
 CLI --> ARGS
