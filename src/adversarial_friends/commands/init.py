@@ -20,13 +20,15 @@ import shutil
 import sys
 
 from .. import providerconfig, reviewprofiles, sessionconfig
-from ..adapters import load_adapters
+from ..adapters import Adapter, load_adapters
 from ..authority import AuthorityPolicy
 from ..errors import NoFriendsError, UsageError
 from ..paths import ADAPTER_DIR
 from ..prompt import available_lenses
 from ..readiness import ReadinessState, assess_all, detect_host, effective_host_inclusion
 from ..rosterfile import default_roster_path, render
+
+_GUIDED_SETUP_SCHEMA_VERSION = 1
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -35,12 +37,29 @@ def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "guided", False):
         return _cmd_guided_init(args)
 
+    target, count = _write_roster(args)
+    print(target)
+    print(
+        f"wrote {count} friend(s) from what is installed. Edit it, then "
+        f"run `afriend run <artifact>` -- it is picked up automatically.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _roster_target(args: argparse.Namespace) -> Path:
     target = Path(args.out) if args.out else default_roster_path()
     if target.exists() and not args.force:
         raise UsageError(
             f"{target} already exists. It is a file you are meant to edit, so "
             "this will not overwrite it; pass --force if that is what you want."
         )
+    return target
+
+
+def _write_roster(args: argparse.Namespace, *, target: Path | None = None) -> tuple[Path, int]:
+    """Write the normal discovered roster without choosing a user-facing stream."""
+    target = _roster_target(args) if target is None else target
 
     registry = load_adapters(ADAPTER_DIR)
     policy = providerconfig.load(registry)
@@ -113,13 +132,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render(entries, notes), encoding="utf-8")
-    print(target)
-    print(
-        f"wrote {len(entries)} friend(s) from what is installed. Edit it, then "
-        f"run `afriend run <artifact>` -- it is picked up automatically.",
-        file=sys.stderr,
-    )
-    return 0
+    return target, len(entries)
 
 
 def _cmd_guided_init(args: argparse.Namespace) -> int:
@@ -163,7 +176,19 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
     if provider_changes:
         changes["providers"] = provider_changes
 
-    if getattr(args, "apply", False):
+    applying = bool(getattr(args, "apply", False))
+    target = _roster_target(args) if applying else None
+    files_before: dict[Path, bool] = {}
+    if default_profile is not None:
+        session_path = sessionconfig.config_path()
+        files_before[session_path] = session_path.exists()
+    if provider_changes:
+        provider_path = providerconfig.config_path()
+        files_before[provider_path] = provider_path.exists()
+    if target is not None:
+        files_before[target] = target.exists()
+
+    if applying:
         # Parse every configuration document needed by this transaction before
         # changing either file. A malformed pre-existing config is therefore
         # a safe refusal, never a reason to apply only the earlier half.
@@ -179,30 +204,118 @@ def _cmd_guided_init(args: argparse.Namespace) -> int:
             providerconfig.set_enabled(name, False, known=known)
         if ollama_model is not None:
             providerconfig.set_model("ollama", ollama_model, known=known)
+        assert target is not None
+        _write_roster(args, target=target)
 
+    policy = providerconfig.load(known)
+    profiles = [
+        {"name": name, "mode": reviewprofiles.builtins()[name].mode}
+        for name in reviewprofiles.names()
+    ]
+    host = _guided_host_role()
+    providers = _guided_provider_rows(registry, policy)
     payload = {
+        "schema_version": _GUIDED_SETUP_SCHEMA_VERSION,
         "guided": True,
-        "apply": bool(getattr(args, "apply", False)),
+        "apply": applying,
         "changes": changes,
         "external_tools": "denied",
+        "profiles": profiles,
+        "host": host,
+        "providers": providers,
     }
+    created: list[str] = []
+    changed: list[str] = []
+    if applying:
+        for path, existed in files_before.items():
+            if path.exists():
+                (changed if existed else created).append(str(path))
+        payload["created_files"] = sorted(created)
+        payload["changed_files"] = sorted(changed)
     if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        print(json.dumps(payload, indent=2, sort_keys=True), file=sys.stderr)
         return 0
 
     phase = "applied" if payload["apply"] else "preview"
-    print(f"guided setup {phase}:")
+    print(f"guided setup {phase}:", file=sys.stderr)
+    print(f"  schema version: {_GUIDED_SETUP_SCHEMA_VERSION}", file=sys.stderr)
+    profile_text = ", ".join(f"{item['name']} ({item['mode']})" for item in profiles)
+    print(f"  profiles: {profile_text}", file=sys.stderr)
+    if host is not None:
+        print(
+            f"  host: {host['provider']} ({host['role']}; advisory={host['advisory']}; "
+            f"independent={host['independent']})",
+            file=sys.stderr,
+        )
+    print("  providers:", file=sys.stderr)
+    for row in providers:
+        print(
+            f"    {row['name']}: {row['readiness']} "
+            f"(enabled={row['enabled']}; discovered={row['discovered']})",
+            file=sys.stderr,
+        )
     if default_profile is not None:
-        print(f"  default profile: {default_profile}")
+        print(f"  default profile: {default_profile}", file=sys.stderr)
     for name in sorted(enabled):
-        print(f"  enable provider: {name}")
+        print(f"  enable provider: {name}", file=sys.stderr)
     for name in sorted(disabled):
-        print(f"  disable provider: {name}")
+        print(f"  disable provider: {name}", file=sys.stderr)
     if ollama_model is not None:
-        print(f"  Ollama model: {ollama_model}")
+        print(f"  Ollama model: {ollama_model}", file=sys.stderr)
     if not changes:
-        print("  no configuration changes selected")
-    print("  external tools remain denied; no external tools were enabled or used")
+        print("  no configuration changes selected", file=sys.stderr)
+    print(
+        "  external tools remain denied; no external tools were enabled or used",
+        file=sys.stderr,
+    )
     if not payload["apply"]:
-        print("  no files were written; rerun with --apply to persist these changes")
+        print(
+            "  no files were written; rerun with --apply to persist these changes", file=sys.stderr
+        )
+    else:
+        for output_path in created:
+            print(f"  created: {output_path}", file=sys.stderr)
+        for output_path in changed:
+            print(f"  changed: {output_path}", file=sys.stderr)
+        print("  first review: afriend run <artifact>", file=sys.stderr)
     return 0
+
+
+def _guided_host_role() -> dict[str, object] | None:
+    """Describe host advisory status without discovering or running a provider."""
+    host = detect_host(os.environ)
+    if host is None:
+        return None
+    return {
+        "provider": host,
+        "role": "host-self-review" if host == "codex" else "host-provider",
+        "advisory": host == "codex",
+        "independent": False,
+    }
+
+
+def _guided_provider_rows(
+    registry: dict[str, Adapter], policy: providerconfig.ProviderPolicy
+) -> list[dict[str, object]]:
+    """Give setup static discovery details without spawning or probing providers."""
+    rows: list[dict[str, object]] = []
+    for name, adapter in sorted(registry.items()):
+        setting = policy.setting(name)
+        discovered = bool(adapter.binary and shutil.which(adapter.binary))
+        if not setting.enabled:
+            readiness = "disabled"
+        elif adapter.transport == "http":
+            readiness = "not-probed"
+        else:
+            readiness = "available" if discovered else "unavailable"
+        rows.append(
+            {
+                "name": name,
+                "enabled": setting.enabled,
+                "model": setting.model,
+                "transport": adapter.transport,
+                "discovered": discovered,
+                "readiness": readiness,
+            }
+        )
+    return rows

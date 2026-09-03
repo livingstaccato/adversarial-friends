@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from adversarial_friends import providerconfig, reviewprofiles, sessionconfig
+from adversarial_friends import providerconfig, readiness, reviewprofiles, sessionconfig
 from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands import init as init_module
 from adversarial_friends.errors import UsageError
@@ -21,6 +21,7 @@ def _known() -> set[str]:
 
 def test_guided_preview_is_a_no_write_no_probe_plan(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("CODEX_SESSION_ID", "guided-preview")
     roster = tmp_path / "roster.toml"
     roster.write_text("# existing roster\n", encoding="utf-8")
     monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: pytest.fail("probed"))
@@ -34,9 +35,14 @@ def test_guided_preview_is_a_no_write_no_probe_plan(tmp_path, monkeypatch, capsy
         == 0
     )
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.err
+    assert captured.out == ""
+    assert "schema version: 1" in output
     assert "default profile: balanced" in output
     assert "enable provider: ollama" in output
+    assert "profiles: balanced (crossexam), quick (report), thorough (loop)" in output
+    assert "host: codex (host-self-review; advisory=True; independent=False)" in output
     assert "external tools remain denied" in output
     assert "no files were written" in output
     assert roster.read_text(encoding="utf-8") == "# existing roster\n"
@@ -46,6 +52,8 @@ def test_guided_preview_is_a_no_write_no_probe_plan(tmp_path, monkeypatch, capsy
 
 def test_guided_preview_json_is_machine_readable_and_never_writes(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    for marker in readiness.HOST_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
 
     assert (
         init_module.cmd_init(
@@ -62,17 +70,26 @@ def test_guided_preview_json_is_machine_readable_and_never_writes(tmp_path, monk
         == 0
     )
 
-    assert json.loads(capsys.readouterr().out) == {
-        "apply": False,
-        "changes": {
-            "providers": {
-                "ollama": {"enabled": True, "model": "qwen3:8b"},
-                "opencode": {"enabled": False},
-            }
-        },
-        "external_tools": "denied",
-        "guided": True,
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload["schema_version"] == 1
+    assert payload["guided"] is True
+    assert payload["apply"] is False
+    assert payload["changes"] == {
+        "providers": {
+            "ollama": {"enabled": True, "model": "qwen3:8b"},
+            "opencode": {"enabled": False},
+        }
     }
+    assert payload["external_tools"] == "denied"
+    assert payload["profiles"] == [
+        {"mode": "crossexam", "name": "balanced"},
+        {"mode": "report", "name": "quick"},
+        {"mode": "loop", "name": "thorough"},
+    ]
+    assert {row["name"] for row in payload["providers"]} == _known()
+    assert payload["host"] is None
     assert not sessionconfig.config_path().exists()
     assert not providerconfig.config_path().exists()
 
@@ -109,7 +126,67 @@ def test_guided_apply_changes_only_selected_settings_and_preserves_others(
     assert policy.setting("ollama") == providerconfig.ProviderSetting(True, "qwen3:8b")
     assert policy.setting("codex") == providerconfig.ProviderSetting(False, None)
     assert policy.setting("opencode") == providerconfig.ProviderSetting(False, "gpt-5.6-sol")
-    assert "external tools remain denied" in capsys.readouterr().out
+    output = capsys.readouterr().err
+    assert "changed:" in output
+    assert "first review: afriend run <artifact>" in output
+    assert "external tools remain denied" in output
+
+
+def test_guided_apply_also_generates_the_normal_roster(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    target = tmp_path / "roster.toml"
+    registry = init_module.load_adapters(ADAPTER_DIR)
+    rows = {
+        "codex": readiness.FriendReadiness(
+            "codex", readiness.ReadinessState.READY, "available", "/bin/codex", None
+        )
+    }
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: rows)
+
+    assert (
+        init_module.cmd_init(
+            _args("--apply", "--default-profile", "balanced", "--out", str(target))
+        )
+        == 0
+    )
+
+    assert target.exists()
+    assert 'cli = "codex"' in target.read_text(encoding="utf-8")
+    output = capsys.readouterr().err
+    assert str(target) in output
+    assert str(sessionconfig.config_path()) in output
+    assert set(rows) <= set(registry)
+
+
+def test_guided_apply_refuses_an_existing_roster_before_config_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    target = tmp_path / "roster.toml"
+    target.write_text("# do not replace\n", encoding="utf-8")
+
+    with pytest.raises(UsageError, match="--force"):
+        init_module.cmd_init(
+            _args("--apply", "--default-profile", "balanced", "--out", str(target))
+        )
+
+    assert target.read_text(encoding="utf-8") == "# do not replace\n"
+    assert not sessionconfig.config_path().exists()
+    assert not providerconfig.config_path().exists()
+
+
+def test_guided_apply_force_replaces_the_existing_roster(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    target = tmp_path / "roster.toml"
+    target.write_text("# replace me\n", encoding="utf-8")
+    rows = {
+        "codex": readiness.FriendReadiness(
+            "codex", readiness.ReadinessState.READY, "available", "/bin/codex", None
+        )
+    }
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: rows)
+
+    assert init_module.cmd_init(_args("--apply", "--force", "--out", str(target))) == 0
+
+    assert target.read_text(encoding="utf-8") != "# replace me\n"
 
 
 @pytest.mark.parametrize(
