@@ -5,6 +5,8 @@ Split out of cli.py.
 """
 
 import argparse
+from collections.abc import Iterable
+from typing import Any
 
 from . import __version__
 from .adapters import Adapter, FriendSpec
@@ -16,7 +18,7 @@ from .ceilings import (
 from .errors import UsageError
 from .ids import validate_friend_name
 from .presets import PRESETS
-from .resolutions import DISPOSITIONS
+from .resolutions import DISPOSITIONS, resolve_form_error
 from .trust import MODEL_RE
 
 RUN_MODES = ("report", "crossexam", "gate", "loop")
@@ -59,8 +61,31 @@ class _ExplicitProfileSettingAction(argparse.Action):
         namespace._profile_settings_explicit = explicit
 
 
+def _resolve_form_error(args: argparse.Namespace) -> str | None:
+    """Adapt CLI arguments to the resolution form contract."""
+    return resolve_form_error(
+        discovery=bool(getattr(args, "list", False) or getattr(args, "next", False)),
+        claim=getattr(args, "claim", None),
+        disposition=getattr(args, "disposition", None),
+        evidence=getattr(args, "evidence", None),
+        author=getattr(args, "author", None),
+    )
+
+
+class _AfArgumentParser(argparse.ArgumentParser):
+    """Keep cross-flag CLI contracts as ordinary argparse errors."""
+
+    def parse_args(self, args: Iterable[str] | None = None, namespace: Any = None) -> Any:
+        parsed = super().parse_args(args, namespace)
+        if getattr(parsed, "command", None) == "resolve":
+            error = _resolve_form_error(parsed)
+            if error is not None:
+                self.error(error)
+        return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="afriend")
+    parser = _AfArgumentParser(prog="afriend")
     parser.add_argument("--version", action="version", version=f"afriend {__version__}")
     sub = parser.add_subparsers(dest="command")
 
@@ -250,11 +275,16 @@ def build_parser() -> argparse.ArgumentParser:
     # has gone and changed something, which may be days later.
     resolve_p = sub.add_parser("resolve")
     resolve_p.add_argument("run_id", help="run directory name, or a path to one")
-    resolve_p.add_argument("--claim", required=True, help="claim id, e.g. c-0007@2")
-    resolve_p.add_argument("--disposition", required=True, choices=list(DISPOSITIONS))
+    discovery = resolve_p.add_mutually_exclusive_group()
+    discovery.add_argument("--list", action="store_true", help="list unresolved canonical claims")
+    discovery.add_argument(
+        "--next", action="store_true", help="show the unique highest-priority claim"
+    )
+    resolve_p.add_argument("--claim", default=None, help="claim id, e.g. c-0007@2")
+    resolve_p.add_argument("--disposition", default=None, choices=list(DISPOSITIONS))
     resolve_p.add_argument(
         "--evidence",
-        required=True,
+        default=None,
         help="a location the fix touched, e.g. src/auth.py:38 -- §6.4 requires one",
     )
     resolve_p.add_argument("--author", default=None, help="defaults to $USER")

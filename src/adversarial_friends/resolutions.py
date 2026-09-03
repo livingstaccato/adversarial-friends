@@ -43,6 +43,37 @@ UNVERIFIABLE = "unverifiable"
 _LOCATION_RE = re.compile(r"^(?P<path>[^\s:]+)(?::(?P<start>\d+)(?:-(?P<end>\d+))?)?")
 
 
+def resolve_form_error(
+    *,
+    discovery: bool,
+    claim: str | None,
+    disposition: str | None,
+    evidence: str | None,
+    author: str | None,
+) -> str | None:
+    """Return the missing-or-conflicting contract error for ``resolve``.
+
+    Discovery deliberately has no mutation fields.  The established write
+    form remains all-or-nothing: accepting a partial form would invite a
+    caller to mistake inspection for a recorded attestation.
+    """
+    write_fields = {
+        "claim": claim,
+        "disposition": disposition,
+        "evidence": evidence,
+    }
+    if discovery:
+        if any(value is not None for value in write_fields.values()) or author is not None:
+            return "--list/--next cannot be combined with resolution write fields"
+        return None
+    missing = [field for field, value in write_fields.items() if value is None]
+    if missing:
+        return "the following arguments are required for a resolution: " + ", ".join(
+            f"--{field}" for field in missing
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class Location:
     path: str
