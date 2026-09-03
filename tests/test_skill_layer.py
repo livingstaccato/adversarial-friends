@@ -78,6 +78,24 @@ def test_focused_skills_hold_their_operational_boundaries():
     assert "does not require a disposition or evidence" in resolve
 
 
+def test_status_and_resolve_explain_how_to_inspect_a_named_run():
+    for name in ("status", "resolve"):
+        text = " ".join((ENTRYPOINTS / name / "SKILL.md").read_text().lower().split())
+        for phrase in (
+            "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
+            "--out",
+            "report.md",
+            "run.json",
+            "claims.jsonl",
+        ):
+            assert phrase in text, (name, phrase)
+    status = " ".join((ENTRYPOINTS / "status" / "SKILL.md").read_text().lower().split())
+    resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
+    assert "doctor is readiness only" in status
+    assert "per-friend metadata/error" in status
+    assert "c-0001@1" in resolve
+
+
 def test_afriend_references_are_colocated_and_old_source_paths_are_absent():
     router = ENTRYPOINTS / "afriend"
     for name in ("references/modes.md", "references/ledger.md", "references/troubleshooting.md"):

@@ -13,8 +13,11 @@ afriend doctor
 
 Explain effective provider states such as `ready`, `reachable-unconfigured`,
 `unavailable`, `disabled`, and `policy-blocked`. Disabled providers are not
-probed. When the user supplies a named run or run directory, inspect its
-recorded outcome and recommend the next action; never invent a run identity.
+probed. `afriend doctor` is readiness only, not run inspection; doctor is readiness only. When the user
+supplies a run ID, inspect `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/<run-id>`.
+If it was created with `--out`, ask for its run directory instead. Read
+`report.md`, `run.json`, and `claims.jsonl`, plus per-friend metadata/error as
+needed, then recommend the next action for the named run; never invent a run identity.
 
 This skill is read-only: it never dispatches friends and never changes
 configuration. Codex remains an advisory host orchestrator. A past run's
