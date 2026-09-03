@@ -128,8 +128,10 @@ class Progress:
                 if self.event_writer is writer:
                     self.event_writer = None
 
-    def run_started(self, mode: str, profile: str) -> None:
-        self._event("run_started", {"mode": mode, "profile": profile, "status": "started"})
+    def run_started(self, mode: str, profile: str, scope: str) -> None:
+        self._event(
+            "run_started", {"mode": mode, "profile": profile, "scope": scope, "status": "started"}
+        )
 
     def run_finished(self, status: str, next_action: str, *, duration_s: float) -> None:
         """Persist the one terminal record for this invocation."""

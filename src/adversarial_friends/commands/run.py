@@ -155,7 +155,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         # resumer may be mid-write on.
         store.lock()
         reporter.event_writer = store.events_writer()
-        reporter.run_started(args.mode, str(getattr(args, "profile", "legacy") or "legacy"))
         snapshot = select_snapshot(
             repo_root,
             frozen,
@@ -202,6 +201,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 warning_seen = True
 
         repo_root, specs = reconcile_snapshot_scope(artifact, snapshot, specs, downgrades)
+        reporter.run_started(
+            args.mode,
+            str(getattr(args, "profile", "legacy") or "legacy"),
+            "repo" if any(spec.scope == "repo" for spec in specs) else "doc",
+        )
         _warn_doc_scope()
         # The snapshot serves two independent purposes, and taking it only
         # for the first one was a bug: repo-scope friends are checked out

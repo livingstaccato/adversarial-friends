@@ -47,7 +47,7 @@ _NEXT_ACTIONS: Final = frozenset(
 )
 _MODE_VALUES: Final = frozenset({"report", "crossexam", "gate", "loop"})
 _FIELDS: Final[dict[str, frozenset[str]]] = {
-    "run_started": frozenset({"mode", "profile", "status"}),
+    "run_started": frozenset({"mode", "profile", "status", "scope"}),
     "friend_finished": frozenset({"friend", "provider", "lens", "round", "duration_s", "status"}),
     "friend_failed": frozenset({"friend", "provider", "lens", "round", "duration_s", "status"}),
     "round_finished": frozenset({"round", "status"}),
@@ -105,6 +105,8 @@ def _validate_payload(event_type: str, payload: Mapping[str, object]) -> dict[st
             raise _invalid(f"{name} must be a bounded identifier")
     if "mode" in data and (not isinstance(data["mode"], str) or data["mode"] not in _MODE_VALUES):
         raise _invalid(f"mode must be one of {sorted(_MODE_VALUES)!r}")
+    if "scope" in data and data["scope"] not in {"doc", "repo"}:
+        raise _invalid("scope must be 'doc' or 'repo'")
     if "status" in data and (
         not isinstance(data["status"], str) or data["status"] not in _STATUSES
     ):

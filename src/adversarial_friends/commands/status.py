@@ -174,7 +174,13 @@ def _friends(meta: dict[str, Any], events: Iterable[EventRecord]) -> dict[str, o
         assert isinstance(event_status, str)
         row = rows.setdefault(
             name,
-            {"name": name, "provider": provider, "scope": "doc", "round": 0, "status": "pending"},
+            {
+                "name": name,
+                "provider": provider,
+                "scope": "unknown",
+                "round": 0,
+                "status": "pending",
+            },
         )
         prior_round = row["round"]
         assert isinstance(prior_round, int)
@@ -260,9 +266,21 @@ def summarize(run_dir: Path, *, root: Path) -> dict[str, object]:
     friends = _friends(meta, events)
     rows = friends["rows"]
     assert isinstance(rows, list)
-    scope = (
-        "repo" if any(row["scope"] == "repo" for row in rows if isinstance(row, dict)) else "doc"
-    )
+    if rows:
+        scope = (
+            "repo"
+            if any(row["scope"] == "repo" for row in rows if isinstance(row, dict))
+            else "doc"
+        )
+    elif started is not None:
+        started_scope = started.payload.get("scope")
+        scope = (
+            started_scope
+            if isinstance(started_scope, str) and started_scope in {"doc", "repo"}
+            else "unknown"
+        )
+    else:
+        scope = "unknown"
     return {
         "version": STATUS_SCHEMA_VERSION,
         "run_id": run_dir.name,

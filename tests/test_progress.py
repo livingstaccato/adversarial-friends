@@ -157,7 +157,7 @@ def test_progress_writes_safe_lifecycle_events_without_touching_human_output(tmp
     stream = io.StringIO()
     store = RunStore(tmp_path / "runs", "run-progress")
     reporter = progress.Progress(stream=stream, event_writer=store.events_writer())
-    reporter.run_started("report", "quick")
+    reporter.run_started("report", "quick", "doc")
     reporter.round_started(1, "critique", ["fake-security-0"])
     reporter.friend_dispatched("fake-security-0", 900, provider="fake", lens="security")
     reporter.friend_finished("fake-security-0", "answered with 1 claim", succeeded=True)

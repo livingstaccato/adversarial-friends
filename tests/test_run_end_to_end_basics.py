@@ -107,7 +107,12 @@ def test_report_run_writes_ordered_safe_lifecycle_events(tmp_path):
         "round_finished",
         "run_finished",
     ]
-    assert events[0]["payload"] == {"mode": "report", "profile": "quick", "status": "started"}
+    assert events[0]["payload"] == {
+        "mode": "report",
+        "profile": "quick",
+        "scope": "doc",
+        "status": "started",
+    }
     assert events[0]["schema_version"] == 1
     assert events[0]["run_id"] == run_dir.name
     assert events[0]["timestamp"].endswith("Z")

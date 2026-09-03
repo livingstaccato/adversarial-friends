@@ -3,8 +3,10 @@
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 
+from e2e_helpers import _git_commit, _git_repo
 import pytest
 
 from adversarial_friends import cli
@@ -199,8 +201,8 @@ def test_cmd_run_exposes_an_event_first_status_checkpoint(monkeypatch, tmp_path,
     observed: list[dict[str, object]] = []
     original = Progress.run_started
 
-    def inspect_before_metadata(self, mode: str, profile: str) -> None:
-        original(self, mode, profile)
+    def inspect_before_metadata(self, mode: str, profile: str, scope: str) -> None:
+        original(self, mode, profile, scope)
         run = next(root.iterdir())
         assert not (run / "run.json").exists()
         observed.append(status.summarize(run, root=root))
@@ -229,6 +231,46 @@ def test_cmd_run_exposes_an_event_first_status_checkpoint(monkeypatch, tmp_path,
         "current": 0,
         "final": None,
     }
+    capsys.readouterr()
+
+
+def test_event_first_status_reports_validated_repo_scope(monkeypatch, tmp_path, capsys):
+    repo = _git_repo(tmp_path / "repo")
+    artifact = repo / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    subprocess.run(["git", "add", "spec.md"], cwd=repo, check=True, capture_output=True)
+    _git_commit(repo, "add spec")
+    root = tmp_path / "runs"
+    fake = Path(__file__).with_name("fake_friend.py")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {fake}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    observed: list[dict[str, object]] = []
+    original = Progress.run_started
+
+    def inspect_before_metadata(self, mode: str, profile: str, scope: str) -> None:
+        original(self, mode, profile, scope)
+        run = next(root.iterdir())
+        assert not (run / "run.json").exists()
+        observed.append(status.summarize(run, root=root))
+
+    monkeypatch.setattr(Progress, "run_started", inspect_before_metadata)
+
+    assert (
+        cli.main(
+            [
+                "run",
+                str(artifact),
+                "--out",
+                str(root),
+                "--friend",
+                "fake:good:repo",
+                "--no-progress",
+            ]
+        )
+        == 0
+    )
+
+    assert observed[0]["scope"] == "repo"
     capsys.readouterr()
 
 
