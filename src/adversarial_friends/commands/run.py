@@ -59,6 +59,11 @@ from .resume import resume_iteration
 from .runmeta import JUDGING_MODES, _base_meta, finish_run, loop_is_done, validate_run_args
 from .setup import prepare_run
 
+EXPLICIT_REPOSITORY_SCOPE_AUDIT = (
+    "repository scope selected explicitly; frozen artifact independently "
+    "bound (not Git-blob-bound)."
+)
+
 
 def _read_artifact_text(path: Path) -> str:
     try:
@@ -119,13 +124,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             # different repository and bless a replacement snapshot there.
             repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
             explicit_repo = False
+            saved_audit = resume_meta.get("repository_scope_audit")
+            repository_scope_audit = saved_audit if isinstance(saved_audit, str) else None
         else:
             repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
-            if explicit_repo:
-                downgrades.append(
-                    "repository scope selected explicitly; frozen artifact independently "
-                    "bound (not Git-blob-bound)."
-                )
+            repository_scope_audit = EXPLICIT_REPOSITORY_SCOPE_AUDIT if explicit_repo else None
         offset = clock_offset(downgrades)
 
         def now() -> float:
@@ -242,7 +245,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         def run_meta() -> dict[str, Any]:
             # Built the same way whether the run finishes or halts: a halted
             # directory a resume cannot read is worse than no halt at all.
-            return _base_meta(
+            meta = _base_meta(
                 args,
                 artifact,
                 digest,
@@ -262,6 +265,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 detected_host=resolved.detected_host,
                 effective_include_self=resolved.effective_include_self,
             )
+            if repository_scope_audit is not None:
+                meta["repository_scope_audit"] = repository_scope_audit
+            return meta
 
         def _track_pool(pool: concurrent.futures.ThreadPoolExecutor | None) -> None:
             active_pool[0] = pool

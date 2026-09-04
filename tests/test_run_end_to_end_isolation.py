@@ -483,7 +483,11 @@ def test_explicit_repo_scope_uses_selected_code_for_an_ignored_artifact_in_anoth
     assert meta["snapshot"]["repo_root"] == str(repo.resolve())
     assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
     assert meta["snapshot"]["source_path"] is None
-    assert any("repository scope selected explicitly" in note for note in meta["downgrades"])
+    assert meta["repository_scope_audit"] == (
+        "repository scope selected explicitly; frozen artifact independently "
+        "bound (not Git-blob-bound)."
+    )
+    assert not any("repository scope selected explicitly" in note for note in meta["downgrades"])
     worktree = run_dir / "isolation" / "round-1" / "fake-cwd_probe-0"
     assert (worktree / "tracked.py").read_text() == "selected repository code\n"
     assert not (worktree / artifact.name).exists()
