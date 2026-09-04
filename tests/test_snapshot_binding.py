@@ -10,7 +10,7 @@ import sys
 from e2e_helpers import AF, _env, run_af
 import pytest
 
-from adversarial_friends import isolation
+from adversarial_friends import isolation, snapshots
 from adversarial_friends.errors import UsageError
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.snapshots import SnapshotIdentity, history_from_meta
@@ -46,6 +46,57 @@ def test_resume_rechecks_frozen_bytes_against_the_saved_commit_blob(tmp_path):
 
     with pytest.raises(UsageError, match=r"commit artifact.*frozen artifact"):
         coordinated.verify(frozen)
+
+
+def test_unbound_repo_snapshot_resume_never_reads_a_commit_blob(monkeypatch, tmp_path):
+    repo, _source, frozen, _bound_identity = _identity(tmp_path)
+    digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
+    identity = SnapshotIdentity.create(repo, frozen, digest)
+
+    def unexpected_blob_lookup(*_args):
+        raise AssertionError("unbound snapshot read a commit blob")
+
+    monkeypatch.setattr(snapshots, "_resume_commit_blob", unexpected_blob_lookup)
+
+    assert identity.verify(frozen).artifact_bound_to_snapshot is False
+
+
+def test_old_snapshot_without_binding_field_infers_the_source_binding(tmp_path):
+    _repo, _source, frozen, identity = _identity(tmp_path)
+    raw = identity.to_dict()
+    raw.pop("artifact_bound_to_snapshot")
+
+    restored = SnapshotIdentity._from_dict(raw)
+
+    assert restored.artifact_bound_to_snapshot
+    assert restored.verify(frozen) == identity
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"artifact_bound_to_snapshot": True, "source_path": None}, "source_path"),
+        ({"artifact_bound_to_snapshot": False}, "source_path"),
+        (
+            {"artifact_bound_to_snapshot": True, "repo_root": None, "commit": None, "tree": None},
+            "repository",
+        ),
+    ],
+)
+def test_inconsistent_saved_binding_metadata_is_refused(tmp_path, changes, message):
+    repo, _source, _frozen, identity = _identity(tmp_path)
+    raw = {**identity.to_dict(), **changes}
+
+    with pytest.raises(UsageError, match=message):
+        SnapshotIdentity.from_meta(
+            {
+                "snapshot": raw,
+                "repo_root": str(repo),
+                "snapshot_sha": identity.commit,
+                "artifact_path": identity.artifact_path,
+                "artifact_hash": identity.artifact_hash,
+            }
+        )
 
 
 def test_legacy_binding_recovers_deleted_regular_source_from_saved_path(tmp_path):
@@ -238,6 +289,7 @@ def test_legacy_history_entry_recovers_an_intermediate_symlink_binding(tmp_path)
     )
     current = SnapshotIdentity.from_meta(legacy).verify(frozen)
     raw_history = dataclasses.replace(current, source_path=None).to_dict()
+    raw_history.pop("artifact_bound_to_snapshot")
 
     history = history_from_meta({**legacy, "snapshot_history": [raw_history]}, current)
 
@@ -288,6 +340,7 @@ def test_legacy_history_entry_recovers_symlink_binding_from_its_saved_commit(tmp
     current = SnapshotIdentity.from_meta(legacy).verify(frozen)
     source.unlink()
     raw_history = dataclasses.replace(current, source_path=None).to_dict()
+    raw_history.pop("artifact_bound_to_snapshot")
 
     history = history_from_meta({**legacy, "snapshot_history": [raw_history]}, current)
 
@@ -386,7 +439,7 @@ def test_intermediate_legacy_binding_tamper_does_not_rewrite_resume_state(tmp_pa
     )
 
     assert resumed.returncode == 2, resumed.stderr
-    assert "commit artifact does not match" in resumed.stderr
+    assert "artifact_bound_to_snapshot requires source_path" in resumed.stderr
     assert run_json.read_bytes() == before
     assert response_path.read_bytes() == before_response
     assert report.read_bytes() == before_report
