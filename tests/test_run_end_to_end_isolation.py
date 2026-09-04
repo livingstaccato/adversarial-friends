@@ -233,6 +233,7 @@ def test_in_repo_symlink_to_outside_reconciles_a_mixed_roster_consistently(tmp_p
 
 
 def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypatch, tmp_path):
+    from adversarial_friends import isolation
     from adversarial_friends.commands import run as run_module
 
     repo = _git_repo(tmp_path / "repo")
@@ -247,7 +248,14 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
     monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
     monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
     real_freeze = run_module.freeze_revision
+    real_snapshot = isolation.snapshot_commit
+    snapshot_calls = 0
     retargeted = False
+
+    def count_snapshot(root):
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return real_snapshot(root)
 
     def retarget_then_freeze(*args, **kwargs):
         nonlocal retargeted
@@ -258,6 +266,7 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
         return real_freeze(*args, **kwargs)
 
     monkeypatch.setattr(run_module, "freeze_revision", retarget_then_freeze)
+    monkeypatch.setattr(isolation, "snapshot_commit", count_snapshot)
     parsed = cli.build_parser().parse_args(
         [
             "run",
@@ -276,6 +285,7 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
     )
 
     assert cli.cmd_run(parsed) == 11
+    assert snapshot_calls == 1
 
     run_dir = next((tmp_path / "runs").iterdir())
     meta = json.loads((run_dir / "run.json").read_text())

@@ -426,7 +426,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                     last_digest,
                     snapshot,
                     iteration,
-                    artifact_bound_to_snapshot=not explicit_repo,
+                    artifact_bound_to_snapshot=repository_scope_mode == "automatic",
+                    predecessor_uses_artifact_hash=repository_scope_mode == "explicit",
                 )
                 frozen, digest = revision.frozen, revision.digest
                 artifact_text = revision.text

@@ -116,3 +116,20 @@ def test_scope_mode_rejects_a_tampered_automatic_unbound_snapshot_but_keeps_lega
     with pytest.raises(UsageError, match=r"automatic.*Git-blob-bound"):
         validate_repository_scope({"repository_scope_mode": "automatic"}, unbound, [unbound])
     validate_repository_scope({}, unbound, [unbound])
+
+
+def test_legacy_automatic_unbound_mode_rejects_a_bound_snapshot():
+    bound = SnapshotIdentity(
+        Path("/repo"),
+        "1" * 40,
+        "a" * 40,
+        "artifact/spec.md",
+        "sha256:" + "1" * 64,
+        source_path="artifact/spec.md",
+        artifact_bound_to_snapshot=True,
+    )
+
+    with pytest.raises(UsageError, match=r"legacy automatic-unbound.*independently frozen"):
+        validate_repository_scope(
+            {"repository_scope_mode": "legacy-automatic-unbound"}, bound, [bound]
+        )

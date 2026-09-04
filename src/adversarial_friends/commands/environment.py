@@ -223,6 +223,7 @@ def freeze_revision(
     iteration: int,
     *,
     artifact_bound_to_snapshot: bool = True,
+    predecessor_uses_artifact_hash: bool = False,
 ) -> Revision:
     """Freeze what this iteration will review, and say if it changed.
 
@@ -252,16 +253,27 @@ def freeze_revision(
     if digest == comparison_digest:
         return Revision(frozen, digest, text, identity, None)
     predecessor = (
-        identity.commit or identity.artifact_hash
-        if artifact_bound_to_snapshot
-        else identity.artifact_hash
+        identity.artifact_hash
+        if predecessor_uses_artifact_hash
+        else identity.commit or identity.artifact_hash
     )
+    next_repo_root = identity.repo_root
+    source_artifact = artifact if artifact_bound_to_snapshot else None
+    if artifact_bound_to_snapshot and next_repo_root is not None:
+        current_root, _explicit = resolve_run_repo(artifact, None)
+        if current_root != next_repo_root:
+            # A loop follows the invocation path again for each changed
+            # revision. If its final symlink now points outside the original
+            # repository, select doc scope before snapshot creation rather
+            # than minting and discarding a repository snapshot commit.
+            next_repo_root = None
+            source_artifact = None
     identity = SnapshotIdentity.create(
-        identity.repo_root,
+        next_repo_root,
         frozen,
         digest,
         predecessor=predecessor,
-        source_artifact=artifact if artifact_bound_to_snapshot else None,
+        source_artifact=source_artifact,
     )
     if (
         artifact_bound_to_snapshot

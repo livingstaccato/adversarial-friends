@@ -33,6 +33,7 @@ EXPLICIT_REPOSITORY_SCOPE_AUDIT = (
     "repository scope selected explicitly; frozen artifact independently "
     "bound (not Git-blob-bound)."
 )
+LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE = "legacy-automatic-unbound"
 _SNAPSHOT_FIELDS = frozenset(
     {
         "repo_root",
@@ -569,8 +570,15 @@ def repository_scope_mode(meta: Mapping[str, object]) -> str:
             return "explicit"
         return "automatic"
     mode = meta["repository_scope_mode"]
-    if not isinstance(mode, str) or mode not in {"automatic", "explicit"}:
-        raise UsageError("cannot resume: saved repository_scope_mode must be automatic or explicit")
+    if not isinstance(mode, str) or mode not in {
+        "automatic",
+        "explicit",
+        LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE,
+    }:
+        raise UsageError(
+            "cannot resume: saved repository_scope_mode must be automatic, explicit, or "
+            "legacy-automatic-unbound"
+        )
     return mode
 
 
@@ -599,6 +607,18 @@ def validate_repository_scope(
                 raise UsageError(
                     "cannot resume: explicit repository scope requires an independently "
                     "frozen repository snapshot"
+                )
+            continue
+        if mode == LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE:
+            if (
+                identity.repo_root is None
+                or identity.commit is None
+                or identity.artifact_bound_to_snapshot
+                or identity.source_path is not None
+            ):
+                raise UsageError(
+                    "cannot resume: legacy automatic-unbound repository scope requires an "
+                    "independently frozen repository snapshot"
                 )
             continue
         if identity.repo_root is None or identity.artifact_bound_to_snapshot:

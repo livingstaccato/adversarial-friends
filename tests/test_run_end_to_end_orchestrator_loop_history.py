@@ -252,3 +252,41 @@ def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, ori
     assert resumed.returncode == 2, resumed.stderr
     assert "repository scope requires" in resumed.stderr
     assert run_json.read_bytes() == before
+
+
+def test_resumed_legacy_automatic_unbound_scope_is_migrated_and_persists(tmp_path):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    (reviewed / "tracked.py").write_text("selected code\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "initial")
+    artifact = tmp_path / "outside.md"
+    artifact.write_text("# outside\n")
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--repo",
+        str(reviewed),
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good_twin",
+        "--merge",
+        "orchestrator",
+    )
+    assert halted.returncode == 10, halted.stderr
+    run_json = _run_dir(tmp_path) / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta.pop("repository_scope_mode")
+    meta.pop("repository_scope_audit")
+    run_json.write_text(json.dumps(meta))
+    _respond(tmp_path, [], round_no=1)
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+    persisted = json.loads(run_json.read_text())
+    assert persisted["repository_scope_mode"] == "legacy-automatic-unbound"
+    assert len(persisted["snapshot_history"]) == 1
+    assert persisted["snapshot"] == persisted["snapshot_history"][0]
+    assert persisted["snapshot"]["artifact_bound_to_snapshot"] is False
+    assert persisted["snapshot"]["source_path"] is None

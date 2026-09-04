@@ -5,7 +5,7 @@ import copy
 from typing import Any
 
 from ..errors import UsageError
-from ..snapshots import EXPLICIT_REPOSITORY_SCOPE_AUDIT
+from ..snapshots import EXPLICIT_REPOSITORY_SCOPE_AUDIT, LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE
 from . import resumevalidation
 
 CURRENT_SCHEMA_VERSION = 3
@@ -66,5 +66,21 @@ def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
                 meta["downgrades"] = [
                     note for note in downgrades if note != EXPLICIT_REPOSITORY_SCOPE_AUDIT
                 ]
+        elif _is_legacy_automatic_unbound_snapshot(meta.get("snapshot")):
+            meta["repository_scope_mode"] = LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE
     meta["schema_version"] = CURRENT_SCHEMA_VERSION
     return meta
+
+
+def _is_legacy_automatic_unbound_snapshot(value: object) -> bool:
+    """Recognize the exact historical repository-unbound shape for migration."""
+    if not isinstance(value, Mapping):
+        return False
+    return (
+        isinstance(value.get("repo_root"), str)
+        and bool(value["repo_root"])
+        and isinstance(value.get("commit"), str)
+        and bool(value["commit"])
+        and value.get("source_path") is None
+        and value.get("artifact_bound_to_snapshot") is False
+    )
