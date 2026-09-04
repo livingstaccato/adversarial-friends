@@ -300,7 +300,7 @@ def test_resume_keeps_the_saved_profile_without_reading_a_new_default(tmp_path, 
     )
     monkeypatch.setattr("adversarial_friends.commands.runmeta._restore_args", lambda _args: saved)
 
-    restored, _ = validate_run_args(SimpleNamespace(resume="saved-run", repo=None))
+    restored, _ = validate_run_args(SimpleNamespace(resume="saved-run"))
 
     assert restored.profile == "thorough"
     assert restored.mode == "loop"
