@@ -18,8 +18,9 @@ that resets on every resume.
 """
 
 import json
+import subprocess
 
-from e2e_helpers import _env, run_af
+from e2e_helpers import _env, _git_commit, _git_repo, run_af
 
 
 def _artifact(tmp_path):
@@ -148,3 +149,49 @@ def test_an_earlier_iterations_verdicts_survive_into_a_later_halts_report(tmp_pa
     report = _report(tmp_path)
     assert "## Cross-examination" in report, "verdict section is missing entirely"
     assert "settled-upheld" in report, report
+
+
+def test_resumed_explicit_scope_keeps_an_independent_changed_artifact_bound(tmp_path):
+    """A post-resume loop iteration must retain the saved explicit scope."""
+    repo = _git_repo(tmp_path / "reviewed-repo")
+    (repo / "tracked.py").write_text("selected code\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    artifact_repo = _git_repo(tmp_path / "artifact-repo")
+    (artifact_repo / ".gitignore").write_text("*.secret\n")
+    artifact = artifact_repo / "spec.secret"
+    artifact.write_text("# original\n")
+
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--repo",
+        str(repo),
+        "--friend",
+        "fake:judge_uphold_a:repo",
+        "--friend",
+        "fake:judge_uphold_b:repo",
+        "--merge",
+        "orchestrator",
+        "--max-rounds",
+        "2",
+        "--max-loop-iterations",
+        "2",
+        mode="loop",
+    )
+    assert halted.returncode == 10, halted.stderr
+    assert (
+        json.loads((_run_dir(tmp_path) / "run.json").read_text())["repository_scope_mode"]
+        == "explicit"
+    )
+    artifact.write_text("# changed after halt\n")
+    _respond(tmp_path, [], round_no=1)
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 10, resumed.stderr
+    meta = json.loads((_run_dir(tmp_path) / "run.json").read_text())
+    assert len(meta["snapshot_history"]) == 2
+    assert meta["snapshot"]["repo_root"] == str(repo.resolve())
+    assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
+    assert meta["snapshot"]["source_path"] is None

@@ -63,6 +63,7 @@ EXPLICIT_REPOSITORY_SCOPE_AUDIT = (
     "repository scope selected explicitly; frozen artifact independently "
     "bound (not Git-blob-bound)."
 )
+REPOSITORY_SCOPE_MODES = frozenset({"automatic", "explicit"})
 
 
 def _read_artifact_text(path: Path) -> str:
@@ -77,6 +78,13 @@ def _read_artifact_text(path: Path) -> str:
 def _dispatch_error_detail(error: BaseException) -> str:
     """One bounded representation for fresh and resumed dispatch stops."""
     return f"{type(error).__name__}: {failure_summary(str(error))}"
+
+
+def _resume_repository_scope_mode(meta: dict[str, Any]) -> str:
+    mode = meta.get("repository_scope_mode", "automatic")
+    if not isinstance(mode, str) or mode not in REPOSITORY_SCOPE_MODES:
+        raise UsageError("cannot resume: saved repository_scope_mode must be automatic or explicit")
+    return mode
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -123,11 +131,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             # resume must not silently follow a moved live artifact into a
             # different repository and bless a replacement snapshot there.
             repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
-            explicit_repo = False
+            repository_scope_mode = _resume_repository_scope_mode(resume_meta)
+            explicit_repo = repository_scope_mode == "explicit"
             saved_audit = resume_meta.get("repository_scope_audit")
             repository_scope_audit = saved_audit if isinstance(saved_audit, str) else None
         else:
             repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
+            repository_scope_mode = "explicit" if explicit_repo else "automatic"
             repository_scope_audit = EXPLICIT_REPOSITORY_SCOPE_AUDIT if explicit_repo else None
         offset = clock_offset(downgrades)
 
@@ -264,6 +274,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 prior_external_tool_policy=(resume_meta or {}).get("external_tool_policy"),
                 detected_host=resolved.detected_host,
                 effective_include_self=resolved.effective_include_self,
+                repository_scope_mode=repository_scope_mode,
             )
             if repository_scope_audit is not None:
                 meta["repository_scope_audit"] = repository_scope_audit

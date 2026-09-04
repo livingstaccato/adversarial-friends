@@ -725,30 +725,41 @@ def history_from_meta(
         # tree verification was introduced. Complete the current entry in
         # memory; the caller atomically persists it after this validation.
         history[-1] = current
-    _validate_history_chain(history, current)
+    _validate_history_chain(history, current, _repository_scope_mode(meta))
     return history
 
 
-def _identity_token(identity: SnapshotIdentity) -> str:
+def _repository_scope_mode(meta: Mapping[str, object]) -> str:
+    mode = meta.get("repository_scope_mode", "automatic")
+    if not isinstance(mode, str) or mode not in {"automatic", "explicit"}:
+        raise UsageError("cannot resume: saved repository_scope_mode must be automatic or explicit")
+    return mode
+
+
+def _identity_token(identity: SnapshotIdentity, repository_scope_mode: str) -> str:
     # An independently frozen artifact can change while its explicitly
     # selected repository code remains at the same commit. Its artifact hash
     # is therefore the revision identity; commit-only would collapse two
     # distinct prompt inputs into one loop-history entry.
-    if not identity.artifact_bound_to_snapshot:
+    if repository_scope_mode == "explicit" and not identity.artifact_bound_to_snapshot:
         return identity.artifact_hash
     return identity.commit or identity.artifact_hash
 
 
-def _validate_history_chain(history: list[SnapshotIdentity], current: SnapshotIdentity) -> None:
+def _validate_history_chain(
+    history: list[SnapshotIdentity], current: SnapshotIdentity, repository_scope_mode: str
+) -> None:
     seen: set[str] = set()
     for index, identity in enumerate(history):
-        token = _identity_token(identity)
+        token = _identity_token(identity, repository_scope_mode)
         if token in seen:
             raise UsageError(
                 f"cannot resume: saved snapshot_history contains duplicate identity {token}"
             )
         seen.add(token)
-        expected = None if index == 0 else _identity_token(history[index - 1])
+        expected = (
+            None if index == 0 else _identity_token(history[index - 1], repository_scope_mode)
+        )
         if identity.predecessor != expected:
             raise UsageError(
                 f"cannot resume: saved snapshot_history[{index}] predecessor does not "
@@ -770,7 +781,7 @@ def record_snapshot(
     ordered = list(history)
     if not ordered:
         raise UsageError("cannot resume: saved snapshot_history must be a non-empty list")
-    _validate_history_chain(ordered, current)
+    _validate_history_chain(ordered, current, _repository_scope_mode(meta))
     meta["snapshot"] = current.to_dict()
     meta["snapshot_history"] = [identity.to_dict() for identity in ordered]
     meta["repo_root"] = str(current.repo_root) if current.repo_root is not None else None
