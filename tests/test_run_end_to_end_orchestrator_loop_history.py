@@ -197,6 +197,90 @@ def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, ori
     assert run_json.read_bytes() == before
 
 
+def test_resume_rejects_coherent_automatic_to_explicit_scope_rewrite_before_mutation(tmp_path):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    artifact = reviewed / "spec.md"
+    artifact.write_text("# tracked artifact\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "track artifact")
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:judge_uphold_a",
+        "--friend",
+        "fake:judge_uphold_b",
+        "--merge",
+        "orchestrator",
+        "--max-rounds",
+        "2",
+        mode="crossexam",
+    )
+    assert halted.returncode == 10, halted.stderr
+    _respond(tmp_path, [], round_no=1)
+    run_dir = _run_dir(tmp_path)
+    run_json = run_dir / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta["repository_scope_mode"] = "explicit"
+    meta["repository_scope_audit"] = "forged audit prose"
+    for identity in [meta["snapshot"], *meta["snapshot_history"]]:
+        identity["artifact_bound_to_snapshot"] = False
+        identity["source_path"] = None
+    run_json.write_text(json.dumps(meta))
+    before = {
+        "run": run_json.read_bytes(),
+        "report": (run_dir / "report.md").read_bytes(),
+        "claims": (run_dir / "claims.jsonl").read_bytes(),
+        "events": (run_dir / "events.jsonl").read_bytes(),
+    }
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "repository_scope_mode" in resumed.stderr
+    assert not (run_dir / "round-2").exists()
+    assert run_json.read_bytes() == before["run"]
+    assert (run_dir / "report.md").read_bytes() == before["report"]
+    assert (run_dir / "claims.jsonl").read_bytes() == before["claims"]
+    assert (run_dir / "events.jsonl").read_bytes() == before["events"]
+
+
+def test_explicit_resume_uses_canonical_scope_audit_instead_of_saved_prose(tmp_path):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    (reviewed / "tracked.py").write_text("selected code\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "initial")
+    artifact = tmp_path / "outside.md"
+    artifact.write_text("# outside artifact\n")
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good_twin",
+        "--merge",
+        "orchestrator",
+        "--repo",
+        str(reviewed),
+    )
+    assert halted.returncode == 10, halted.stderr
+    run_json = _run_dir(tmp_path) / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta["repository_scope_audit"] = "forged audit prose"
+    run_json.write_text(json.dumps(meta))
+    _respond(tmp_path, [], round_no=1)
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+    persisted = json.loads(run_json.read_text())
+    assert persisted["repository_scope_audit"] == (
+        "repository scope selected explicitly; frozen artifact independently "
+        "bound (not Git-blob-bound)."
+    )
+
+
 def test_resumed_pre_feature_run_keeps_scope_mode_absent(tmp_path):
     reviewed = _git_repo(tmp_path / "reviewed")
     artifact = reviewed / "spec.md"
@@ -219,6 +303,12 @@ def test_resumed_pre_feature_run_keeps_scope_mode_absent(tmp_path):
     meta.pop("repository_scope_mode")
     assert "repository_scope_audit" not in meta
     run_json.write_text(json.dumps(meta))
+    events_path = _run_dir(tmp_path) / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    for event in events:
+        if event["type"] == "run_started":
+            event["payload"].pop("repository_scope_mode", None)
+    events_path.write_text("".join(json.dumps(event) + "\n" for event in events))
     _respond(tmp_path, [], round_no=1)
 
     resumed = _resume(tmp_path)
@@ -231,3 +321,9 @@ def test_resumed_pre_feature_run_keeps_scope_mode_absent(tmp_path):
     assert persisted["snapshot"] == persisted["snapshot_history"][0]
     assert persisted["snapshot"]["artifact_bound_to_snapshot"] is True
     assert persisted["snapshot"]["source_path"] == "spec.md"
+    resumed_events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert all(
+        "repository_scope_mode" not in event["payload"]
+        for event in resumed_events
+        if event["type"] == "run_started"
+    )

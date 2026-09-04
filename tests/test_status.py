@@ -10,7 +10,7 @@ from e2e_helpers import _git_commit, _git_repo
 import pytest
 
 from adversarial_friends import cli
-from adversarial_friends.commands import status
+from adversarial_friends.commands import run as run_module, status
 from adversarial_friends.errors import UsageError
 from adversarial_friends.events import MAX_EVENT_LOG_BYTES, EventRecord, EventWriter
 from adversarial_friends.progress import Progress
@@ -317,8 +317,8 @@ def test_cmd_run_exposes_an_event_first_status_checkpoint(monkeypatch, tmp_path,
     observed: list[dict[str, object]] = []
     original = Progress.run_started
 
-    def inspect_before_metadata(self, mode: str, profile: str, scope: str) -> None:
-        original(self, mode, profile, scope)
+    def inspect_before_metadata(self, mode: str, profile: str, scope: str, **kwargs) -> None:
+        original(self, mode, profile, scope, **kwargs)
         run = next(root.iterdir())
         assert not (run / "run.json").exists()
         observed.append(status.summarize(run, root=root))
@@ -350,6 +350,49 @@ def test_cmd_run_exposes_an_event_first_status_checkpoint(monkeypatch, tmp_path,
     capsys.readouterr()
 
 
+def test_cmd_run_refuses_before_dispatch_when_initial_event_cannot_be_persisted(
+    monkeypatch, tmp_path, capsys
+):
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("# spec\n", encoding="utf-8")
+    root = tmp_path / "runs"
+    fake = Path(__file__).with_name("fake_friend.py")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {fake}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+
+    def fail_initial_event(self, event):
+        assert event.type == "run_started"
+        raise OSError("disk unavailable")
+
+    dispatched = False
+
+    def must_not_dispatch(*args, **kwargs):
+        nonlocal dispatched
+        dispatched = True
+        raise AssertionError("dispatch reached")
+
+    monkeypatch.setattr(EventWriter, "append", fail_initial_event)
+    monkeypatch.setattr(run_module, "run_critique", must_not_dispatch)
+
+    assert (
+        cli.main(
+            [
+                "run",
+                str(artifact),
+                "--out",
+                str(root),
+                "--friend",
+                "fake:good",
+                "--no-progress",
+            ]
+        )
+        == 2
+    )
+    assert not dispatched
+    assert not list(root.iterdir())
+    assert "initial lifecycle event" in capsys.readouterr().err
+
+
 def test_event_first_status_reports_validated_repo_scope(monkeypatch, tmp_path, capsys):
     repo = _git_repo(tmp_path / "repo")
     artifact = repo / "spec.md"
@@ -363,8 +406,8 @@ def test_event_first_status_reports_validated_repo_scope(monkeypatch, tmp_path, 
     observed: list[dict[str, object]] = []
     original = Progress.run_started
 
-    def inspect_before_metadata(self, mode: str, profile: str, scope: str) -> None:
-        original(self, mode, profile, scope)
+    def inspect_before_metadata(self, mode: str, profile: str, scope: str, **kwargs) -> None:
+        original(self, mode, profile, scope, **kwargs)
         run = next(root.iterdir())
         assert not (run / "run.json").exists()
         observed.append(status.summarize(run, root=root))

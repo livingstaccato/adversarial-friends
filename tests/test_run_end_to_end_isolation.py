@@ -510,7 +510,10 @@ def test_explicit_repo_scope_uses_selected_code_for_an_ignored_artifact_in_anoth
     assert result.returncode == 0, result.stderr
     run_dir = next((tmp_path / "runs").iterdir())
     meta = json.loads((run_dir / "run.json").read_text())
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
     assert meta["repository_scope_mode"] == "explicit"
+    assert events[0]["type"] == "run_started"
+    assert events[0]["payload"]["repository_scope_mode"] == "explicit"
     assert meta["snapshot"]["repo_root"] == str(repo.resolve())
     assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
     assert meta["snapshot"]["source_path"] is None

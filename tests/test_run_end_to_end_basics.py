@@ -114,6 +114,7 @@ def test_report_run_writes_ordered_safe_lifecycle_events(tmp_path):
     assert events[0]["payload"] == {
         "mode": "report",
         "profile": "quick",
+        "repository_scope_mode": "automatic",
         "scope": "doc",
         "status": "started",
     }

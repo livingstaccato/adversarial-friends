@@ -25,6 +25,7 @@ from ..ceilings import (
 from ..claimschema import schema_path
 from ..dispatch import failure_summary
 from ..errors import AfError, UsageError
+from ..events import read_events
 from ..failures import RepeatTracker
 from ..ledger import Claim
 from ..orchestrator import (
@@ -76,6 +77,28 @@ def _dispatch_error_detail(error: BaseException) -> str:
     return f"{type(error).__name__}: {failure_summary(str(error))}"
 
 
+def _validate_repository_scope_anchor(store: RunStore, saved_mode: str) -> None:
+    try:
+        events = read_events(store.events_path(), root=store.root)
+    except UsageError as exc:
+        raise UsageError(f"cannot resume: {exc}") from exc
+    started = next((event for event in events if event.type == "run_started"), None)
+    if started is None:
+        raise UsageError(
+            "cannot resume: declared repository_scope_mode has no original run_started anchor"
+        )
+    anchored_mode = started.payload.get("repository_scope_mode")
+    if anchored_mode is None:
+        raise UsageError(
+            "cannot resume: original run_started event has no repository_scope_mode anchor"
+        )
+    if anchored_mode != saved_mode:
+        raise UsageError(
+            "cannot resume: saved repository_scope_mode disagrees with the original "
+            "run_started event"
+        )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     args, artifact = validate_run_args(args)
     resume_dir = getattr(args, "_resume_dir", None)
@@ -122,11 +145,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
             repository_scope_mode = saved_repository_scope_mode(resume_meta)
             explicit_repo = repository_scope_mode == "explicit"
-            saved_audit = resume_meta.get("repository_scope_audit")
             repository_scope_audit = (
-                saved_audit
-                if repository_scope_mode == "explicit" and isinstance(saved_audit, str)
-                else None
+                EXPLICIT_REPOSITORY_SCOPE_AUDIT if repository_scope_mode == "explicit" else None
             )
         else:
             repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
@@ -166,6 +186,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # a run.json write into that window against a directory another
         # resumer may be mid-write on.
         store.lock()
+        if resume_meta is not None and repository_scope_mode is not None:
+            _validate_repository_scope_anchor(store, repository_scope_mode)
         reporter.event_writer = store.events_writer()
         snapshot = select_snapshot(
             repo_root,
@@ -228,6 +250,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             args.mode,
             str(getattr(args, "profile", "legacy") or "legacy"),
             "repo" if any(spec.scope == "repo" for spec in specs) else "doc",
+            repository_scope_mode=repository_scope_mode,
+            required=resume_meta is None,
         )
         _warn_doc_scope()
         # The snapshot serves two independent purposes, and taking it only

@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from adversarial_friends.commands.run import _validate_repository_scope_anchor
 from adversarial_friends.errors import UsageError
 from adversarial_friends.events import EventRecord, read_events
 from adversarial_friends.runstore import RunStore
@@ -51,6 +52,33 @@ def test_event_records_are_versioned_and_bounded():
             {"mode": "report", "profile": "x" * 257, "status": "started"},
             run_id="run-events",
         )
+
+
+def test_run_started_accepts_only_declared_repository_scope_modes():
+    record = EventRecord.create(
+        "run_started",
+        {
+            "mode": "report",
+            "profile": "quick",
+            "status": "started",
+            "repository_scope_mode": "explicit",
+        },
+        run_id="run-events",
+    )
+
+    assert record.payload["repository_scope_mode"] == "explicit"
+    for invalid in ("inferred", True, ["automatic"]):
+        with pytest.raises(UsageError, match="repository_scope_mode"):
+            EventRecord.create(
+                "run_started",
+                {
+                    "mode": "report",
+                    "profile": "quick",
+                    "status": "started",
+                    "repository_scope_mode": invalid,
+                },
+                run_id="run-events",
+            )
 
 
 def test_writer_appends_private_jsonl_and_reader_ignores_only_torn_tail(tmp_path):
@@ -111,3 +139,30 @@ def test_reader_rejects_complete_records_with_unsafe_payloads(tmp_path):
     path.chmod(0o600)
     with pytest.raises(UsageError, match="not allowed"):
         read_events(path, root=store.root)
+
+
+def test_scope_anchor_is_the_first_run_started_not_a_later_resume_event(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    writer = store.events_writer()
+    writer.append(
+        EventRecord.create(
+            "run_started",
+            {"mode": "report", "profile": "quick", "status": "started"},
+            run_id="run-events",
+        )
+    )
+    writer.append(
+        EventRecord.create(
+            "run_started",
+            {
+                "mode": "report",
+                "profile": "quick",
+                "status": "started",
+                "repository_scope_mode": "automatic",
+            },
+            run_id="run-events",
+        )
+    )
+
+    with pytest.raises(UsageError, match=r"original run_started.*no repository_scope_mode"):
+        _validate_repository_scope_anchor(store, "automatic")

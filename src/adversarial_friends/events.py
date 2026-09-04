@@ -47,7 +47,7 @@ _NEXT_ACTIONS: Final = frozenset(
 )
 _MODE_VALUES: Final = frozenset({"report", "crossexam", "gate", "loop"})
 _FIELDS: Final[dict[str, frozenset[str]]] = {
-    "run_started": frozenset({"mode", "profile", "status", "scope"}),
+    "run_started": frozenset({"mode", "profile", "status", "scope", "repository_scope_mode"}),
     "friend_finished": frozenset({"friend", "provider", "lens", "round", "duration_s", "status"}),
     "friend_failed": frozenset({"friend", "provider", "lens", "round", "duration_s", "status"}),
     "round_finished": frozenset({"round", "status"}),
@@ -107,6 +107,10 @@ def _validate_payload(event_type: str, payload: Mapping[str, object]) -> dict[st
         raise _invalid(f"mode must be one of {sorted(_MODE_VALUES)!r}")
     if "scope" in data and data["scope"] not in {"doc", "repo"}:
         raise _invalid("scope must be 'doc' or 'repo'")
+    if "repository_scope_mode" in data:
+        scope_mode = data["repository_scope_mode"]
+        if not isinstance(scope_mode, str) or scope_mode not in {"automatic", "explicit"}:
+            raise _invalid("repository_scope_mode must be 'automatic' or 'explicit'")
     if "status" in data and (
         not isinstance(data["status"], str) or data["status"] not in _STATUSES
     ):

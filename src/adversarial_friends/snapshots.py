@@ -233,6 +233,8 @@ class SnapshotIdentity:
             ) from exc
         if actual_digest != digest:
             raise UsageError("snapshot artifact hash does not match the artifact's exact bytes")
+        if repo_root is not None and source_artifact is not None and relative is None:
+            return cls(None, None, None, str(artifact), digest, predecessor)
         captured_repo = repo_root
         commit = isolation.snapshot_commit(captured_repo) if captured_repo is not None else None
         if commit is not None:

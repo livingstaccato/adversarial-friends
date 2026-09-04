@@ -349,7 +349,7 @@ def test_create_proves_the_captured_commit_blob_matches_frozen_bytes(tmp_path):
     assert identity.to_dict()["source_path"] == "nested/spec.md"
 
 
-def test_create_preserves_an_unbound_repo_snapshot_for_an_artifact_outside_repo(tmp_path):
+def test_explicit_repo_snapshot_remains_unbound_for_an_artifact_outside_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
@@ -357,11 +357,35 @@ def test_create_preserves_an_unbound_repo_snapshot_for_an_artifact_outside_repo(
     outside.write_text("# outside\n")
     digest = "sha256:" + hashlib.sha256(outside.read_bytes()).hexdigest()
 
-    identity = SnapshotIdentity.create(repo, outside, digest, source_artifact=outside)
+    identity = SnapshotIdentity.create(repo, outside, digest)
 
     assert identity.repo_root == repo
     assert identity.commit is not None
     assert identity.tree is not None
+    assert identity.source_path is None
+    assert not identity.artifact_bound_to_snapshot
+
+
+def test_create_skips_snapshot_if_automatic_source_now_resolves_outside_repo(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    outside = tmp_path / "outside.md"
+    outside.write_bytes(b"# retargeted outside\n")
+    source = repo / "spec.md"
+    source.symlink_to(outside)
+    frozen = tmp_path / "frozen.md"
+    frozen.write_bytes(outside.read_bytes())
+    digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
+    create_commit = Mock(side_effect=AssertionError("snapshot created"))
+    monkeypatch.setattr(isolation, "snapshot_commit", create_commit)
+
+    identity = SnapshotIdentity.create(repo, frozen, digest, source_artifact=source)
+
+    create_commit.assert_not_called()
+    assert identity.repo_root is None
+    assert identity.commit is None
+    assert identity.tree is None
     assert identity.source_path is None
     assert not identity.artifact_bound_to_snapshot
 

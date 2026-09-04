@@ -27,6 +27,7 @@ import threading
 import time
 from typing import TextIO
 
+from .errors import UsageError
 from .events import EventRecord, EventWriter
 
 # How often the heartbeat names what is still in flight. Thirty seconds is
@@ -128,10 +129,33 @@ class Progress:
                 if self.event_writer is writer:
                     self.event_writer = None
 
-    def run_started(self, mode: str, profile: str, scope: str) -> None:
-        self._event(
-            "run_started", {"mode": mode, "profile": profile, "scope": scope, "status": "started"}
-        )
+    def run_started(
+        self,
+        mode: str,
+        profile: str,
+        scope: str,
+        *,
+        repository_scope_mode: str | None = None,
+        required: bool = False,
+    ) -> None:
+        payload: dict[str, object] = {
+            "mode": mode,
+            "profile": profile,
+            "scope": scope,
+            "status": "started",
+        }
+        if repository_scope_mode is not None:
+            payload["repository_scope_mode"] = repository_scope_mode
+        if not required:
+            self._event("run_started", payload)
+            return
+        writer = self.event_writer
+        if writer is None:
+            raise UsageError("cannot persist the initial lifecycle event")
+        try:
+            writer.append(EventRecord.create("run_started", payload, run_id=writer.run_id))
+        except Exception as exc:
+            raise UsageError(f"cannot persist the initial lifecycle event: {exc}") from exc
 
     def run_finished(self, status: str, next_action: str, *, duration_s: float) -> None:
         """Persist the one terminal record for this invocation."""
