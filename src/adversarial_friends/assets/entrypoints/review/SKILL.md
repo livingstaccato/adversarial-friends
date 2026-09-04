@@ -1,6 +1,6 @@
 ---
 name: review
-description: Use only through direct qualified selection ($adversarial-friends:review) or explicit /afriend routing for a supplied artifact. Do not use for generic review requests.
+description: Use only through direct qualified selection ($afriend:review) or explicit /afriend routing for a supplied artifact. Do not use for generic review requests.
 ---
 
 # afriend review

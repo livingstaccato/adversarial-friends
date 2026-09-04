@@ -17,7 +17,7 @@ AGENT = ASSETS / "harnesses" / "agy" / "afriend-reviewer.md"
 MIRROR_AGENT = (
     REPO
     / "plugins"
-    / "adversarial-friends"
+    / "afriend"
     / "skills"
     / "afriend"
     / "harnesses"

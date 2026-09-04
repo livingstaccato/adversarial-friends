@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "adversarial-friends",
+      "name": "afriend",
       "source": {
         "source": "local",
-        "path": "./plugins/adversarial-friends"
+        "path": "./plugins/afriend"
       },
       "policy": {
         "installation": "AVAILABLE",

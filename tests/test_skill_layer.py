@@ -6,7 +6,7 @@ REPO = Path(__file__).resolve().parents[1]
 ASSETS = REPO / "src" / "adversarial_friends" / "assets"
 ENTRYPOINTS = ASSETS / "entrypoints"
 SKILL_NAMES = {"afriend", "review", "status", "configure", "resolve"}
-PLUGIN_SKILLS = REPO / "plugins" / "adversarial-friends" / "skills"
+PLUGIN_SKILLS = REPO / "plugins" / "afriend" / "skills"
 
 
 def frontmatter(text: str) -> dict[str, str]:
@@ -46,7 +46,7 @@ def test_selectable_skills_present_the_afriend_family_in_codex_ui():
     for name, label in expected_labels.items():
         ui = (ENTRYPOINTS / name / "agents" / "openai.yaml").read_text()
         assert f'display_name: "{label}"' in ui
-        assert f"${name}" in ui
+        assert f'default_prompt: "Use {label}' in ui
 
 
 def test_afriend_is_the_only_router_and_short_slash_selector():

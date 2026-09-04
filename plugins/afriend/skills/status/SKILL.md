@@ -1,6 +1,6 @@
 ---
 name: status
-description: Use only through direct qualified selection ($adversarial-friends:status) or explicit /afriend routing to inspect provider readiness or a named existing run. This is read-only.
+description: Use only through direct qualified selection ($afriend:status) or explicit /afriend routing to inspect provider readiness or a named existing run. This is read-only.
 ---
 
 # afriend status

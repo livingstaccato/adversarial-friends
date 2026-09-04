@@ -17,10 +17,10 @@ import re
 import sys
 
 VERSION_FILE = Path("VERSION")
-CODEX_MANIFEST = Path("plugins/adversarial-friends/.codex-plugin/plugin.json")
+CODEX_MANIFEST = Path("plugins/afriend/.codex-plugin/plugin.json")
 MANIFESTS = [
     Path("plugins/.claude-plugin/marketplace.json"),
-    Path("plugins/adversarial-friends/.claude-plugin/plugin.json"),
+    Path("plugins/afriend/.claude-plugin/plugin.json"),
     CODEX_MANIFEST,
 ]
 

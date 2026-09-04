@@ -7,7 +7,7 @@ reviewers.
 
 ## Using the tool
 
-Use `/afriend` or `$adversarial-friends:afriend` for explicit product routing;
+Use `/afriend` or `$afriend:afriend` for explicit product routing;
 the five selectable skills are `afriend`, `review`, `status`, `configure`,
 and `resolve`. Conversational `afriend review` and `afriend status` route to
 focused skills and are not executable aliases: use `afriend run <artifact>`
@@ -26,7 +26,7 @@ claim resolution; it requires neither disposition nor evidence.
   `cliargs.py`, `prompt.py`, `dispatch.py`, and `commands/`.
 - `src/adversarial_friends/assets/` — canonical package data: runtime
   `adapters/`, `harnesses/`, `lenses/`, plus five `entrypoints/` skills.
-- `plugins/adversarial-friends/skills/` — the composite projection: focused
+- `plugins/afriend/skills/` — the composite projection: focused
   skills map directly; router references and runtime data live below
   `skills/afriend/`. Never edit it directly; edit `assets/` and re-sync.
 - `docs/` — prose docs and architecture diagrams. Excluded from `ruff format`

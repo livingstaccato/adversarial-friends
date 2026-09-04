@@ -1,4 +1,4 @@
 interface:
   display_name: "afriend status"
   short_description: "Inspect friend readiness or a saved run"
-  default_prompt: "Use $status to inspect provider readiness."
+  default_prompt: "Use afriend status to inspect provider readiness."

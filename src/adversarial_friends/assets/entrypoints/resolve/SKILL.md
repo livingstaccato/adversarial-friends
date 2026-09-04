@@ -1,6 +1,6 @@
 ---
 name: resolve
-description: Use only through direct qualified selection ($adversarial-friends:resolve) or explicit /afriend routing to inspect unresolved claims or record a disposition for a named run claim. Require user-supplied disposition and evidence before writing.
+description: Use only through direct qualified selection ($afriend:resolve) or explicit /afriend routing to inspect unresolved claims or record a disposition for a named run claim. Require user-supplied disposition and evidence before writing.
 ---
 
 # afriend resolve

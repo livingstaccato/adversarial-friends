@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Use only through direct qualified selection ($adversarial-friends:configure) or explicit /afriend routing to inspect or explicitly change guided setup, review profiles, or provider defaults. Do not change settings without an exact requested change.
+description: Use only through direct qualified selection ($afriend:configure) or explicit /afriend routing to inspect or explicitly change guided setup, review profiles, or provider defaults. Do not change settings without an exact requested change.
 ---
 
 # afriend configure

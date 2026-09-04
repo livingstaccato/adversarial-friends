@@ -10,7 +10,7 @@ import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
 ASSETS = REPO / "src" / "adversarial_friends" / "assets"
-PLUGIN_ROOT = REPO / "plugins" / "adversarial-friends"
+PLUGIN_ROOT = REPO / "plugins" / "afriend"
 SKILLS = PLUGIN_ROOT / "skills"
 
 

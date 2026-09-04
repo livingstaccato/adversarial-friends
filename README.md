@@ -98,7 +98,7 @@ reachability alone is insufficient because dispatch also requires a model.
 ## 🚀 Quickstart
 
 In an agent host, select `/afriend` to route an explicit Adversarial Friends
-request, or select `$adversarial-friends:afriend` directly. It hands review,
+request, or select `$afriend:afriend` directly. It hands review,
 status, setup/configuration, and resolution requests to focused skills:
 `review`, `status`, `configure`, and `resolve`.
 
@@ -510,7 +510,7 @@ under [`plugins/`](plugins/) for loaders that can't install a Python package:
 Plugins package capabilities; the Adversarial Friends plugin provides exactly
 five skills: `/afriend`, `review`, `status`, `configure`, and `resolve`.
 `/afriend` is the only router and short slash selector; direct qualified
-selection is `$adversarial-friends:afriend`. The CLI never runs automatically
+selection is `$afriend:afriend`. The CLI never runs automatically
 by itself. Generic “review this,” “poke holes,” “second opinion,” and
 architectural decision requests stay ordinary Codex work.
 

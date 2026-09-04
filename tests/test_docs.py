@@ -287,7 +287,7 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     assert "afriend to" in positive_prompts
     assert "ask a friend to" in positive_prompts
     assert "adversarial friends" in positive_prompts
-    assert "$adversarial-friends:afriend" in positive_prompts
+    assert "$afriend:afriend" in positive_prompts
     for phrase in (
         "review this",
         "challenge this",
@@ -317,14 +317,14 @@ def test_evals_cover_guided_session_and_focused_current_workflows():
         "unique highest-priority",
     ):
         assert phrase in outputs, phrase
-    assert "$adversarial-friends:status run-123" in prompts
+    assert "$afriend:status run-123" in prompts
 
 
 def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespace():
     evals = json.loads((REPO / "evals" / "evals.json").read_text())["evals"]
     positives = [case for case in evals if case["should_trigger"]]
     manifest = json.loads(
-        (REPO / "plugins" / "adversarial-friends" / ".codex-plugin" / "plugin.json").read_text()
+        (REPO / "plugins" / "afriend" / ".codex-plugin" / "plugin.json").read_text()
     )
     skill_names = {path.parent.name for path in ENTRYPOINTS.glob("*/SKILL.md")}
     assert skill_names == {"afriend", "review", "status", "configure", "resolve"}
@@ -348,7 +348,7 @@ def test_positive_eval_inputs_resolve_and_direct_selector_matches_plugin_namespa
         for path in paths:
             assert REPO.joinpath(path).is_file(), f"positive eval {case['id']}: {path}"
         selectors.extend(re.findall(r"\$([a-z0-9-]+):([a-z0-9-]+)", case["prompt"]))
-        assert not re.search(r"\$adversarial-friends(?:\s|$)", case["prompt"])
+        assert not re.search(r"\$adversarial-friends:", case["prompt"])
 
     assert set(selectors) == expected_selectors
 
@@ -359,8 +359,8 @@ def test_current_docs_describe_only_the_five_skill_surface_and_stable_cli():
         for path in (REPO / "README.md", REPO / "AGENTS.md", REPO / "docs" / "README.md")
     ).lower()
     assert "/afriend" in current
-    assert "$adversarial-friends:afriend" in current
-    assert "$adversarial-friends:adversarial-friends" not in current
+    assert "$afriend:afriend" in current
+    assert "$adversarial-friends:" not in current
     assert "afriend status" in current and "afriend review" in current
     assert "afriend doctor" in current and "afriend run" in current
     assert "not executable aliases" in current
@@ -429,7 +429,7 @@ def test_status_describes_resume_authority_as_current_command_line_grant():
 
 
 def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_contract():
-    plugin_root = REPO / "plugins" / "adversarial-friends"
+    plugin_root = REPO / "plugins" / "afriend"
     codex = json.loads((plugin_root / ".codex-plugin" / "plugin.json").read_text())
     claude = json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text())
     marketplace = json.loads((REPO / "plugins" / ".claude-plugin" / "marketplace.json").read_text())
@@ -443,7 +443,8 @@ def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_con
         entry["description"],
     ]
 
-    assert claude["name"] == entry["name"] == codex["name"]
+    assert marketplace["name"] == "afriend"
+    assert claude["name"] == entry["name"] == codex["name"] == "afriend"
     assert claude["version"] == entry["version"]
     assert codex["version"].partition("+")[0] == claude["version"]
     assert codex["interface"]["displayName"] == "afriend"
@@ -458,10 +459,10 @@ def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_con
     assert prompts
     assert prompts == [
         "/afriend README.md",
-        "$adversarial-friends:review README.md",
-        "$adversarial-friends:status",
-        "$adversarial-friends:configure",
-        "$adversarial-friends:resolve",
+        "$afriend:review README.md",
+        "$afriend:status",
+        "$afriend:configure",
+        "$afriend:resolve",
     ]
 
 
@@ -471,8 +472,8 @@ def test_codex_local_marketplace_presents_afriend_and_sources_this_plugin():
     assert marketplace["interface"]["displayName"] == "afriend"
     assert marketplace["plugins"] == [
         {
-            "name": "adversarial-friends",
-            "source": {"source": "local", "path": "./plugins/adversarial-friends"},
+            "name": "afriend",
+            "source": {"source": "local", "path": "./plugins/afriend"},
             "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
             "category": "Developer Tools",
         }

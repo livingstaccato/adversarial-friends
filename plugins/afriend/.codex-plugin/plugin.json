@@ -1,6 +1,6 @@
 {
-  "name": "adversarial-friends",
-  "version": "0.5.1+codex.20260904205235",
+  "name": "afriend",
+  "version": "0.5.1+codex.20260904212436",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory.",
   "author": {
     "name": "Tim",
@@ -28,10 +28,10 @@
     "websiteURL": "https://github.com/livingstaccato/adversarial-friends",
     "defaultPrompt": [
       "/afriend README.md",
-      "$adversarial-friends:review README.md",
-      "$adversarial-friends:status",
-      "$adversarial-friends:configure",
-      "$adversarial-friends:resolve"
+      "$afriend:review README.md",
+      "$afriend:status",
+      "$afriend:configure",
+      "$afriend:resolve"
     ]
   }
 }
