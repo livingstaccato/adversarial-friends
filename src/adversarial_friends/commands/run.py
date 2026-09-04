@@ -25,7 +25,7 @@ from ..ceilings import (
 from ..claimschema import schema_path
 from ..dispatch import failure_summary
 from ..errors import AfError, UsageError
-from ..events import read_events
+from ..events import read_first_event
 from ..failures import RepeatTracker
 from ..ledger import Claim
 from ..orchestrator import (
@@ -79,14 +79,16 @@ def _dispatch_error_detail(error: BaseException) -> str:
 
 def _validate_repository_scope_anchor(store: RunStore, saved_mode: str) -> None:
     try:
-        events = read_events(store.events_path(), root=store.root)
+        started = read_first_event(store.events_path(), root=store.root)
     except UsageError as exc:
         raise UsageError(f"cannot resume: {exc}") from exc
-    started = next((event for event in events if event.type == "run_started"), None)
-    if started is None:
+    if started.type != "run_started":
         raise UsageError(
-            "cannot resume: declared repository_scope_mode has no original run_started anchor"
+            "cannot resume: first lifecycle event must be run_started for a declared "
+            "repository_scope_mode"
         )
+    if started.run_id != store.run_id:
+        raise UsageError("cannot resume: first lifecycle event run_id does not match the run")
     anchored_mode = started.payload.get("repository_scope_mode")
     if anchored_mode is None:
         raise UsageError(

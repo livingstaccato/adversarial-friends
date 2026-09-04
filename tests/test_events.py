@@ -6,7 +6,7 @@ import pytest
 
 from adversarial_friends.commands.run import _validate_repository_scope_anchor
 from adversarial_friends.errors import UsageError
-from adversarial_friends.events import EventRecord, read_events
+from adversarial_friends.events import MAX_EVENT_BYTES, EventRecord, read_events
 from adversarial_friends.runstore import RunStore
 
 
@@ -165,4 +165,96 @@ def test_scope_anchor_is_the_first_run_started_not_a_later_resume_event(tmp_path
     )
 
     with pytest.raises(UsageError, match=r"original run_started.*no repository_scope_mode"):
+        _validate_repository_scope_anchor(store, "automatic")
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        b"not-json\n",
+        b"x" * (MAX_EVENT_BYTES + 1) + b"\n",
+        b'{"torn":',
+    ],
+    ids=("malformed", "oversized", "torn"),
+)
+def test_scope_anchor_ignores_all_later_telemetry(tmp_path, later):
+    store = RunStore(tmp_path / "runs", "run-events")
+    store.events_writer().append(
+        EventRecord.create(
+            "run_started",
+            {
+                "mode": "report",
+                "profile": "quick",
+                "status": "started",
+                "repository_scope_mode": "automatic",
+            },
+            run_id=store.run_id,
+        )
+    )
+    with store.events_path().open("ab") as handle:
+        handle.write(later)
+
+    _validate_repository_scope_anchor(store, "automatic")
+
+
+def test_scope_anchor_requires_physical_first_record_to_be_run_started(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    writer = store.events_writer()
+    writer.append(
+        EventRecord.create(
+            "round_finished",
+            {"round": 1, "status": "completed"},
+            run_id=store.run_id,
+        )
+    )
+    writer.append(
+        EventRecord.create(
+            "run_started",
+            {
+                "mode": "report",
+                "profile": "quick",
+                "status": "started",
+                "repository_scope_mode": "automatic",
+            },
+            run_id=store.run_id,
+        )
+    )
+
+    with pytest.raises(UsageError, match=r"first lifecycle event.*run_started"):
+        _validate_repository_scope_anchor(store, "automatic")
+
+
+def test_scope_anchor_requires_physical_first_record_to_match_store_run_id(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    copied = EventRecord.create(
+        "run_started",
+        {
+            "mode": "report",
+            "profile": "quick",
+            "status": "started",
+            "repository_scope_mode": "automatic",
+        },
+        run_id="run-copied",
+    )
+    store.events_path().write_text(json.dumps(copied.to_dict()) + "\n", encoding="utf-8")
+    store.events_path().chmod(0o600)
+
+    with pytest.raises(UsageError, match=r"first lifecycle event.*run_id"):
+        _validate_repository_scope_anchor(store, "automatic")
+
+
+def test_scope_anchor_normalizes_first_record_io_errors(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    store.events_path().mkdir()
+
+    with pytest.raises(UsageError, match=r"cannot resume:.*lifecycle event"):
+        _validate_repository_scope_anchor(store, "automatic")
+
+
+def test_scope_anchor_bounds_only_the_first_physical_record(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    store.events_path().write_bytes(b"x" * (MAX_EVENT_BYTES + 1) + b"\n")
+    store.events_path().chmod(0o600)
+
+    with pytest.raises(UsageError, match=r"cannot resume:.*first lifecycle event.*long"):
         _validate_repository_scope_anchor(store, "automatic")

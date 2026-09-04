@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import Final
 
 from .errors import UsageError
-from .secureio import secure_open_append, secure_open_directory, secure_read_bytes
+from .secureio import secure_open_append, secure_open_directory, secure_open_read, secure_read_bytes
 
 EVENT_SCHEMA_VERSION: Final = 1
 MAX_EVENT_BYTES: Final = 4 * 1024
@@ -266,3 +266,35 @@ def read_events(path: Path, *, root: Path) -> list[EventRecord]:
         except (json.JSONDecodeError, UsageError, ValueError, TypeError) as exc:
             raise UsageError(f"{path.name} line {line_no}: {exc}") from exc
     return records
+
+
+def read_first_event(path: Path, *, root: Path) -> EventRecord:
+    """Read only the first complete, individually bounded event record."""
+    try:
+        descriptor = secure_open_read(path, root=root)
+        try:
+            line = bytearray()
+            complete = False
+            while len(line) <= MAX_EVENT_BYTES:
+                chunk = os.read(descriptor, MAX_EVENT_BYTES + 1 - len(line))
+                if not chunk:
+                    break
+                before, separator, _later = chunk.partition(b"\n")
+                line.extend(before)
+                if separator:
+                    complete = True
+                    break
+            if len(line) + (1 if complete else 0) > MAX_EVENT_BYTES:
+                raise UsageError(
+                    f"{path.name} first lifecycle event is too long (limit {MAX_EVENT_BYTES} bytes)"
+                )
+            if not complete:
+                raise UsageError(f"{path.name} first lifecycle event is incomplete")
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise UsageError(f"cannot read first lifecycle event from {path.name}: {exc}") from exc
+    try:
+        return EventRecord.from_dict(json.loads(bytes(line)))
+    except (json.JSONDecodeError, UnicodeDecodeError, UsageError, ValueError, TypeError) as exc:
+        raise UsageError(f"{path.name} first lifecycle event is invalid: {exc}") from exc
