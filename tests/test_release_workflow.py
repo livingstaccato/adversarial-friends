@@ -95,6 +95,16 @@ def test_release_build_verifies_both_distributions_and_installed_cli():
     assert "/venv/bin/afriend" in build
 
 
+def test_release_build_smokes_every_supported_python_before_publish():
+    """A tag must not publish a wheel that fails on a declared Python version."""
+    build = job_block("build")
+
+    assert "Verify installed wheel on supported Python versions" in build
+    assert "for python_version in 3.11 3.12 3.13; do" in build
+    assert 'uv python install "${python_version}"' in build
+    assert 'uv venv --python "${python_version}"' in build
+
+
 def test_release_workflow_keeps_publish_identity_out_of_build_job():
     text = workflow_text()
     build = job_block("build")

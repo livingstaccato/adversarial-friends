@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1
+
+A compatibility hotfix for the Python versions Adversarial Friends declares
+and a release gate that prevents an interpreter-specific broken wheel from
+being published.
+
+### Python compatibility and release gating
+
+- Fixed immutable profile and session-config defaults so the installed CLI
+  starts on Python 3.11 as well as Python 3.12 and 3.13.
+- The release build now installs and starts the exact wheel on every supported
+  Python version before it may publish to PyPI.
+
 ## 0.5.0
 
 A repository-scope release that lets an artifact be reviewed against an

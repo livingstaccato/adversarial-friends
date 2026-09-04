@@ -1,5 +1,5 @@
 {
   "name": "adversarial-friends",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory"
 }

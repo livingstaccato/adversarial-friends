@@ -89,3 +89,23 @@ def test_builtin_profiles_only_define_safe_run_defaults():
         assert "credential" not in vars(profile)
         assert "process" not in vars(profile)
         assert "authority" not in vars(profile)
+
+
+def test_review_profile_default_settings_are_independent_immutable_mappings():
+    first = reviewprofiles.ReviewProfile(name="first", mode="report")
+    second = reviewprofiles.ReviewProfile(name="second", mode="report")
+
+    assert first.settings == second.settings == {}
+    assert first.settings is not second.settings
+    with pytest.raises(TypeError):
+        first.settings["timeout"] = 1  # type: ignore[index]
+
+
+def test_session_config_default_profiles_are_independent_immutable_mappings():
+    first = sessionconfig.SessionConfig()
+    second = sessionconfig.SessionConfig()
+
+    assert first.profiles == second.profiles == {}
+    assert first.profiles is not second.profiles
+    with pytest.raises(TypeError):
+        first.profiles["ci"] = {}  # type: ignore[index]

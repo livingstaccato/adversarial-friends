@@ -68,6 +68,26 @@ jobs:
           uv pip install --python "${smoke_dir}/venv/bin/python" "${wheel}"
           test "$("${smoke_dir}/venv/bin/afriend" --version)" = "afriend ${version}"
 
+      # CI tests the checkout on this matrix too, but publishing must also
+      # prove the exact wheel imports and starts on every Python we claim to
+      # support. This blocks a tag before PyPI if an interpreter-specific
+      # import or console-entry-point failure escaped the default runtime.
+      - name: Verify installed wheel on supported Python versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          wheel="dist/adversarial_friends-${version}-py3-none-any.whl"
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "${smoke_dir}"' EXIT
+          for python_version in 3.11 3.12 3.13; do
+            uv python install "${python_version}"
+            venv="${smoke_dir}/venv-${python_version}"
+            uv venv --python "${python_version}" "${venv}"
+            uv pip install --python "${venv}/bin/python" "${wheel}"
+            test "$(cd /tmp && "${venv}/bin/afriend" --version)" = "afriend ${version}"
+          done
+
       - name: Store release distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

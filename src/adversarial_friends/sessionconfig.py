@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 import fcntl
 import json
 import os
@@ -30,10 +30,15 @@ _LEGACY_TOP_LEVEL_KEYS = frozenset({"version", "default_profile"})
 _NO_VALUE = object()
 
 
+def _empty_profiles() -> Mapping[str, Mapping[str, object]]:
+    """Make an immutable, independent custom-profile registry per config."""
+    return MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class SessionConfig:
     default_profile: str = DEFAULT_PROFILE
-    profiles: Mapping[str, Mapping[str, object]] = MappingProxyType({})
+    profiles: Mapping[str, Mapping[str, object]] = dataclass_field(default_factory=_empty_profiles)
 
 
 def config_path(env: Mapping[str, str] | None = None) -> Path:

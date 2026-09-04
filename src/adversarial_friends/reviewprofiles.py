@@ -1,7 +1,7 @@
 """Built-in, deliberately narrow review profiles."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from types import MappingProxyType
 from typing import Final
 
@@ -10,13 +10,18 @@ from .errors import UsageError
 from .presets import PRESETS
 
 
+def _empty_settings() -> Mapping[str, object]:
+    """Make an immutable, independent settings mapping for each profile."""
+    return MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class ReviewProfile:
     """A named run-mode default with no provider or authority controls."""
 
     name: str
     mode: str
-    settings: Mapping[str, object] = MappingProxyType({})
+    settings: Mapping[str, object] = dataclass_field(default_factory=_empty_settings)
 
 
 SAFE_FIELDS: Final[frozenset[str]] = frozenset(
