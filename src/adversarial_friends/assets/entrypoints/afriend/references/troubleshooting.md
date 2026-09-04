@@ -128,7 +128,7 @@ repository is doc scope only, and no repository snapshot is minted; one outside
 a Git repository gets doc scope only, so friends can read its text but not
 repository code. The second form explicitly selects code context: `--repo`
 must name the target repository's Git worktree root. It is the deliberate route
-for independently freezing an external artifact together with selected
+for an independently frozen external artifact together with selected
 repository code. `--repo` does not grant new provider, external-tool, or write
 authority. A resume uses the saved repository scope and rejects `--repo`.
 

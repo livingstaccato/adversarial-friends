@@ -129,7 +129,7 @@ in-repository symlink whose target resolves outside that repository is doc
 scope only, and no repository snapshot is minted; one outside a Git repository
 gets doc scope only with a warning before friends start. The second selects the
 named repository explicitly; `--repo` must be that repository's Git worktree
-root. It is the deliberate route for independently freezing an external
+root. It is the deliberate route for an independently frozen external
 artifact together with selected repository code. `--repo` does not grant new
 provider, external-tool, or write authority. Normal untracked, non-ignored
 files are included in an automatic snapshot. Gitignored artifacts are

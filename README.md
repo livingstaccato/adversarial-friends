@@ -276,7 +276,7 @@ repository is doc scope only, and no repository snapshot is minted; a path
 outside a Git repository likewise produces a visible doc-scope warning on
 stderr before friends start. The second form selects the named repository
 explicitly; `--repo` must name that repository's Git worktree root. It is the
-deliberate route for independently freezing an external artifact together
+deliberate route for an independently frozen external artifact together
 with selected repository code. It does not grant new provider, external-tool,
 or write authority. Normal untracked, non-ignored files are included in an
 automatic snapshot.
