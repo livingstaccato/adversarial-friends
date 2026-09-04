@@ -18,6 +18,10 @@ from .snapshotgit import legacy_invocation_path, resolve_saved_source
 
 COMMIT_RE = re.compile(r"[0-9a-fA-F]{40}")
 HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
+EXPLICIT_REPOSITORY_SCOPE_AUDIT = (
+    "repository scope selected explicitly; frozen artifact independently "
+    "bound (not Git-blob-bound)."
+)
 _SNAPSHOT_FIELDS = frozenset(
     {
         "repo_root",
@@ -725,12 +729,20 @@ def history_from_meta(
         # tree verification was introduced. Complete the current entry in
         # memory; the caller atomically persists it after this validation.
         history[-1] = current
-    _validate_history_chain(history, current, _repository_scope_mode(meta))
+    _validate_history_chain(history, current, repository_scope_mode(meta))
     return history
 
 
-def _repository_scope_mode(meta: Mapping[str, object]) -> str:
-    mode = meta.get("repository_scope_mode", "automatic")
+def repository_scope_mode(meta: Mapping[str, object]) -> str:
+    """Read the immutable scope mode, recognizing only known interim data."""
+    if "repository_scope_mode" not in meta:
+        if meta.get("repository_scope_audit") == EXPLICIT_REPOSITORY_SCOPE_AUDIT:
+            return "explicit"
+        downgrades = meta.get("downgrades")
+        if isinstance(downgrades, list) and EXPLICIT_REPOSITORY_SCOPE_AUDIT in downgrades:
+            return "explicit"
+        return "automatic"
+    mode = meta["repository_scope_mode"]
     if not isinstance(mode, str) or mode not in {"automatic", "explicit"}:
         raise UsageError("cannot resume: saved repository_scope_mode must be automatic or explicit")
     return mode
@@ -781,7 +793,7 @@ def record_snapshot(
     ordered = list(history)
     if not ordered:
         raise UsageError("cannot resume: saved snapshot_history must be a non-empty list")
-    _validate_history_chain(ordered, current, _repository_scope_mode(meta))
+    _validate_history_chain(ordered, current, repository_scope_mode(meta))
     meta["snapshot"] = current.to_dict()
     meta["snapshot_history"] = [identity.to_dict() for identity in ordered]
     meta["repo_root"] = str(current.repo_root) if current.repo_root is not None else None

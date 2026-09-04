@@ -21,6 +21,7 @@ import json
 import subprocess
 
 from e2e_helpers import _env, _git_commit, _git_repo, run_af
+import pytest
 
 
 def _artifact(tmp_path):
@@ -151,7 +152,8 @@ def test_an_earlier_iterations_verdicts_survive_into_a_later_halts_report(tmp_pa
     assert "settled-upheld" in report, report
 
 
-def test_resumed_explicit_scope_keeps_an_independent_changed_artifact_bound(tmp_path):
+@pytest.mark.parametrize("interim_shape", ["audit", "downgrade"])
+def test_resumed_interim_explicit_scope_keeps_a_changed_artifact_bound(tmp_path, interim_shape):
     """A post-resume loop iteration must retain the saved explicit scope."""
     repo = _git_repo(tmp_path / "reviewed-repo")
     (repo / "tracked.py").write_text("selected code\n")
@@ -180,17 +182,26 @@ def test_resumed_explicit_scope_keeps_an_independent_changed_artifact_bound(tmp_
         mode="loop",
     )
     assert halted.returncode == 10, halted.stderr
-    assert (
-        json.loads((_run_dir(tmp_path) / "run.json").read_text())["repository_scope_mode"]
-        == "explicit"
+    run_json = _run_dir(tmp_path) / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta.pop("repository_scope_mode")
+    marker = (
+        "repository scope selected explicitly; frozen artifact independently "
+        "bound (not Git-blob-bound)."
     )
+    if interim_shape == "audit":
+        assert meta["repository_scope_audit"] == marker
+    else:
+        meta.pop("repository_scope_audit")
+        meta["downgrades"].append(marker)
+    run_json.write_text(json.dumps(meta))
     artifact.write_text("# changed after halt\n")
     _respond(tmp_path, [], round_no=1)
 
     resumed = _resume(tmp_path)
 
     assert resumed.returncode == 10, resumed.stderr
-    meta = json.loads((_run_dir(tmp_path) / "run.json").read_text())
+    meta = json.loads(run_json.read_text())
     assert len(meta["snapshot_history"]) == 2
     assert meta["snapshot"]["repo_root"] == str(repo.resolve())
     assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
