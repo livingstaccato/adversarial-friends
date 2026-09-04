@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0
+
+A repository-scope release that lets an artifact be reviewed against an
+explicitly selected Git worktree without weakening frozen-input or replay
+guarantees.
+
+### Explicit repository review context
+
+- Added `afriend run ARTIFACT --repo PATH`. `PATH` must name exactly a local
+  Git worktree root; the artifact is independently frozen while friends receive
+  the selected repository snapshot. `--repo` cannot be combined with
+  `--resume`.
+- Preserved automatic scope for artifacts whose resolved final target is inside
+  their invocation repository. A repository-local symlink that resolves
+  outside it is document scope only and does not create a repository snapshot.
+
+### Replay integrity and release assurance
+
+- Records automatic versus explicit scope in the original lifecycle event and
+  rejects a resumed run if its saved metadata does not agree. Old runs that
+  predate this field and lifecycle events continue to resume normally.
+- Hardened snapshot binding, loop history, event parsing, and symlink-race
+  behavior; synchronized the shipped skills, plugin projection, troubleshooting
+  guidance, and architecture diagram with these contracts.
+
 ## 0.4.1
 
 A reliability release that makes Linux-confined friends retain host resolver
