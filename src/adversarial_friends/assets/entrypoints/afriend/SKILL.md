@@ -123,16 +123,18 @@ afriend run docs/plan.md --mode report
 afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
 ```
 
-The first selects scope automatically from the artifact location: an artifact
-inside a Git repository gets a repository snapshot, while one outside gets doc
-scope only with a warning before friends start. The second selects the named
-repository explicitly; `--repo` must be that repository's Git worktree root.
-It independently freezes an outside or ignored artifact while snapshotting the
-named repository for code inspection. `--repo` does not grant new provider,
-external-tool, or write authority. Normal untracked, non-ignored files are
-included in an automatic snapshot. Gitignored artifacts are deliberately
-excluded from automatic Git-blob binding; use the explicit form when they need
-the named repository's code context.
+The first selects scope automatically only when the artifact's resolved final
+target is inside the invocation repository: it gets a repository snapshot. An
+in-repository symlink whose target resolves outside that repository is doc
+scope only, and no repository snapshot is minted; one outside a Git repository
+gets doc scope only with a warning before friends start. The second selects the
+named repository explicitly; `--repo` must be that repository's Git worktree
+root. It is the deliberate route for independently freezing an external
+artifact together with selected repository code. `--repo` does not grant new
+provider, external-tool, or write authority. Normal untracked, non-ignored
+files are included in an automatic snapshot. Gitignored artifacts are
+deliberately excluded from automatic Git-blob binding; use the explicit form
+when they need the named repository's code context.
 
 Every mode dispatches the artifact to every discovered friend in parallel and
 writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,

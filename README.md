@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2163-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2178-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -269,14 +269,17 @@ afriend run docs/plan.md --mode report
 afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
 ```
 
-The first form selects scope automatically from the artifact location: a path
-outside a Git repository produces a visible doc-scope warning on stderr before
-friends start, while a path inside one receives a repository snapshot. The
-second form selects the named repository explicitly; `--repo` must name that
-repository's Git worktree root. It lets an outside or ignored artifact be
-independently frozen while the named repository is snapshotted for code
-context. It does not grant new provider, external-tool, or write authority.
-Normal untracked, non-ignored files are included in an automatic snapshot.
+The first form selects scope automatically only when the artifact's resolved
+final target is inside the invocation repository: it receives a repository
+snapshot. An in-repository symlink whose target resolves outside that
+repository is doc scope only, and no repository snapshot is minted; a path
+outside a Git repository likewise produces a visible doc-scope warning on
+stderr before friends start. The second form selects the named repository
+explicitly; `--repo` must name that repository's Git worktree root. It is the
+deliberate route for independently freezing an external artifact together
+with selected repository code. It does not grant new provider, external-tool,
+or write authority. Normal untracked, non-ignored files are included in an
+automatic snapshot.
 
 Gitignored artifacts are intentionally excluded from automatic Git-blob
 binding and fail rather than falling back to a stale `HEAD` version. Use the

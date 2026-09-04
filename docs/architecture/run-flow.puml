@@ -60,15 +60,15 @@ partition "Resolve the roster" {
 
 partition "Prepare" {
   :install SIGINT/SIGTERM handlers;
-  :resolve repository context:\nautomatic = artifact-derived Git root;\nexplicit ""--repo"" = named Git worktree root;
+  :resolve repository context:\nautomatic repo scope only when the artifact's resolved final target is inside the invocation repository;\nexplicit ""--repo"" = named Git worktree root;
   :create run dir, copy + hash artifact;
   if (explicit repository selected?) then (yes)
     :snapshot named repository root;\nfreeze artifact independently\n(not Git-blob-bound);
   else (automatic)
-    if (artifact has a Git root?) then (yes)
+    if (resolved final target is inside invocation repository?) then (yes)
       :snapshot artifact-derived repository;\nartifact is Git-blob-bound;
     else (no)
-      :force all friends to doc scope\nand warn on stderr before dispatch;<<#FFE0B2>>
+      :force all friends to doc scope\n(no repository snapshot minted)\nand warn on stderr before dispatch;<<#FFE0B2>>
     endif
   endif
   :per friend: build its OWN prompt from\nits OWN lens, write round-1/<friend>.prompt\n(missing lens → generic prompt, downgrade);<<#FFE0B2>>

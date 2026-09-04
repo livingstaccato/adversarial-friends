@@ -121,14 +121,16 @@ afriend run docs/plan.md --mode report
 afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
 ```
 
-The first form selects scope automatically from the artifact location. An
-artifact inside a Git repository gets a repository snapshot; one outside gets
-doc scope only, so friends can read its text but not repository code. The
-second form explicitly selects code context: `--repo` must name the target
-repository's Git worktree root. It independently freezes an outside or ignored
-artifact while snapshotting the named repository. `--repo` does not grant new
-provider, external-tool, or write authority. A resume uses the saved repository
-scope and rejects `--repo`.
+The first form selects scope automatically only when the artifact's resolved
+final target is inside the invocation repository: it gets a repository
+snapshot. An in-repository symlink whose target resolves outside that
+repository is doc scope only, and no repository snapshot is minted; one outside
+a Git repository gets doc scope only, so friends can read its text but not
+repository code. The second form explicitly selects code context: `--repo`
+must name the target repository's Git worktree root. It is the deliberate route
+for independently freezing an external artifact together with selected
+repository code. `--repo` does not grant new provider, external-tool, or write
+authority. A resume uses the saved repository scope and rejects `--repo`.
 
 Normal untracked, non-ignored files are included in that snapshot. Gitignored
 files are deliberately excluded from automatic Git-blob binding; when the
