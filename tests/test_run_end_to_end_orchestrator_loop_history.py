@@ -371,3 +371,42 @@ def test_resumed_pre_feature_run_keeps_scope_mode_absent(tmp_path):
         for event in resumed_events
         if event["type"] == "run_started"
     )
+
+
+def test_resumed_pre_feature_run_without_an_event_file_stays_fieldless(tmp_path):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    artifact = reviewed / "spec.md"
+    artifact.write_text("# tracked artifact\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "track artifact")
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good_twin",
+        "--merge",
+        "orchestrator",
+    )
+    assert halted.returncode == 10, halted.stderr
+    run_dir = _run_dir(tmp_path)
+    run_json = run_dir / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta.pop("repository_scope_mode")
+    assert "repository_scope_audit" not in meta
+    run_json.write_text(json.dumps(meta))
+    (run_dir / "events.jsonl").unlink()
+    _respond(tmp_path, [], round_no=1)
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 0, resumed.stderr
+    persisted = json.loads(run_json.read_text())
+    assert "repository_scope_mode" not in persisted
+    assert "repository_scope_audit" not in persisted
+    resumed_events = [
+        json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()
+    ]
+    assert resumed_events[0]["type"] == "run_started"
+    assert "repository_scope_mode" not in resumed_events[0]["payload"]

@@ -35,6 +35,7 @@ from ..orchestrator import (
 from ..reviewstate import ReviewState
 from ..rounds import partition_dispatchable
 from ..runstore import RunStore, default_root
+from ..secureio import secure_regular_exists
 from ..snapshots import (
     EXPLICIT_REPOSITORY_SCOPE_AUDIT,
     SnapshotIdentity,
@@ -78,8 +79,19 @@ def _dispatch_error_detail(error: BaseException) -> str:
 
 
 def _validate_repository_scope_anchor(store: RunStore, saved_mode: str | None) -> None:
+    events_path = store.events_path()
     try:
-        started = read_first_event(store.events_path(), root=store.root)
+        events_exist = secure_regular_exists(events_path, root=store.root)
+    except OSError as exc:
+        raise UsageError(f"cannot resume: cannot inspect lifecycle events: {exc}") from exc
+    if not events_exist:
+        if saved_mode is None:
+            return
+        raise UsageError(
+            "cannot resume: declared repository_scope_mode has no lifecycle event anchor"
+        )
+    try:
+        started = read_first_event(events_path, root=store.root)
     except UsageError as exc:
         raise UsageError(f"cannot resume: {exc}") from exc
     if started.type != "run_started":

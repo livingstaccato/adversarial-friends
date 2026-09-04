@@ -181,6 +181,19 @@ def test_scope_anchor_allows_saved_and_anchored_modes_to_both_be_absent(tmp_path
     _validate_repository_scope_anchor(store, None)
 
 
+def test_scope_anchor_allows_fieldless_run_with_no_event_file(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+
+    _validate_repository_scope_anchor(store, None)
+
+
+def test_scope_anchor_rejects_declared_mode_with_no_event_file(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+
+    with pytest.raises(UsageError, match=r"cannot resume:.*lifecycle event"):
+        _validate_repository_scope_anchor(store, "automatic")
+
+
 @pytest.mark.parametrize(
     "later",
     [
@@ -256,18 +269,39 @@ def test_scope_anchor_requires_physical_first_record_to_match_store_run_id(tmp_p
         _validate_repository_scope_anchor(store, "automatic")
 
 
-def test_scope_anchor_normalizes_first_record_io_errors(tmp_path):
+@pytest.mark.parametrize("saved_mode", ["automatic", None])
+def test_scope_anchor_normalizes_first_record_io_errors(tmp_path, saved_mode):
     store = RunStore(tmp_path / "runs", "run-events")
     store.events_path().mkdir()
 
     with pytest.raises(UsageError, match=r"cannot resume:.*lifecycle event"):
-        _validate_repository_scope_anchor(store, "automatic")
+        _validate_repository_scope_anchor(store, saved_mode)
 
 
-def test_scope_anchor_bounds_only_the_first_physical_record(tmp_path):
+@pytest.mark.parametrize("saved_mode", ["automatic", None])
+def test_scope_anchor_bounds_only_the_first_physical_record(tmp_path, saved_mode):
     store = RunStore(tmp_path / "runs", "run-events")
     store.events_path().write_bytes(b"x" * (MAX_EVENT_BYTES + 1) + b"\n")
     store.events_path().chmod(0o600)
 
     with pytest.raises(UsageError, match=r"cannot resume:.*first lifecycle event.*long"):
-        _validate_repository_scope_anchor(store, "automatic")
+        _validate_repository_scope_anchor(store, saved_mode)
+
+
+def test_scope_anchor_rejects_malformed_first_event_when_saved_mode_is_absent(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    store.events_path().write_bytes(b"not-json\n")
+    store.events_path().chmod(0o600)
+
+    with pytest.raises(UsageError, match=r"cannot resume:.*first lifecycle event.*invalid"):
+        _validate_repository_scope_anchor(store, None)
+
+
+def test_scope_anchor_rejects_symlinked_event_file_when_saved_mode_is_absent(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    outside = tmp_path / "outside-events.jsonl"
+    outside.write_text("not trusted\n", encoding="utf-8")
+    store.events_path().symlink_to(outside)
+
+    with pytest.raises(UsageError):
+        _validate_repository_scope_anchor(store, None)
