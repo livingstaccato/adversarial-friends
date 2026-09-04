@@ -77,7 +77,7 @@ def _dispatch_error_detail(error: BaseException) -> str:
     return f"{type(error).__name__}: {failure_summary(str(error))}"
 
 
-def _validate_repository_scope_anchor(store: RunStore, saved_mode: str) -> None:
+def _validate_repository_scope_anchor(store: RunStore, saved_mode: str | None) -> None:
     try:
         started = read_first_event(store.events_path(), root=store.root)
     except UsageError as exc:
@@ -91,6 +91,8 @@ def _validate_repository_scope_anchor(store: RunStore, saved_mode: str) -> None:
         raise UsageError("cannot resume: first lifecycle event run_id does not match the run")
     anchored_mode = started.payload.get("repository_scope_mode")
     if anchored_mode is None:
+        if saved_mode is None:
+            return
         raise UsageError(
             "cannot resume: original run_started event has no repository_scope_mode anchor"
         )
@@ -188,7 +190,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # a run.json write into that window against a directory another
         # resumer may be mid-write on.
         store.lock()
-        if resume_meta is not None and repository_scope_mode is not None:
+        if resume_meta is not None:
             _validate_repository_scope_anchor(store, repository_scope_mode)
         reporter.event_writer = store.events_writer()
         snapshot = select_snapshot(

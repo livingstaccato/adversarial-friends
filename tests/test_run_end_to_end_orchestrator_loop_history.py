@@ -245,6 +245,50 @@ def test_resume_rejects_coherent_automatic_to_explicit_scope_rewrite_before_muta
     assert (run_dir / "events.jsonl").read_bytes() == before["events"]
 
 
+def test_resume_rejects_deleting_only_saved_scope_mode_before_mutation(tmp_path):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    artifact = reviewed / "spec.md"
+    artifact.write_text("# tracked artifact\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "track artifact")
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:judge_uphold_a",
+        "--friend",
+        "fake:judge_uphold_b",
+        "--merge",
+        "orchestrator",
+        "--max-rounds",
+        "2",
+        mode="crossexam",
+    )
+    assert halted.returncode == 10, halted.stderr
+    _respond(tmp_path, [], round_no=1)
+    run_dir = _run_dir(tmp_path)
+    run_json = run_dir / "run.json"
+    meta = json.loads(run_json.read_text())
+    assert meta.pop("repository_scope_mode") == "automatic"
+    run_json.write_text(json.dumps(meta))
+    before = {
+        "run": run_json.read_bytes(),
+        "report": (run_dir / "report.md").read_bytes(),
+        "claims": (run_dir / "claims.jsonl").read_bytes(),
+        "events": (run_dir / "events.jsonl").read_bytes(),
+    }
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "repository_scope_mode" in resumed.stderr
+    assert not (run_dir / "round-2").exists()
+    assert run_json.read_bytes() == before["run"]
+    assert (run_dir / "report.md").read_bytes() == before["report"]
+    assert (run_dir / "claims.jsonl").read_bytes() == before["claims"]
+    assert (run_dir / "events.jsonl").read_bytes() == before["events"]
+
+
 def test_explicit_resume_uses_canonical_scope_audit_instead_of_saved_prose(tmp_path):
     reviewed = _git_repo(tmp_path / "reviewed")
     (reviewed / "tracked.py").write_text("selected code\n")

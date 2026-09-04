@@ -168,6 +168,19 @@ def test_scope_anchor_is_the_first_run_started_not_a_later_resume_event(tmp_path
         _validate_repository_scope_anchor(store, "automatic")
 
 
+def test_scope_anchor_allows_saved_and_anchored_modes_to_both_be_absent(tmp_path):
+    store = RunStore(tmp_path / "runs", "run-events")
+    store.events_writer().append(
+        EventRecord.create(
+            "run_started",
+            {"mode": "report", "profile": "quick", "status": "started"},
+            run_id=store.run_id,
+        )
+    )
+
+    _validate_repository_scope_anchor(store, None)
+
+
 @pytest.mark.parametrize(
     "later",
     [
