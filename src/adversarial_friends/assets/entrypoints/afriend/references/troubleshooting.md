@@ -114,16 +114,27 @@ next section.
 
 ## The run says "doc scope only"
 
-Artifact location selects scope automatically. An artifact inside a Git
-repository gets a repository snapshot. An artifact outside a Git repository
-gets doc scope only: friends can read the artifact text, not the repository
-code. Place the artifact file inside the repository you want reviewed when
-code context is required.
+Use either supported form to select review context:
+
+```bash
+afriend run docs/plan.md --mode report
+afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
+```
+
+The first form selects scope automatically from the artifact location. An
+artifact inside a Git repository gets a repository snapshot; one outside gets
+doc scope only, so friends can read its text but not repository code. The
+second form explicitly selects code context: `--repo` must name the target
+repository's Git worktree root. It independently freezes an outside or ignored
+artifact while snapshotting the named repository. `--repo` does not grant new
+provider, external-tool, or write authority. A resume uses the saved repository
+scope and rejects `--repo`.
 
 Normal untracked, non-ignored files are included in that snapshot. Gitignored
-files are deliberately excluded; when the artifact itself is ignored, the run
-fails rather than silently falling back to a stale `HEAD` copy. Remove the
-ignore rule or use a non-ignored review artifact if it needs to be reviewed.
+files are deliberately excluded from automatic Git-blob binding; when the
+artifact itself is ignored, the automatic run fails rather than silently
+falling back to a stale `HEAD` copy. Use the explicit `--repo` form when that
+artifact needs a named repository's code context.
 
 ## A confined Linux friend cannot resolve its model endpoint
 

@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2127-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2154-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -262,13 +262,26 @@ The snapshot includes **untracked** files (`git stash create` omits them), and
 the working tree is never touched — a friend reviewing your repo can't see a
 half-staged index or scribble on your checkout.
 
-Artifact location selects scope automatically. A path outside a Git repository
-produces a visible doc-scope warning on stderr before friends start and friends
-receive only its text; a path inside one receives a repository snapshot. Put
-the artifact in the repository when the review needs code context. Normal
-untracked, non-ignored files are included in a snapshot. Gitignored artifacts
-are intentionally excluded and fail rather than falling back to a stale `HEAD`
-version.
+There are two supported ways to select review context:
+
+```bash
+afriend run docs/plan.md --mode report
+afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
+```
+
+The first form selects scope automatically from the artifact location: a path
+outside a Git repository produces a visible doc-scope warning on stderr before
+friends start, while a path inside one receives a repository snapshot. The
+second form selects the named repository explicitly; `--repo` must name that
+repository's Git worktree root. It lets an outside or ignored artifact be
+independently frozen while the named repository is snapshotted for code
+context. It does not grant new provider, external-tool, or write authority.
+Normal untracked, non-ignored files are included in an automatic snapshot.
+
+Gitignored artifacts are intentionally excluded from automatic Git-blob
+binding and fail rather than falling back to a stale `HEAD` version. Use the
+explicit `--repo` form when an ignored or outside artifact needs the named
+repository's code context.
 
 On Linux, a confined friend uses `bwrap` with the required system paths
 read-only. If `/etc/resolv.conf` resolves to a safe regular file elsewhere on
@@ -408,7 +421,9 @@ afriend run --resume <run-id>                     # round 1 is not re-run
 ```
 
 Resume verifies the original frozen artifact hash and saved Git snapshot
-before dispatch; it never substitutes current files. Security grants are
+before dispatch; it never substitutes current files. It uses the saved
+repository scope and rejects `--repo`, so a resume cannot replace the original
+automatic or explicit selection. Security grants are
 also never restored from `run.json`: options such as
 `--allow-external-tools=PROVIDER` grants (or the global `=*` grant) must be
 repeated as the same normalized set.

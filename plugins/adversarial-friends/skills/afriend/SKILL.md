@@ -116,13 +116,23 @@ mode, preset, lenses, friend/timeout ceilings, and round/iteration ceilings;
 it cannot select providers, a friend roster, models, credentials, environment
 forwarding, external tools, unsafe arguments, or sandbox exceptions.
 
-Artifact location selects the automatic scope. An artifact inside a Git
-repository gets a repository snapshot; an artifact outside a Git repository
-gets doc scope only, with a warning before friends start. Put it inside the
-target repository when code inspection is intended. Normal untracked,
-non-ignored files are included in the snapshot. Gitignored artifacts are
-deliberately excluded and fail rather than silently reviewing stale `HEAD`
-contents.
+Two supported forms select the review context:
+
+```bash
+afriend run docs/plan.md --mode report
+afriend run /tmp/reviews/plan.md --repo "$PWD" --mode report
+```
+
+The first selects scope automatically from the artifact location: an artifact
+inside a Git repository gets a repository snapshot, while one outside gets doc
+scope only with a warning before friends start. The second selects the named
+repository explicitly; `--repo` must be that repository's Git worktree root.
+It independently freezes an outside or ignored artifact while snapshotting the
+named repository for code inspection. `--repo` does not grant new provider,
+external-tool, or write authority. Normal untracked, non-ignored files are
+included in an automatic snapshot. Gitignored artifacts are deliberately
+excluded from automatic Git-blob binding; use the explicit form when they need
+the named repository's code context.
 
 Every mode dispatches the artifact to every discovered friend in parallel and
 writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
@@ -184,7 +194,9 @@ acknowledgement.
 External-tool authority is independent of persistent and per-run provider
 enable/disable selection. Grants do not change provider defaults. Security
 grants are never restored by `--resume`: repeat the same normalized set
-exactly on the current command line.
+exactly on the current command line. Resume uses the saved repository scope
+and rejects `--repo`; it cannot replace the original automatic or explicit
+repository selection.
 
 ### Runtime depends on the run
 

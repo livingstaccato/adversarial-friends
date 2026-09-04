@@ -33,9 +33,11 @@ from typing import Any
 import unicodedata
 
 from .dispatch import sanitize_display
+from .errors import UsageError
 from .ledger import Claim, Verdict
 from .reviewcompleteness import from_friends
 from .reviewstate import ReviewState
+from .snapshots import SnapshotIdentity
 from .verdicts import CONTESTED, DEADLOCKED, INCOMPLETE, UNPROVEN
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -230,6 +232,47 @@ def _external_authority_lines(run_meta: dict[str, Any]) -> list[str]:
         status = "legacy-unknown"
         detail = "This legacy capture does not record provider-managed tool authority."
     return ["## External tool authority", "", f"Status: `{status}`", "", detail, ""]
+
+
+def _repository_snapshot_lines(run_meta: dict[str, Any]) -> list[str]:
+    """Render only a complete, internally consistent saved repository identity.
+
+    ``repository_scope_audit`` is explanatory prose, not an authority source.
+    Old or malformed metadata must not invent a repository identity in a
+    report, so this deliberately uses the current machine-readable scope mode
+    and the validated nested snapshot together.
+    """
+    mode = run_meta.get("repository_scope_mode")
+    if mode not in {"automatic", "explicit"}:
+        return []
+    try:
+        identity = SnapshotIdentity.from_current_meta(run_meta)
+    except UsageError:
+        return []
+    if (
+        identity.repo_root is None
+        or identity.commit is None
+        or identity.tree is None
+        or (mode == "automatic" and not identity.artifact_bound_to_snapshot)
+        or (mode == "explicit" and identity.artifact_bound_to_snapshot)
+    ):
+        return []
+    binding = (
+        "Git-blob-bound"
+        if identity.artifact_bound_to_snapshot
+        else "independently frozen; not Git-blob-bound"
+    )
+    return [
+        "## Repository snapshot",
+        "",
+        f"Repository scope: {mode}",
+        f"Repository root: {_code_span(str(identity.repo_root))}",
+        f"Snapshot commit: {_code_span(identity.commit)}",
+        f"Snapshot tree: {_code_span(identity.tree)}",
+        f"Artifact digest: {_code_span(identity.artifact_hash)}",
+        f"Artifact binding: {binding}",
+        "",
+    ]
 
 
 def _gate_lines(run_meta: dict[str, Any]) -> list[str]:
@@ -463,6 +506,7 @@ def render(
                 "",
             ]
         )
+    lines.extend(_repository_snapshot_lines(run_meta))
     lines.extend(_external_authority_lines(run_meta))
     review_completeness = from_friends(run_meta.get("friends", []))
     if review_completeness is not None:

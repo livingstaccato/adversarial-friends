@@ -8,7 +8,7 @@ the README is mirrored.
 | Diagram | Source | What it answers |
 |---|---|---|
 | Module architecture | [`components.puml`](components.puml) | Which module owns scope warnings, resolver-safe confinement, and the rest of a run's boundaries |
-| Run flow | [`run-flow.puml`](run-flow.puml) | How `afriend run` warns for doc scope, admits providers, applies scoped authority, preserves resolver access under Linux confinement, stages harnesses, dispatches a report fan-out, and records downgrades |
+| Run flow | [`run-flow.puml`](run-flow.puml) | How `afriend run` resolves automatic artifact-derived or explicit `--repo` context, records Git-blob binding or an independently frozen artifact, admits providers, applies scoped authority, preserves resolver access under Linux confinement, stages harnesses, dispatches a report fan-out, and records downgrades |
 | Claim lifecycle | [`claim-lifecycle.puml`](claim-lifecycle.puml) | How two friends finding the same defect become one corroborated claim without losing either attribution |
 | Cross-examination states | [`crossexam-states.puml`](crossexam-states.puml) | The eight states a claim can reach under `--mode crossexam`, which are terminal, and which need a human |
 | The gate loop | [`gate-workflow.puml`](gate-workflow.puml) | How `--mode gate` and `afriend resolve` fit together, and the two things a resolution can be refused for |

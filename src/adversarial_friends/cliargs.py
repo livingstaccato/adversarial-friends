@@ -247,7 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--repo",
         default=None,
         metavar="PATH",
-        help="explicit Git worktree root whose code friends may inspect",
+        help="explicit Git worktree root whose code friends may inspect; does not grant authority",
     )
     # Progress is ON by default and goes to stderr. A crossexam is silent
     # for tens of minutes otherwise, and a silent run cannot be told from a
