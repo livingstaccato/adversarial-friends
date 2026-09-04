@@ -203,6 +203,52 @@ def test_resumed_interim_explicit_scope_keeps_a_changed_artifact_bound(tmp_path,
     assert resumed.returncode == 10, resumed.stderr
     meta = json.loads(run_json.read_text())
     assert len(meta["snapshot_history"]) == 2
+    assert meta["repository_scope_mode"] == "explicit"
+    assert meta["repository_scope_audit"] == marker
+    assert marker not in meta["downgrades"]
     assert meta["snapshot"]["repo_root"] == str(repo.resolve())
     assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
     assert meta["snapshot"]["source_path"] is None
+
+
+@pytest.mark.parametrize("original_mode", ["automatic", "explicit"])
+def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, original_mode):
+    reviewed = _git_repo(tmp_path / "reviewed")
+    (reviewed / "tracked.py").write_text("selected code\n")
+    subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
+    _git_commit(reviewed, "initial")
+    if original_mode == "automatic":
+        artifact = reviewed / "spec.md"
+        artifact.write_text("# tracked\n")
+        subprocess.run(["git", "add", "spec.md"], cwd=reviewed, check=True, capture_output=True, env=_env())
+        _git_commit(reviewed, "track artifact")
+        scope_args: list[str] = []
+        tampered_mode = "explicit"
+    else:
+        artifact = tmp_path / "outside.md"
+        artifact.write_text("# outside\n")
+        scope_args = ["--repo", str(reviewed)]
+        tampered_mode = "automatic"
+    halted = run_af(
+        tmp_path,
+        artifact,
+        "--friend",
+        "fake:good",
+        "--friend",
+        "fake:good_twin",
+        "--merge",
+        "orchestrator",
+        *scope_args,
+    )
+    assert halted.returncode == 10, halted.stderr
+    run_json = _run_dir(tmp_path) / "run.json"
+    meta = json.loads(run_json.read_text())
+    meta["repository_scope_mode"] = tampered_mode
+    run_json.write_text(json.dumps(meta))
+    before = run_json.read_bytes()
+
+    resumed = _resume(tmp_path)
+
+    assert resumed.returncode == 2, resumed.stderr
+    assert "repository scope requires" in resumed.stderr
+    assert run_json.read_bytes() == before

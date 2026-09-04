@@ -526,11 +526,13 @@ def history_from_meta(
     # still binds the resulting blob to the frozen bytes.
     current = current._resolved_binding()
     if "snapshot_history" not in meta:
-        return [current]
+        history = [current]
+        validate_repository_scope(meta, current, history)
+        return history
     raw = meta["snapshot_history"]
     if not isinstance(raw, list) or not raw:
         raise UsageError("cannot resume: saved snapshot_history must be a non-empty list")
-    history: list[SnapshotIdentity] = []
+    history = []
     for index, entry in enumerate(raw):
         if not isinstance(entry, Mapping):
             raise UsageError(f"cannot resume: saved snapshot_history[{index}] must be an object")
@@ -553,6 +555,7 @@ def history_from_meta(
         # memory; the caller atomically persists it after this validation.
         history[-1] = current
     _validate_history_chain(history, current, repository_scope_mode(meta))
+    validate_repository_scope(meta, current, history)
     return history
 
 
@@ -571,6 +574,42 @@ def repository_scope_mode(meta: Mapping[str, object]) -> str:
     return mode
 
 
+def validate_repository_scope(
+    meta: Mapping[str, object],
+    current: SnapshotIdentity,
+    history: Iterable[SnapshotIdentity],
+) -> None:
+    """Keep saved scope authority consistent with every saved identity.
+
+    Current automatic repository snapshots always bind the artifact's Git
+    blob.  Earlier releases could persist an unbound automatic repository
+    snapshot, so accept only that missing-mode shape as a migration case.
+    """
+    mode = repository_scope_mode(meta)
+    has_saved_mode = "repository_scope_mode" in meta
+    for identity in [current, *history]:
+        if mode == "explicit":
+            if (
+                identity.repo_root is None
+                or identity.commit is None
+                or identity.tree is None
+                or identity.artifact_bound_to_snapshot
+                or identity.source_path is not None
+            ):
+                raise UsageError(
+                    "cannot resume: explicit repository scope requires an independently "
+                    "frozen repository snapshot"
+                )
+            continue
+        if identity.repo_root is None or identity.artifact_bound_to_snapshot:
+            continue
+        if not has_saved_mode:
+            continue
+        raise UsageError(
+            "cannot resume: automatic repository scope requires a Git-blob-bound snapshot"
+        )
+
+
 def _identity_token(identity: SnapshotIdentity, repository_scope_mode: str) -> str:
     # An independently frozen artifact can change while its explicitly
     # selected repository code remains at the same commit. Its artifact hash
@@ -587,7 +626,10 @@ def _validate_history_chain(
     seen: set[str] = set()
     for index, identity in enumerate(history):
         token = _identity_token(identity, repository_scope_mode)
-        if token in seen:
+        independently_frozen_explicit = (
+            repository_scope_mode == "explicit" and not identity.artifact_bound_to_snapshot
+        )
+        if token in seen and not independently_frozen_explicit:
             raise UsageError(
                 f"cannot resume: saved snapshot_history contains duplicate identity {token}"
             )
@@ -602,8 +644,7 @@ def _validate_history_chain(
             )
     if history[-1] != current:
         raise UsageError(
-            "cannot resume: saved snapshot_history must contain the current snapshot "
-            "exactly once and final"
+            "cannot resume: saved snapshot_history must make the current snapshot final"
         )
 
 
@@ -617,6 +658,7 @@ def record_snapshot(
     if not ordered:
         raise UsageError("cannot resume: saved snapshot_history must be a non-empty list")
     _validate_history_chain(ordered, current, repository_scope_mode(meta))
+    validate_repository_scope(meta, current, ordered)
     meta["snapshot"] = current.to_dict()
     meta["snapshot_history"] = [identity.to_dict() for identity in ordered]
     meta["repo_root"] = str(current.repo_root) if current.repo_root is not None else None

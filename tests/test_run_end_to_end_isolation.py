@@ -191,6 +191,26 @@ def test_in_repo_symlink_to_outside_records_a_complete_no_repo_identity_for_doc_
     assert any("no repository to snapshot or read" in note for note in meta["downgrades"])
 
 
+def test_in_repo_symlink_to_outside_skips_creating_a_throwaway_git_snapshot(monkeypatch, tmp_path):
+    from adversarial_friends import isolation
+
+    _repo, link, _outside = _in_repo_symlink_to_outside(tmp_path)
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+
+    def must_not_snapshot(_root):
+        raise AssertionError("doc-scope symlink must not create a Git snapshot")
+
+    monkeypatch.setattr(isolation, "snapshot_commit", must_not_snapshot)
+    parsed = cli.build_parser().parse_args(
+        ["run", str(link), "--out", str(tmp_path / "runs"), "--friend", "fake:good"]
+    )
+
+    assert cli.cmd_run(parsed) == 0
+    meta = json.loads((next((tmp_path / "runs").iterdir()) / "run.json").read_text())
+    assert meta["snapshot"]["repo_root"] is None
+
+
 def test_in_repo_symlink_to_outside_reconciles_a_mixed_roster_consistently(tmp_path):
     _repo, link, _outside = _in_repo_symlink_to_outside(tmp_path)
 
@@ -496,7 +516,9 @@ def test_explicit_repo_scope_uses_selected_code_for_an_ignored_artifact_in_anoth
     assert (run_dir / "artifact" / artifact.name).read_text() == "# ignored artifact\n"
 
 
-def test_explicit_repo_scope_stays_unbound_when_a_loop_artifact_changes(monkeypatch, tmp_path):
+def test_explicit_repo_scope_stays_unbound_when_a_loop_restores_an_old_artifact(
+    monkeypatch, tmp_path
+):
     from adversarial_friends.commands import run as run_module
 
     repo = _git_repo(tmp_path / "reviewed-repo")
@@ -509,13 +531,11 @@ def test_explicit_repo_scope_stays_unbound_when_a_loop_artifact_changes(monkeypa
     monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
     monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
     real_freeze = run_module.freeze_revision
-    changed = False
+    revisions = ["# changed revision\n", "# first revision\n"]
 
     def revise_before_freeze(*args, **kwargs):
-        nonlocal changed
-        if not changed:
-            artifact.write_text("# changed revision\n")
-            changed = True
+        if revisions:
+            artifact.write_text(revisions.pop(0))
         return real_freeze(*args, **kwargs)
 
     monkeypatch.setattr(run_module, "freeze_revision", revise_before_freeze)
@@ -534,16 +554,17 @@ def test_explicit_repo_scope_stays_unbound_when_a_loop_artifact_changes(monkeypa
             "--friend",
             "fake:judge_uphold_b:repo",
             "--max-loop-iterations",
-            "1",
+            "2",
         ]
     )
 
     assert cli.cmd_run(parsed) == 11
     meta = json.loads((next((tmp_path / "runs").iterdir()) / "run.json").read_text())
-    assert len(meta["snapshot_history"]) == 2
+    assert len(meta["snapshot_history"]) == 3
     assert all(entry["repo_root"] == str(repo.resolve()) for entry in meta["snapshot_history"])
     assert all(entry["artifact_bound_to_snapshot"] is False for entry in meta["snapshot_history"])
     assert all(entry["source_path"] is None for entry in meta["snapshot_history"])
+    assert meta["snapshot_history"][0]["artifact_hash"] == meta["snapshot_history"][2]["artifact_hash"]
 
 
 def test_dispatch_never_rederives_capability_from_requested_scope():

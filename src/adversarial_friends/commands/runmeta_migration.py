@@ -5,6 +5,7 @@ import copy
 from typing import Any
 
 from ..errors import UsageError
+from ..snapshots import EXPLICIT_REPOSITORY_SCOPE_AUDIT
 from . import resumevalidation
 
 CURRENT_SCHEMA_VERSION = 3
@@ -49,5 +50,21 @@ def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
                 invocation["allow_external_tools"] = migrated_grants
         if migrated_grants is not None:
             meta.setdefault("external_tool_grants", migrated_grants)
+    if "repository_scope_mode" not in meta:
+        downgrades = meta.get("downgrades")
+        interim_explicit = (
+            meta.get("repository_scope_audit") == EXPLICIT_REPOSITORY_SCOPE_AUDIT
+            or (
+                isinstance(downgrades, list)
+                and EXPLICIT_REPOSITORY_SCOPE_AUDIT in downgrades
+            )
+        )
+        if interim_explicit:
+            meta["repository_scope_mode"] = "explicit"
+            meta["repository_scope_audit"] = EXPLICIT_REPOSITORY_SCOPE_AUDIT
+            if isinstance(downgrades, list):
+                meta["downgrades"] = [
+                    note for note in downgrades if note != EXPLICIT_REPOSITORY_SCOPE_AUDIT
+                ]
     meta["schema_version"] = CURRENT_SCHEMA_VERSION
     return meta

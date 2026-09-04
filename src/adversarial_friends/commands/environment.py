@@ -73,7 +73,23 @@ def resolve_run_repo(artifact: Path, explicit_repo: str | None) -> tuple[Path | 
     code will be exposed to friends, so it must neither climb nor substitute.
     """
     if explicit_repo is None:
-        return _resolve_repo_root(artifact), False
+        root = _resolve_repo_root(artifact)
+        if root is None:
+            return None, False
+        try:
+            artifact.resolve(strict=True).relative_to(root.resolve(strict=True))
+        except ValueError:
+            # The invocation path belongs to this repository, but the bytes
+            # named by its final symlink do not. Decide doc scope before
+            # SnapshotIdentity.create can mint an unreachable throwaway
+            # snapshot commit; a deliberate --repo remains the sole way to
+            # independently freeze outside bytes against repository code.
+            return None, False
+        except OSError:
+            # Artifact copying will report the concrete unavailable path.
+            # Do not change that established error into a scope decision.
+            pass
+        return root, False
     try:
         candidate = Path(explicit_repo).resolve(strict=True)
     except (OSError, ValueError) as exc:
