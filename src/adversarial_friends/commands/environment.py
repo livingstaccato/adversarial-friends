@@ -65,6 +65,40 @@ def _resolve_repo_root(artifact: Path) -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+def resolve_run_repo(artifact: Path, explicit_repo: str | None) -> tuple[Path | None, bool]:
+    """Select a fresh run's repository, preserving explicit operator scope.
+
+    An artifact-derived scope may climb to its enclosing repository.  `--repo`
+    is deliberately stricter: the path names the exact worktree root whose
+    code will be exposed to friends, so it must neither climb nor substitute.
+    """
+    if explicit_repo is None:
+        return _resolve_repo_root(artifact), False
+    try:
+        candidate = Path(explicit_repo).resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root") from exc
+    if not candidate.is_dir():
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root")
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root") from exc
+    if result.returncode != 0:
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root")
+    try:
+        top = Path(result.stdout.strip()).resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root") from exc
+    if top != candidate:
+        raise UsageError(f"--repo {explicit_repo!r} must be a Git worktree root")
+    return candidate, True
+
+
 def reconcile_snapshot_scope(
     artifact: Path,
     identity: SnapshotIdentity,
@@ -171,6 +205,8 @@ def freeze_revision(
     last_digest: str | None,
     identity: SnapshotIdentity,
     iteration: int,
+    *,
+    artifact_bound_to_snapshot: bool = True,
 ) -> Revision:
     """Freeze what this iteration will review, and say if it changed.
 
@@ -199,14 +235,28 @@ def freeze_revision(
     comparison_digest = last_digest if last_digest is not None else identity.artifact_hash
     if digest == comparison_digest:
         return Revision(frozen, digest, text, identity, None)
-    predecessor = identity.commit or identity.artifact_hash
+    predecessor = (
+        identity.commit or identity.artifact_hash
+        if artifact_bound_to_snapshot
+        else identity.artifact_hash
+    )
     identity = SnapshotIdentity.create(
         identity.repo_root,
         frozen,
         digest,
         predecessor=predecessor,
-        source_artifact=artifact,
+        source_artifact=artifact if artifact_bound_to_snapshot else None,
     )
+    if (
+        artifact_bound_to_snapshot
+        and identity.repo_root is not None
+        and not identity.artifact_bound_to_snapshot
+    ):
+        # A final symlink target outside the invocation repository cannot
+        # honestly bind its frozen bytes to that repository. Automatic scope
+        # therefore keeps the historical doc-only semantics; explicit
+        # `--repo` deliberately opts out through artifact_bound_to_snapshot.
+        identity = SnapshotIdentity.create(None, frozen, digest, predecessor=predecessor)
     return Revision(
         frozen,
         digest,

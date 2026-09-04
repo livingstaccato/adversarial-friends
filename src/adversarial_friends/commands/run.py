@@ -48,10 +48,10 @@ from .checkpoint import any_friend_succeeded
 from .critique import run_critique
 from .crossexam import run_rounds
 from .environment import (
-    _resolve_repo_root,
     clock_offset,
     freeze_revision,
     reconcile_snapshot_scope,
+    resolve_run_repo,
     snapshot_scope_downgrade_note,
 )
 from .haltstate import loop_position, write_halt
@@ -118,8 +118,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             # resume must not silently follow a moved live artifact into a
             # different repository and bless a replacement snapshot there.
             repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
+            explicit_repo = False
         else:
-            repo_root = _resolve_repo_root(artifact)
+            repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
+            if explicit_repo:
+                downgrades.append(
+                    "repository scope selected explicitly; frozen artifact independently "
+                    "bound (not Git-blob-bound)."
+                )
         offset = clock_offset(downgrades)
 
         def now() -> float:
@@ -160,8 +166,19 @@ def cmd_run(args: argparse.Namespace) -> int:
             frozen,
             digest,
             resume_meta,
-            source_artifact=artifact if resume_meta is None else None,
+            source_artifact=artifact if resume_meta is None and not explicit_repo else None,
         )
+        if (
+            resume_meta is None
+            and not explicit_repo
+            and snapshot.repo_root is not None
+            and not snapshot.artifact_bound_to_snapshot
+        ):
+            # An artifact reached through a link whose final target lies
+            # outside its invocation repository has no Git blob to bind.
+            # Preserve automatic doc-scope selection; only an explicit
+            # `--repo` can intentionally create an unbound repo snapshot.
+            snapshot = select_snapshot(None, frozen, digest, None)
         digest = snapshot.artifact_hash
         snapshot_history = (
             history_from_meta(resume_meta, snapshot) if resume_meta is not None else [snapshot]
@@ -403,6 +420,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     last_digest,
                     snapshot,
                     iteration,
+                    artifact_bound_to_snapshot=not explicit_repo,
                 )
                 frozen, digest = revision.frozen, revision.digest
                 artifact_text = revision.text

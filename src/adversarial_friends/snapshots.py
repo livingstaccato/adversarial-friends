@@ -730,6 +730,12 @@ def history_from_meta(
 
 
 def _identity_token(identity: SnapshotIdentity) -> str:
+    # An independently frozen artifact can change while its explicitly
+    # selected repository code remains at the same commit. Its artifact hash
+    # is therefore the revision identity; commit-only would collapse two
+    # distinct prompt inputs into one loop-history entry.
+    if not identity.artifact_bound_to_snapshot:
+        return identity.artifact_hash
     return identity.commit or identity.artifact_hash
 
 

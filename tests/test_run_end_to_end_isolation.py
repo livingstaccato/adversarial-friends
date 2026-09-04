@@ -448,6 +448,99 @@ def test_repo_scope_friend_gets_a_real_private_worktree(tmp_path):
     assert len(worktrees.stdout.strip().splitlines()) == 1
 
 
+def test_explicit_repo_scope_uses_selected_code_for_an_ignored_artifact_in_another_repo(tmp_path):
+    """The artifact's location does not decide repo scope when --repo names one.
+
+    The artifact lives in a different repository and is deliberately ignored,
+    so binding it to the selected snapshot would fail. The kept worktree proves
+    the friend instead gets selected tracked code only; its private artifact copy
+    remains separate.
+    """
+    repo = _git_repo(tmp_path / "reviewed-repo")
+    (repo / ".gitignore").write_text("*.secret\n")
+    (repo / "tracked.py").write_text("selected repository code\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    (repo / "ignored.secret").write_text("not visible to friends\n")
+    artifact_repo = _git_repo(tmp_path / "artifact-repo")
+    (artifact_repo / ".gitignore").write_text("*.secret\n")
+    artifact = artifact_repo / "spec.secret"
+    artifact.write_text("# ignored artifact\n")
+
+    result = run_af(
+        tmp_path,
+        artifact,
+        "--repo",
+        str(repo),
+        "--friend",
+        "fake:cwd_probe:repo",
+        "--keep",
+    )
+
+    assert result.returncode == 0, result.stderr
+    run_dir = next((tmp_path / "runs").iterdir())
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["snapshot"]["repo_root"] == str(repo.resolve())
+    assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
+    assert meta["snapshot"]["source_path"] is None
+    assert any("repository scope selected explicitly" in note for note in meta["downgrades"])
+    worktree = run_dir / "isolation" / "round-1" / "fake-cwd_probe-0"
+    assert (worktree / "tracked.py").read_text() == "selected repository code\n"
+    assert not (worktree / artifact.name).exists()
+    assert not (worktree / "ignored.secret").exists()
+    assert (run_dir / "artifact" / artifact.name).read_text() == "# ignored artifact\n"
+
+
+def test_explicit_repo_scope_stays_unbound_when_a_loop_artifact_changes(monkeypatch, tmp_path):
+    from adversarial_friends.commands import run as run_module
+
+    repo = _git_repo(tmp_path / "reviewed-repo")
+    (repo / ".gitignore").write_text("*.secret\n")
+    (repo / "tracked.py").write_text("selected repository code\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
+    _git_commit(repo, "initial")
+    artifact = repo / "spec.secret"
+    artifact.write_text("# first revision\n")
+    monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
+    monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
+    real_freeze = run_module.freeze_revision
+    changed = False
+
+    def revise_before_freeze(*args, **kwargs):
+        nonlocal changed
+        if not changed:
+            artifact.write_text("# changed revision\n")
+            changed = True
+        return real_freeze(*args, **kwargs)
+
+    monkeypatch.setattr(run_module, "freeze_revision", revise_before_freeze)
+    parsed = cli.build_parser().parse_args(
+        [
+            "run",
+            str(artifact),
+            "--repo",
+            str(repo),
+            "--mode",
+            "loop",
+            "--out",
+            str(tmp_path / "runs"),
+            "--friend",
+            "fake:judge_uphold_a:repo",
+            "--friend",
+            "fake:judge_uphold_b:repo",
+            "--max-loop-iterations",
+            "1",
+        ]
+    )
+
+    assert cli.cmd_run(parsed) == 11
+    meta = json.loads((next((tmp_path / "runs").iterdir()) / "run.json").read_text())
+    assert len(meta["snapshot_history"]) == 2
+    assert all(entry["repo_root"] == str(repo.resolve()) for entry in meta["snapshot_history"])
+    assert all(entry["artifact_bound_to_snapshot"] is False for entry in meta["snapshot_history"])
+    assert all(entry["source_path"] is None for entry in meta["snapshot_history"])
+
+
 def test_dispatch_never_rederives_capability_from_requested_scope():
     """Requirement: "Use the capability build_argv returns; never
     re-derive it." An adapter with NO readonly_argv at all never gets a
