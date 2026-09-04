@@ -152,65 +152,6 @@ def test_an_earlier_iterations_verdicts_survive_into_a_later_halts_report(tmp_pa
     assert "settled-upheld" in report, report
 
 
-@pytest.mark.parametrize("interim_shape", ["audit", "downgrade"])
-def test_resumed_interim_explicit_scope_keeps_a_changed_artifact_bound(tmp_path, interim_shape):
-    """A post-resume loop iteration must retain the saved explicit scope."""
-    repo = _git_repo(tmp_path / "reviewed-repo")
-    (repo / "tracked.py").write_text("selected code\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, env=_env())
-    _git_commit(repo, "initial")
-    artifact_repo = _git_repo(tmp_path / "artifact-repo")
-    (artifact_repo / ".gitignore").write_text("*.secret\n")
-    artifact = artifact_repo / "spec.secret"
-    artifact.write_text("# original\n")
-
-    halted = run_af(
-        tmp_path,
-        artifact,
-        "--repo",
-        str(repo),
-        "--friend",
-        "fake:judge_uphold_a:repo",
-        "--friend",
-        "fake:judge_uphold_b:repo",
-        "--merge",
-        "orchestrator",
-        "--max-rounds",
-        "2",
-        "--max-loop-iterations",
-        "2",
-        mode="loop",
-    )
-    assert halted.returncode == 10, halted.stderr
-    run_json = _run_dir(tmp_path) / "run.json"
-    meta = json.loads(run_json.read_text())
-    meta.pop("repository_scope_mode")
-    marker = (
-        "repository scope selected explicitly; frozen artifact independently "
-        "bound (not Git-blob-bound)."
-    )
-    if interim_shape == "audit":
-        assert meta["repository_scope_audit"] == marker
-    else:
-        meta.pop("repository_scope_audit")
-        meta["downgrades"].append(marker)
-    run_json.write_text(json.dumps(meta))
-    artifact.write_text("# changed after halt\n")
-    _respond(tmp_path, [], round_no=1)
-
-    resumed = _resume(tmp_path)
-
-    assert resumed.returncode == 10, resumed.stderr
-    meta = json.loads(run_json.read_text())
-    assert len(meta["snapshot_history"]) == 2
-    assert meta["repository_scope_mode"] == "explicit"
-    assert meta["repository_scope_audit"] == marker
-    assert marker not in meta["downgrades"]
-    assert meta["snapshot"]["repo_root"] == str(repo.resolve())
-    assert meta["snapshot"]["artifact_bound_to_snapshot"] is False
-    assert meta["snapshot"]["source_path"] is None
-
-
 @pytest.mark.parametrize("original_mode", ["automatic", "explicit"])
 def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, original_mode):
     reviewed = _git_repo(tmp_path / "reviewed")
@@ -220,7 +161,9 @@ def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, ori
     if original_mode == "automatic":
         artifact = reviewed / "spec.md"
         artifact.write_text("# tracked\n")
-        subprocess.run(["git", "add", "spec.md"], cwd=reviewed, check=True, capture_output=True, env=_env())
+        subprocess.run(
+            ["git", "add", "spec.md"], cwd=reviewed, check=True, capture_output=True, env=_env()
+        )
         _git_commit(reviewed, "track artifact")
         scope_args: list[str] = []
         tampered_mode = "explicit"
@@ -254,18 +197,15 @@ def test_resume_rejects_a_scope_mode_tampered_against_its_snapshot(tmp_path, ori
     assert run_json.read_bytes() == before
 
 
-def test_resumed_legacy_automatic_unbound_scope_is_migrated_and_persists(tmp_path):
+def test_resumed_pre_feature_run_keeps_scope_mode_absent(tmp_path):
     reviewed = _git_repo(tmp_path / "reviewed")
-    (reviewed / "tracked.py").write_text("selected code\n")
+    artifact = reviewed / "spec.md"
+    artifact.write_text("# tracked artifact\n")
     subprocess.run(["git", "add", "-A"], cwd=reviewed, check=True, capture_output=True, env=_env())
-    _git_commit(reviewed, "initial")
-    artifact = tmp_path / "outside.md"
-    artifact.write_text("# outside\n")
+    _git_commit(reviewed, "track artifact")
     halted = run_af(
         tmp_path,
         artifact,
-        "--repo",
-        str(reviewed),
         "--friend",
         "fake:good",
         "--friend",
@@ -277,7 +217,7 @@ def test_resumed_legacy_automatic_unbound_scope_is_migrated_and_persists(tmp_pat
     run_json = _run_dir(tmp_path) / "run.json"
     meta = json.loads(run_json.read_text())
     meta.pop("repository_scope_mode")
-    meta.pop("repository_scope_audit")
+    assert "repository_scope_audit" not in meta
     run_json.write_text(json.dumps(meta))
     _respond(tmp_path, [], round_no=1)
 
@@ -285,8 +225,9 @@ def test_resumed_legacy_automatic_unbound_scope_is_migrated_and_persists(tmp_pat
 
     assert resumed.returncode == 0, resumed.stderr
     persisted = json.loads(run_json.read_text())
-    assert persisted["repository_scope_mode"] == "legacy-automatic-unbound"
+    assert "repository_scope_mode" not in persisted
+    assert "repository_scope_audit" not in persisted
     assert len(persisted["snapshot_history"]) == 1
     assert persisted["snapshot"] == persisted["snapshot_history"][0]
-    assert persisted["snapshot"]["artifact_bound_to_snapshot"] is False
-    assert persisted["snapshot"]["source_path"] is None
+    assert persisted["snapshot"]["artifact_bound_to_snapshot"] is True
+    assert persisted["snapshot"]["source_path"] == "spec.md"

@@ -1,5 +1,6 @@
 """Repository-scope provenance in the human-readable report."""
 
+import pytest
 from report_helpers import meta
 
 from adversarial_friends.report import render
@@ -72,3 +73,18 @@ def test_report_avoids_repository_identity_for_doc_only_or_malformed_metadata():
     assert "## Repository snapshot" not in doc_only
     assert "## Repository snapshot" not in malformed
     assert "/invented" not in malformed
+
+
+@pytest.mark.parametrize("marker_field", ["repository_scope_audit", "downgrades"])
+def test_report_does_not_infer_explicit_scope_from_prose(marker_field):
+    marker = (
+        "repository scope selected explicitly; frozen artifact independently "
+        "bound (not Git-blob-bound)."
+    )
+    run_meta = meta(snapshot=_snapshot(bound=False))
+    run_meta[marker_field] = marker if marker_field == "repository_scope_audit" else [marker]
+
+    out = _render(run_meta)
+
+    assert "## Repository snapshot" not in out
+    assert "Repository scope: explicit" not in out

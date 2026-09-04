@@ -123,7 +123,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             repository_scope_mode = saved_repository_scope_mode(resume_meta)
             explicit_repo = repository_scope_mode == "explicit"
             saved_audit = resume_meta.get("repository_scope_audit")
-            repository_scope_audit = saved_audit if isinstance(saved_audit, str) else None
+            repository_scope_audit = (
+                saved_audit
+                if repository_scope_mode == "explicit" and isinstance(saved_audit, str)
+                else None
+            )
         else:
             repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
             repository_scope_mode = "explicit" if explicit_repo else "automatic"
@@ -426,7 +430,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     last_digest,
                     snapshot,
                     iteration,
-                    artifact_bound_to_snapshot=repository_scope_mode == "automatic",
+                    artifact_bound_to_snapshot=repository_scope_mode != "explicit",
                     predecessor_uses_artifact_hash=repository_scope_mode == "explicit",
                 )
                 frozen, digest = revision.frozen, revision.digest

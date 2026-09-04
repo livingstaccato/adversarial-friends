@@ -344,7 +344,10 @@ def test_artifact_outside_git_repo_downgrades_every_friend_to_doc_scope(tmp_path
     result = run_af(tmp_path, artifact, "--friend", "fake:good")
     assert result.returncode == 0, result.stderr
     runs = sorted((tmp_path / "runs").iterdir())
+    meta = json.loads((runs[0] / "run.json").read_text())
     report = (runs[0] / "report.md").read_text()
+    assert meta["repository_scope_mode"] == "automatic"
+    assert "repository_scope_audit" not in meta
     assert "not inside a git repository" in report.lower()
     assert "doc scope" in report.lower()
 

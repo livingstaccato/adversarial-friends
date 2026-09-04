@@ -5,7 +5,6 @@ import copy
 from typing import Any
 
 from ..errors import UsageError
-from ..snapshots import EXPLICIT_REPOSITORY_SCOPE_AUDIT, LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE
 from . import resumevalidation
 
 CURRENT_SCHEMA_VERSION = 3
@@ -50,37 +49,5 @@ def migrate_meta(raw: Mapping[str, Any]) -> dict[str, Any]:
                 invocation["allow_external_tools"] = migrated_grants
         if migrated_grants is not None:
             meta.setdefault("external_tool_grants", migrated_grants)
-    if "repository_scope_mode" not in meta:
-        downgrades = meta.get("downgrades")
-        interim_explicit = (
-            meta.get("repository_scope_audit") == EXPLICIT_REPOSITORY_SCOPE_AUDIT
-            or (
-                isinstance(downgrades, list)
-                and EXPLICIT_REPOSITORY_SCOPE_AUDIT in downgrades
-            )
-        )
-        if interim_explicit:
-            meta["repository_scope_mode"] = "explicit"
-            meta["repository_scope_audit"] = EXPLICIT_REPOSITORY_SCOPE_AUDIT
-            if isinstance(downgrades, list):
-                meta["downgrades"] = [
-                    note for note in downgrades if note != EXPLICIT_REPOSITORY_SCOPE_AUDIT
-                ]
-        elif _is_legacy_automatic_unbound_snapshot(meta.get("snapshot")):
-            meta["repository_scope_mode"] = LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE
     meta["schema_version"] = CURRENT_SCHEMA_VERSION
     return meta
-
-
-def _is_legacy_automatic_unbound_snapshot(value: object) -> bool:
-    """Recognize the exact historical repository-unbound shape for migration."""
-    if not isinstance(value, Mapping):
-        return False
-    return (
-        isinstance(value.get("repo_root"), str)
-        and bool(value["repo_root"])
-        and isinstance(value.get("commit"), str)
-        and bool(value["commit"])
-        and value.get("source_path") is None
-        and value.get("artifact_bound_to_snapshot") is False
-    )

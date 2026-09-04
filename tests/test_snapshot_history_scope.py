@@ -12,7 +12,7 @@ from adversarial_friends.snapshots import (
 )
 
 
-def test_legacy_unbound_repo_history_keeps_commit_linked_predecessors():
+def test_pre_feature_unbound_repo_history_keeps_commit_linked_predecessors():
     """Pre-explicit-scope histories identify an unbound repository by commit."""
     first = SnapshotIdentity(
         Path("/repo"), "1" * 40, "a" * 40, "artifact/spec.md", "sha256:" + "1" * 64
@@ -30,36 +30,27 @@ def test_legacy_unbound_repo_history_keeps_commit_linked_predecessors():
     assert history_from_meta(meta, current) == [first, current]
 
 
-@pytest.mark.parametrize(
-    "interim_meta",
-    [
-        {
-            "repository_scope_audit": (
-                "repository scope selected explicitly; frozen artifact independently "
-                "bound (not Git-blob-bound)."
-            )
-        },
-        {
-            "downgrades": [
-                "repository scope selected explicitly; frozen artifact independently "
-                "bound (not Git-blob-bound)."
-            ]
-        },
-    ],
-)
-def test_interim_explicit_unbound_history_uses_artifact_hash_predecessors(interim_meta):
+@pytest.mark.parametrize("marker_field", ["repository_scope_audit", "downgrades"])
+def test_pre_feature_history_does_not_infer_explicit_scope_from_prose(marker_field):
     first = SnapshotIdentity(
         Path("/repo"), "1" * 40, "a" * 40, "artifact/spec.md", "sha256:" + "1" * 64
     )
     current = SnapshotIdentity(
         Path("/repo"),
-        "1" * 40,
-        "a" * 40,
+        "2" * 40,
+        "b" * 40,
         "artifact/revised.md",
         "sha256:" + "2" * 64,
-        predecessor=first.artifact_hash,
+        predecessor=first.commit,
     )
-    meta = {**interim_meta, "snapshot_history": [first.to_dict(), current.to_dict()]}
+    marker = (
+        "repository scope selected explicitly; frozen artifact independently "
+        "bound (not Git-blob-bound)."
+    )
+    meta: dict[str, object] = {
+        "snapshot_history": [first.to_dict(), current.to_dict()],
+        marker_field: marker if marker_field == "repository_scope_audit" else [marker],
+    }
 
     assert history_from_meta(meta, current) == [first, current]
 
@@ -108,7 +99,7 @@ def test_scope_mode_rejects_a_tampered_explicit_bound_snapshot():
         validate_repository_scope({"repository_scope_mode": "explicit"}, bound, [bound])
 
 
-def test_scope_mode_rejects_a_tampered_automatic_unbound_snapshot_but_keeps_legacy():
+def test_scope_mode_rejects_a_tampered_automatic_unbound_snapshot_but_keeps_pre_feature():
     unbound = SnapshotIdentity(
         Path("/repo"), "1" * 40, "a" * 40, "artifact/spec.md", "sha256:" + "1" * 64
     )
@@ -116,20 +107,3 @@ def test_scope_mode_rejects_a_tampered_automatic_unbound_snapshot_but_keeps_lega
     with pytest.raises(UsageError, match=r"automatic.*Git-blob-bound"):
         validate_repository_scope({"repository_scope_mode": "automatic"}, unbound, [unbound])
     validate_repository_scope({}, unbound, [unbound])
-
-
-def test_legacy_automatic_unbound_mode_rejects_a_bound_snapshot():
-    bound = SnapshotIdentity(
-        Path("/repo"),
-        "1" * 40,
-        "a" * 40,
-        "artifact/spec.md",
-        "sha256:" + "1" * 64,
-        source_path="artifact/spec.md",
-        artifact_bound_to_snapshot=True,
-    )
-
-    with pytest.raises(UsageError, match=r"legacy automatic-unbound.*independently frozen"):
-        validate_repository_scope(
-            {"repository_scope_mode": "legacy-automatic-unbound"}, bound, [bound]
-        )

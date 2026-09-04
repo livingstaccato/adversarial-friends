@@ -134,7 +134,7 @@ def _base_meta(
     prior_external_tool_policy: object = None,
     detected_host: str | None = None,
     effective_include_self: bool | None = None,
-    repository_scope_mode: str = "automatic",
+    repository_scope_mode: str | None = "automatic",
 ) -> dict[str, Any]:
     """run.json's common fields.
 
@@ -158,7 +158,6 @@ def _base_meta(
         "artifact": artifact.name,
         "artifact_path": str(stable_artifact_path(artifact)),
         "artifact_hash": digest,
-        "repository_scope_mode": repository_scope_mode,
         "friends": friends_meta,
         "external_tool_policy": (
             "legacy-unknown"
@@ -190,6 +189,8 @@ def _base_meta(
         ],
         "produced_new_themes": produced_new_themes,
     }
+    if repository_scope_mode is not None:
+        meta["repository_scope_mode"] = repository_scope_mode
     if effective_include_self is not None:
         meta["detected_host"] = detected_host
         meta["effective_include_self"] = effective_include_self

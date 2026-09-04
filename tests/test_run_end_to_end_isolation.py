@@ -574,7 +574,9 @@ def test_explicit_repo_scope_stays_unbound_when_a_loop_restores_an_old_artifact(
     assert all(entry["repo_root"] == str(repo.resolve()) for entry in meta["snapshot_history"])
     assert all(entry["artifact_bound_to_snapshot"] is False for entry in meta["snapshot_history"])
     assert all(entry["source_path"] is None for entry in meta["snapshot_history"])
-    assert meta["snapshot_history"][0]["artifact_hash"] == meta["snapshot_history"][2]["artifact_hash"]
+    assert (
+        meta["snapshot_history"][0]["artifact_hash"] == meta["snapshot_history"][2]["artifact_hash"]
+    )
 
 
 def test_dispatch_never_rederives_capability_from_requested_scope():

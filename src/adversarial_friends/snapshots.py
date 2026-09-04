@@ -33,7 +33,6 @@ EXPLICIT_REPOSITORY_SCOPE_AUDIT = (
     "repository scope selected explicitly; frozen artifact independently "
     "bound (not Git-blob-bound)."
 )
-LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE = "legacy-automatic-unbound"
 _SNAPSHOT_FIELDS = frozenset(
     {
         "repo_root",
@@ -560,25 +559,13 @@ def history_from_meta(
     return history
 
 
-def repository_scope_mode(meta: Mapping[str, object]) -> str:
-    """Read the immutable scope mode, recognizing only known interim data."""
+def repository_scope_mode(meta: Mapping[str, object]) -> str | None:
+    """Read a declared scope mode; absence identifies a pre-feature run."""
     if "repository_scope_mode" not in meta:
-        if meta.get("repository_scope_audit") == EXPLICIT_REPOSITORY_SCOPE_AUDIT:
-            return "explicit"
-        downgrades = meta.get("downgrades")
-        if isinstance(downgrades, list) and EXPLICIT_REPOSITORY_SCOPE_AUDIT in downgrades:
-            return "explicit"
-        return "automatic"
+        return None
     mode = meta["repository_scope_mode"]
-    if not isinstance(mode, str) or mode not in {
-        "automatic",
-        "explicit",
-        LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE,
-    }:
-        raise UsageError(
-            "cannot resume: saved repository_scope_mode must be automatic, explicit, or "
-            "legacy-automatic-unbound"
-        )
+    if not isinstance(mode, str) or mode not in {"automatic", "explicit"}:
+        raise UsageError("cannot resume: saved repository_scope_mode must be automatic or explicit")
     return mode
 
 
@@ -590,11 +577,12 @@ def validate_repository_scope(
     """Keep saved scope authority consistent with every saved identity.
 
     Current automatic repository snapshots always bind the artifact's Git
-    blob.  Earlier releases could persist an unbound automatic repository
-    snapshot, so accept only that missing-mode shape as a migration case.
+    blob. Runs without a declared mode predate this feature and retain their
+    existing snapshot validation and replay behavior.
     """
     mode = repository_scope_mode(meta)
-    has_saved_mode = "repository_scope_mode" in meta
+    if mode is None:
+        return
     for identity in [current, *history]:
         if mode == "explicit":
             if (
@@ -609,28 +597,14 @@ def validate_repository_scope(
                     "frozen repository snapshot"
                 )
             continue
-        if mode == LEGACY_AUTOMATIC_UNBOUND_SCOPE_MODE:
-            if (
-                identity.repo_root is None
-                or identity.commit is None
-                or identity.artifact_bound_to_snapshot
-                or identity.source_path is not None
-            ):
-                raise UsageError(
-                    "cannot resume: legacy automatic-unbound repository scope requires an "
-                    "independently frozen repository snapshot"
-                )
-            continue
         if identity.repo_root is None or identity.artifact_bound_to_snapshot:
-            continue
-        if not has_saved_mode:
             continue
         raise UsageError(
             "cannot resume: automatic repository scope requires a Git-blob-bound snapshot"
         )
 
 
-def _identity_token(identity: SnapshotIdentity, repository_scope_mode: str) -> str:
+def _identity_token(identity: SnapshotIdentity, repository_scope_mode: str | None) -> str:
     # An independently frozen artifact can change while its explicitly
     # selected repository code remains at the same commit. Its artifact hash
     # is therefore the revision identity; commit-only would collapse two
@@ -641,7 +615,9 @@ def _identity_token(identity: SnapshotIdentity, repository_scope_mode: str) -> s
 
 
 def _validate_history_chain(
-    history: list[SnapshotIdentity], current: SnapshotIdentity, repository_scope_mode: str
+    history: list[SnapshotIdentity],
+    current: SnapshotIdentity,
+    repository_scope_mode: str | None,
 ) -> None:
     seen: set[str] = set()
     for index, identity in enumerate(history):
