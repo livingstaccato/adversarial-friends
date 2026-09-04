@@ -563,7 +563,9 @@ class SnapshotIdentity:
         if nested is not None:
             assert raw is not None
             _nested_legacy_conflict(raw, meta, complete=True)
-            return cls._recover_binding(nested, meta)
+            return cls._recover_binding(
+                nested, meta, legacy="artifact_bound_to_snapshot" not in raw
+            )
         if raw is not None:
             _reject_inconsistent_explicit_binding(raw)
         if legacy is not None:
@@ -585,7 +587,9 @@ class SnapshotIdentity:
         if "snapshot" not in mapped:
             raise UsageError("cannot resume: saved snapshot field is required")
         raw = _string_mapping(mapped["snapshot"], "snapshot")
-        current = cls._recover_binding(cls._from_dict(raw), mapped)
+        current = cls._recover_binding(
+            cls._from_dict(raw), mapped, legacy="artifact_bound_to_snapshot" not in raw
+        )
         _nested_legacy_conflict(raw, mapped, complete=True)
         return current
 
@@ -709,7 +713,7 @@ def history_from_meta(
                 SnapshotIdentity._recover_binding(
                     identity,
                     meta,
-                    legacy="artifact_bound_to_snapshot" not in entry and "snapshot" not in meta,
+                    legacy="artifact_bound_to_snapshot" not in entry,
                 )._resolved_binding()
             )
         except UsageError as exc:

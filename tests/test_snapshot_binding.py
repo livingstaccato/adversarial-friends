@@ -11,6 +11,7 @@ from e2e_helpers import AF, _env, run_af
 import pytest
 
 from adversarial_friends import isolation, snapshots
+from adversarial_friends.commands.runmeta_migration import migrate_meta
 from adversarial_friends.errors import UsageError
 from adversarial_friends.runstore import RunStore
 from adversarial_friends.snapshots import SnapshotIdentity, history_from_meta
@@ -52,6 +53,7 @@ def test_unbound_repo_snapshot_resume_never_reads_a_commit_blob(monkeypatch, tmp
     repo, _source, frozen, _bound_identity = _identity(tmp_path)
     digest = "sha256:" + hashlib.sha256(frozen.read_bytes()).hexdigest()
     identity = SnapshotIdentity.create(repo, frozen, digest)
+    identity = SnapshotIdentity.from_current_meta({"snapshot": identity.to_dict()})
 
     def unexpected_blob_lookup(*_args):
         raise AssertionError("unbound snapshot read a commit blob")
@@ -70,6 +72,32 @@ def test_old_snapshot_without_binding_field_infers_the_source_binding(tmp_path):
 
     assert restored.artifact_bound_to_snapshot
     assert restored.verify(frozen) == identity
+
+
+def test_v1_migrated_repo_snapshot_keeps_the_commit_blob_guard(tmp_path):
+    repo, source, frozen, identity = _identity(tmp_path)
+    migrated = migrate_meta(
+        {
+            "schema_version": 1,
+            "repo_root": str(repo),
+            "snapshot_sha": identity.commit,
+            "artifact_path": str(source),
+            "artifact_hash": identity.artifact_hash,
+        }
+    )
+    tampered = b"# changed frozen bytes\n"
+    frozen.write_bytes(tampered)
+    digest = "sha256:" + hashlib.sha256(tampered).hexdigest()
+    migrated["artifact_hash"] = digest
+    migrated["snapshot"]["artifact_hash"] = digest
+    migrated["snapshot_history"][0]["artifact_hash"] = digest
+
+    current = SnapshotIdentity.from_current_meta(migrated)
+
+    assert SnapshotIdentity.from_meta(migrated).artifact_bound_to_snapshot
+    assert history_from_meta(migrated, current)[-1].artifact_bound_to_snapshot
+    with pytest.raises(UsageError, match=r"commit artifact does not match"):
+        current.verify(frozen)
 
 
 @pytest.mark.parametrize(
