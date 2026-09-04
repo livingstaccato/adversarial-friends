@@ -19,6 +19,14 @@ def _known() -> set[str]:
     return set(init_module.load_adapters(ADAPTER_DIR))
 
 
+def _ready_codex() -> dict[str, readiness.FriendReadiness]:
+    return {
+        "codex": readiness.FriendReadiness(
+            "codex", readiness.ReadinessState.READY, "available", "/bin/codex", None
+        )
+    }
+
+
 def test_guided_preview_is_a_no_write_no_probe_plan(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("CODEX_SESSION_ID", "guided-preview")
@@ -98,6 +106,7 @@ def test_guided_apply_changes_only_selected_settings_and_preserves_others(
     tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: _ready_codex())
     known = _known()
     providerconfig.set_enabled("opencode", False, known=known)
     providerconfig.set_model("opencode", "gpt-5.6-sol", known=known)
@@ -267,6 +276,7 @@ def test_guided_setup_rejects_invalid_combinations_before_writes(
 
 def test_guided_apply_requires_explicit_changes_before_creating_config(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setattr(init_module, "assess_all", lambda *_args, **_kwargs: _ready_codex())
 
     assert init_module.cmd_init(_args("--apply")) == 0
 
