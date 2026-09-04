@@ -1,0 +1,20 @@
+{
+  "name": "afriend-local",
+  "interface": {
+    "displayName": "afriend"
+  },
+  "plugins": [
+    {
+      "name": "adversarial-friends",
+      "source": {
+        "source": "local",
+        "path": "./plugins/adversarial-friends"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

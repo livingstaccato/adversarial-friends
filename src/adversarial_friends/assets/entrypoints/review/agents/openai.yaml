@@ -1,0 +1,4 @@
+interface:
+  display_name: "afriend review"
+  short_description: "Review an artifact with configured friends"
+  default_prompt: "Use $review to review the supplied artifact."

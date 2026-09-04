@@ -3,7 +3,7 @@ name: status
 description: Use only through direct qualified selection ($adversarial-friends:status) or explicit /afriend routing to inspect provider readiness or a named existing run. This is read-only.
 ---
 
-# Adversarial Friends status
+# afriend status
 
 Check provider readiness with the stable command:
 

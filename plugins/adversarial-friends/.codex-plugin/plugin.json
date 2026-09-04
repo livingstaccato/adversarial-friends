@@ -1,6 +1,6 @@
 {
   "name": "adversarial-friends",
-  "version": "0.5.1",
+  "version": "0.5.1+codex.20260904205235",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory.",
   "author": {
     "name": "Tim",
@@ -16,9 +16,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Adversarial Friends",
+    "displayName": "afriend",
     "shortDescription": "Adversarial review with agent CLIs; Codex host review is advisory.",
-    "longDescription": "Adversarial Friends dispatches an artifact to agent CLIs and merges their critiques. In Codex, Codex remains the orchestrator and may contribute advisory host self-review; independent admission and judging authority come only from non-host friends.",
+    "longDescription": "afriend dispatches an artifact to agent CLIs and merges their critiques. In Codex, Codex remains the orchestrator and may contribute advisory host self-review; independent admission and judging authority come only from non-host friends.",
     "developerName": "livingstaccato",
     "category": "Developer Tools",
     "capabilities": [

@@ -444,7 +444,9 @@ def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_con
     ]
 
     assert claude["name"] == entry["name"] == codex["name"]
-    assert claude["version"] == entry["version"] == codex["version"]
+    assert claude["version"] == entry["version"]
+    assert codex["version"].partition("+")[0] == claude["version"]
+    assert codex["interface"]["displayName"] == "afriend"
     for description in descriptions:
         normalized = " ".join(description.lower().split())
         assert "codex" in normalized
@@ -460,6 +462,20 @@ def test_plugin_install_metadata_matches_narrow_activation_and_advisory_host_con
         "$adversarial-friends:status",
         "$adversarial-friends:configure",
         "$adversarial-friends:resolve",
+    ]
+
+
+def test_codex_local_marketplace_presents_afriend_and_sources_this_plugin():
+    marketplace = json.loads((REPO / ".agents" / "plugins" / "marketplace.json").read_text())
+    assert marketplace["name"] == "afriend-local"
+    assert marketplace["interface"]["displayName"] == "afriend"
+    assert marketplace["plugins"] == [
+        {
+            "name": "adversarial-friends",
+            "source": {"source": "local", "path": "./plugins/adversarial-friends"},
+            "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+            "category": "Developer Tools",
+        }
     ]
 
 

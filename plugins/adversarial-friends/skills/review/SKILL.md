@@ -3,7 +3,7 @@ name: review
 description: Use only through direct qualified selection ($adversarial-friends:review) or explicit /afriend routing for a supplied artifact. Do not use for generic review requests.
 ---
 
-# Adversarial Friends review
+# afriend review
 
 Review an exact supplied artifact with the stable command:
 

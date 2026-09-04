@@ -1,0 +1,4 @@
+interface:
+  display_name: "afriend"
+  short_description: "Challenge an artifact with independent agents"
+  default_prompt: "Use $afriend to review the supplied artifact."

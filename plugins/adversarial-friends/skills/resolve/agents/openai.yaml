@@ -1,0 +1,4 @@
+interface:
+  display_name: "afriend resolve"
+  short_description: "Inspect or resolve a saved run claim"
+  default_prompt: "Use $resolve to inspect unresolved claims."

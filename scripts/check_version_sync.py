@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 
 VERSION_FILE = Path("VERSION")
+CODEX_MANIFEST = Path("plugins/adversarial-friends/.codex-plugin/plugin.json")
 MANIFESTS = [
     Path("plugins/.claude-plugin/marketplace.json"),
     Path("plugins/adversarial-friends/.claude-plugin/plugin.json"),
-    Path("plugins/adversarial-friends/.codex-plugin/plugin.json"),
+    CODEX_MANIFEST,
 ]
 
 
@@ -37,6 +39,15 @@ def _manifest_versions(data: object, path: Path) -> list[tuple[str, str]]:
     return found
 
 
+def _matches_expected_version(path: Path, version: str, expected: str) -> bool:
+    """Accept the documented local Codex cachebuster only in its manifest."""
+    if version == expected:
+        return True
+    if path != CODEX_MANIFEST:
+        return False
+    return re.fullmatch(rf"{re.escape(expected)}\+codex\.[A-Za-z0-9._-]+", version) is not None
+
+
 def main() -> int:
     """Return 1 if any manifest's version disagrees with VERSION, 0 if all match."""
     if not VERSION_FILE.is_file():
@@ -51,7 +62,7 @@ def main() -> int:
             return 1
         data = json.loads(manifest.read_text())
         for label, version in _manifest_versions(data, manifest):
-            if version != expected:
+            if not _matches_expected_version(manifest, version, expected):
                 mismatches.append(f"  {label}: {version} != {expected}")
 
     # The version the CLI reports. It was hardcoded in

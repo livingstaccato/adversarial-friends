@@ -1,0 +1,4 @@
+interface:
+  display_name: "afriend configure"
+  short_description: "Configure providers, profiles, and setup"
+  default_prompt: "Use $configure to inspect afriend settings."

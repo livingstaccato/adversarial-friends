@@ -35,6 +35,20 @@ def test_all_entrypoints_have_distinct_portable_metadata():
     assert len(descriptions) == len(SKILL_NAMES)
 
 
+def test_selectable_skills_present_the_afriend_family_in_codex_ui():
+    expected_labels = {
+        "afriend": "afriend",
+        "review": "afriend review",
+        "status": "afriend status",
+        "configure": "afriend configure",
+        "resolve": "afriend resolve",
+    }
+    for name, label in expected_labels.items():
+        ui = (ENTRYPOINTS / name / "agents" / "openai.yaml").read_text()
+        assert f'display_name: "{label}"' in ui
+        assert f"${name}" in ui
+
+
 def test_afriend_is_the_only_router_and_short_slash_selector():
     text = (ENTRYPOINTS / "afriend" / "SKILL.md").read_text()
     description = " ".join(frontmatter(text)["description"].lower().split())
@@ -63,7 +77,7 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
 def test_router_sets_session_expectations_before_dispatch_and_after_completion():
     text = (ENTRYPOINTS / "afriend" / "SKILL.md").read_text()
     lowered = " ".join(text.lower().split())
-    assert "about to start adversarial friends" in lowered
+    assert "about to start afriend" in lowered
     assert "first review request in a host task" in lowered
     assert "new loop iteration" in lowered
     assert "when each friend finishes" in lowered

@@ -3,7 +3,7 @@ name: afriend
 description: Use for /afriend, when the user directly selects this skill, explicit afriend requests, operative “ask/use a friend to …” requests, and explicit requests to use Adversarial Friends. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, architecture requests, or incidental mentions of a friend.
 ---
 
-# /afriend — Adversarial Friends router
+# /afriend router
 
 Challenge an artifact by dispatching it to agent CLIs under distinct lenses,
 then merge what they find.
@@ -58,7 +58,7 @@ Codex work. Do not use this skill to generate a first review of code.
 On the first review request in a host task, and before every requested new
 loop iteration, pause before dispatch and state the resolved run:
 
-> About to start Adversarial Friends to review `<artifact>` in `<mode>` mode
+> About to start afriend to review `<artifact>` in `<mode>` mode
 > with `<profile>`. Scope: `<repository snapshot|document only>`. Friends:
 > `<name, provider, lens, role>`; external tools: `<denied|explicit grant>`.
 

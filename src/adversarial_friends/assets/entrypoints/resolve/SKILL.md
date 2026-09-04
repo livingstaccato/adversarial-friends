@@ -3,7 +3,7 @@ name: resolve
 description: Use only through direct qualified selection ($adversarial-friends:resolve) or explicit /afriend routing to inspect unresolved claims or record a disposition for a named run claim. Require user-supplied disposition and evidence before writing.
 ---
 
-# Adversarial Friends resolution
+# afriend resolve
 
 `afriend resume <run-id>` is not a resolution request. Route it to the router
 and run `afriend run --resume <run-id>`; it does not require a disposition or

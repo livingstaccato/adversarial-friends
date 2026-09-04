@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2188-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2192-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -115,7 +115,7 @@ afriend run docs/my-design.md
 On the first review request in a host task, `/afriend` presents one compact
 preflight before dispatch:
 
-> About to start Adversarial Friends to review `<artifact>` in `<mode>` mode
+> About to start afriend to review `<artifact>` in `<mode>` mode
 > with `<profile>`. Scope: `<repository snapshot|document only>`. Friends:
 > `<name, provider, lens, role>`; external tools: `<denied|explicit grant>`.
 
