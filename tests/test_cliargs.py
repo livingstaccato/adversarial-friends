@@ -173,6 +173,13 @@ def test_profile_and_explicit_mode_are_parsed_separately():
     assert explicit._mode_explicit is True
 
 
+def test_run_repo_parses_as_an_explicit_worktree_root():
+    parser = cliargs.build_parser()
+
+    assert parser.parse_args(["run", "spec.md"]).repo is None
+    assert parser.parse_args(["run", "spec.md", "--repo", "/worktree"]).repo == "/worktree"
+
+
 def test_host_provider_parses_and_is_resumable():
     args = cliargs.build_parser().parse_args(["run", "spec.md", "--host-provider", "wrapper-agent"])
     assert args.host_provider == "wrapper-agent"

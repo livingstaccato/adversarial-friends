@@ -567,6 +567,10 @@ def validate_run_args(args: argparse.Namespace) -> tuple[argparse.Namespace, Pat
     judging round, a loop that halts per iteration into state this build
     cannot reconstruct, a mode nothing implements.
     """
+    if args.repo is not None and args.resume is not None:
+        raise UsageError(
+            "--repo cannot be used with --resume; the saved run fixes repository scope"
+        )
     if args.resume:
         # Deterministic configuration comes from the run directory. Security
         # grants are checked against this invocation inside _restore_args and

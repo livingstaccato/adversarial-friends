@@ -10,6 +10,7 @@ from runmeta_helpers import _resume_args, _resume_meta, _run_dir, load_fixture
 
 from adversarial_friends.adapters import FriendSpec
 from adversarial_friends.authority import DENY_ALL
+from adversarial_friends.cliargs import build_parser
 from adversarial_friends.commands.runmeta import (
     CURRENT_SCHEMA_VERSION,
     _base_meta,
@@ -299,10 +300,22 @@ def test_resume_keeps_the_saved_profile_without_reading_a_new_default(tmp_path, 
     )
     monkeypatch.setattr("adversarial_friends.commands.runmeta._restore_args", lambda _args: saved)
 
-    restored, _ = validate_run_args(SimpleNamespace(resume="saved-run"))
+    restored, _ = validate_run_args(SimpleNamespace(resume="saved-run", repo=None))
 
     assert restored.profile == "thorough"
     assert restored.mode == "loop"
+
+
+def test_resume_rejects_explicit_repo_before_restoring_saved_arguments():
+    args = build_parser().parse_args(
+        ["run", "harmless.md", "--resume", "saved-run", "--repo", "/worktree"]
+    )
+
+    with pytest.raises(
+        UsageError,
+        match="--repo cannot be used with --resume; the saved run fixes repository scope",
+    ):
+        validate_run_args(args)
 
 
 def _legacy_host_resume_meta(mode: str, *, frozen_host: bool) -> dict[str, object]:

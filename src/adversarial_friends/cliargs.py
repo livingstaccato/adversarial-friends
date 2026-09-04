@@ -243,6 +243,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--timeout", type=int, default=900, action=_ExplicitProfileSettingAction)
     run_p.add_argument("--out", default=None)
+    run_p.add_argument(
+        "--repo",
+        default=None,
+        metavar="PATH",
+        help="explicit Git worktree root whose code friends may inspect",
+    )
     # Progress is ON by default and goes to stderr. A crossexam is silent
     # for tens of minutes otherwise, and a silent run cannot be told from a
     # hung one -- measured here at 357s for a single friend in a single
