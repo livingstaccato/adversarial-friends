@@ -25,7 +25,6 @@ from ..ceilings import (
 from ..claimschema import schema_path
 from ..dispatch import failure_summary
 from ..errors import AfError, UsageError
-from ..events import read_first_event
 from ..failures import RepeatTracker
 from ..ledger import Claim
 from ..orchestrator import (
@@ -35,13 +34,9 @@ from ..orchestrator import (
 from ..reviewstate import ReviewState
 from ..rounds import partition_dispatchable
 from ..runstore import RunStore, default_root
-from ..secureio import secure_regular_exists
 from ..snapshots import (
-    EXPLICIT_REPOSITORY_SCOPE_AUDIT,
-    SnapshotIdentity,
     history_from_meta,
     record_snapshot,
-    repository_scope_mode as saved_repository_scope_mode,
     resume_frozen_artifact,
     select_snapshot,
 )
@@ -55,12 +50,12 @@ from .environment import (
     clock_offset,
     freeze_revision,
     reconcile_snapshot_scope,
-    resolve_run_repo,
     snapshot_scope_downgrade_note,
 )
 from .haltstate import loop_position, write_halt
 from .resume import resume_iteration
 from .runmeta import JUDGING_MODES, _base_meta, finish_run, loop_is_done, validate_run_args
+from .scopeanchor import _validate_repository_scope_anchor, resolve_repository_scope
 from .setup import prepare_run
 
 
@@ -76,43 +71,6 @@ def _read_artifact_text(path: Path) -> str:
 def _dispatch_error_detail(error: BaseException) -> str:
     """One bounded representation for fresh and resumed dispatch stops."""
     return f"{type(error).__name__}: {failure_summary(str(error))}"
-
-
-def _validate_repository_scope_anchor(store: RunStore, saved_mode: str | None) -> None:
-    events_path = store.events_path()
-    try:
-        events_exist = secure_regular_exists(events_path, root=store.root)
-    except OSError as exc:
-        raise UsageError(f"cannot resume: cannot inspect lifecycle events: {exc}") from exc
-    if not events_exist:
-        if saved_mode is None:
-            return
-        raise UsageError(
-            "cannot resume: declared repository_scope_mode has no lifecycle event anchor"
-        )
-    try:
-        started = read_first_event(events_path, root=store.root)
-    except UsageError as exc:
-        raise UsageError(f"cannot resume: {exc}") from exc
-    if started.type != "run_started":
-        raise UsageError(
-            "cannot resume: first lifecycle event must be run_started for a declared "
-            "repository_scope_mode"
-        )
-    if started.run_id != store.run_id:
-        raise UsageError("cannot resume: first lifecycle event run_id does not match the run")
-    anchored_mode = started.payload.get("repository_scope_mode")
-    if anchored_mode is None:
-        if saved_mode is None:
-            return
-        raise UsageError(
-            "cannot resume: original run_started event has no repository_scope_mode anchor"
-        )
-    if anchored_mode != saved_mode:
-        raise UsageError(
-            "cannot resume: saved repository_scope_mode disagrees with the original "
-            "run_started event"
-        )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -154,20 +112,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     authority_policy = setup.authority_policy
     store: RunStore | None = None
     try:
-        if resume_meta is not None:
-            # The recorded repository is part of the immutable identity. A
-            # resume must not silently follow a moved live artifact into a
-            # different repository and bless a replacement snapshot there.
-            repo_root = SnapshotIdentity.from_meta(resume_meta).repo_root
-            repository_scope_mode = saved_repository_scope_mode(resume_meta)
-            explicit_repo = repository_scope_mode == "explicit"
-            repository_scope_audit = (
-                EXPLICIT_REPOSITORY_SCOPE_AUDIT if repository_scope_mode == "explicit" else None
-            )
-        else:
-            repo_root, explicit_repo = resolve_run_repo(artifact, args.repo)
-            repository_scope_mode = "explicit" if explicit_repo else "automatic"
-            repository_scope_audit = EXPLICIT_REPOSITORY_SCOPE_AUDIT if explicit_repo else None
+        (
+            repo_root,
+            explicit_repo,
+            repository_scope_mode,
+            repository_scope_audit,
+        ) = resolve_repository_scope(resume_meta, artifact, args.repo)
         offset = clock_offset(downgrades)
 
         def now() -> float:
