@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify VERSION agrees with every plugin manifest's version field.
+"""Verify VERSION agrees with plugin manifests and compatibility projects.
 
 `VERSION` drives the package's version (via `[tool.setuptools.dynamic]` in
 pyproject.toml). The plugin manifests under `plugins/` duplicate that number
@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 VERSION_FILE = Path("VERSION")
 CODEX_MANIFEST = Path("plugins/afriend/.codex-plugin/plugin.json")
@@ -23,6 +24,13 @@ MANIFESTS = [
     Path("plugins/afriend/.claude-plugin/plugin.json"),
     CODEX_MANIFEST,
 ]
+COMPATIBILITY_PROJECTS = (
+    (
+        "adversarial-friends",
+        Path("compatibility-distributions/adversarial-friends/pyproject.toml"),
+    ),
+    ("afriends", Path("compatibility-distributions/afriends/pyproject.toml")),
+)
 
 
 def _manifest_versions(data: object, path: Path) -> list[tuple[str, str]]:
@@ -56,6 +64,31 @@ def cli_version() -> str:
     return __version__
 
 
+def _compatibility_mismatches(expected: str) -> list[str]:
+    """Return version/dependency errors for the metadata-only distributions."""
+    mismatches: list[str] = []
+    for name, project_file in COMPATIBILITY_PROJECTS:
+        if not project_file.is_file():
+            mismatches.append(f"  {project_file}: compatibility project not found")
+            continue
+        data = tomllib.loads(project_file.read_text())
+        project = data.get("project")
+        if not isinstance(project, dict):
+            mismatches.append(f"  {project_file}: missing [project] table")
+            continue
+        if project.get("name") != name:
+            mismatches.append(f"  {project_file}: name {project.get('name')!r} != {name!r}")
+        if project.get("version") != expected:
+            mismatches.append(f"  {project_file}: version {project.get('version')!r} != {expected!r}")
+        expected_dependencies = [f"afriend=={expected}"]
+        if project.get("dependencies") != expected_dependencies:
+            mismatches.append(
+                f"  {project_file}: dependencies {project.get('dependencies')!r} "
+                f"!= {expected_dependencies!r}"
+            )
+    return mismatches
+
+
 def main() -> int:
     """Return 1 if any manifest's version disagrees with VERSION, 0 if all match."""
     if not VERSION_FILE.is_file():
@@ -81,6 +114,8 @@ def main() -> int:
     actual_cli_version = cli_version()
     if actual_cli_version != expected:
         mismatches.append(f"  afriend.__version__: {actual_cli_version} != {expected}")
+
+    mismatches.extend(_compatibility_mismatches(expected))
 
     if not mismatches:
         return 0

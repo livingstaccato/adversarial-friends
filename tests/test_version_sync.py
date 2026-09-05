@@ -19,6 +19,21 @@ def _write_manifest(path: Path, version: str) -> None:
     path.write_text(json.dumps({"version": version}))
 
 
+def _write_compatibility_project(path: Path, name: str, version: str, dependency: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "[project]",
+                f'name = "{name}"',
+                f'version = "{version}"',
+                f'dependencies = ["{dependency}"]',
+                "",
+            ]
+        )
+    )
+
+
 def test_codex_manifest_allows_only_a_codex_cachebuster(monkeypatch, tmp_path):
     module = _module()
     version = tmp_path / "VERSION"
@@ -32,6 +47,7 @@ def test_codex_manifest_allows_only_a_codex_cachebuster(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "VERSION_FILE", version)
     monkeypatch.setattr(module, "MANIFESTS", [marketplace, claude, codex])
     monkeypatch.setattr(module, "CODEX_MANIFEST", codex, raising=False)
+    monkeypatch.setattr(module, "COMPATIBILITY_PROJECTS", (), raising=False)
     monkeypatch.setattr(module, "cli_version", lambda: "0.5.1", raising=False)
 
     assert module.main() == 0
@@ -52,6 +68,29 @@ def test_non_codex_manifest_rejects_a_codex_cachebuster(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "VERSION_FILE", version)
     monkeypatch.setattr(module, "MANIFESTS", [marketplace, claude, codex])
     monkeypatch.setattr(module, "CODEX_MANIFEST", codex, raising=False)
+    monkeypatch.setattr(module, "COMPATIBILITY_PROJECTS", (), raising=False)
     monkeypatch.setattr(module, "cli_version", lambda: "0.5.1", raising=False)
 
+    assert module.main() == 1
+
+
+def test_compatibility_projects_must_match_the_canonical_version(monkeypatch, tmp_path):
+    module = _module()
+    version = tmp_path / "VERSION"
+    version.write_text("0.6.1")
+    manifests = [tmp_path / f"manifest-{index}.json" for index in range(3)]
+    for manifest in manifests:
+        _write_manifest(manifest, "0.6.1")
+    old_name = tmp_path / "adversarial-friends.toml"
+    typo_name = tmp_path / "afriends.toml"
+    _write_compatibility_project(old_name, "adversarial-friends", "0.6.1", "afriend==0.6.1")
+    _write_compatibility_project(typo_name, "afriends", "0.6.1", "afriend==0.6.1")
+    monkeypatch.setattr(module, "VERSION_FILE", version)
+    monkeypatch.setattr(module, "MANIFESTS", manifests)
+    monkeypatch.setattr(module, "CODEX_MANIFEST", manifests[-1], raising=False)
+    monkeypatch.setattr(module, "COMPATIBILITY_PROJECTS", [("adversarial-friends", old_name), ("afriends", typo_name)], raising=False)
+    monkeypatch.setattr(module, "cli_version", lambda: "0.6.1", raising=False)
+
+    assert module.main() == 0
+    _write_compatibility_project(typo_name, "afriends", "0.6.1", "afriend==0.6.0")
     assert module.main() == 1

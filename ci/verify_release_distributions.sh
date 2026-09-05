@@ -7,8 +7,16 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 version="$(tr -d '[:space:]' < "$repo/VERSION")"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-dist="$scratch/dist"
-mkdir -p "$dist"
+if [ "$#" -eq 0 ]; then
+    dist="$scratch/dist"
+    mkdir -p "$dist"
+elif [ "$#" -eq 1 ]; then
+    mkdir -p "$1"
+    dist="$(cd "$1" && pwd)"
+else
+    echo "usage: $0 [artifact-directory]" >&2
+    exit 2
+fi
 
 uv build --wheel --sdist --out-dir "$dist" "$repo"
 uv build --wheel --sdist --out-dir "$dist" "$repo/compatibility-distributions/adversarial-friends"

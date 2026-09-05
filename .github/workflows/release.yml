@@ -46,32 +46,13 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Build wheel and source distribution
-        run: uv build --wheel --sdist
-
-      - name: Verify release distributions
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          wheel="dist/afriend-${version}-py3-none-any.whl"
-          sdist="dist/afriend-${version}.tar.gz"
-          test -f "${wheel}"
-          test -f "${sdist}"
-          dist_count="$(find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l | tr -d ' ')"
-          test "${dist_count}" -eq 2
-          uvx --from twine==7.0.0 twine check --strict dist/*
-
-          smoke_dir="$(mktemp -d)"
-          trap 'rm -rf "${smoke_dir}"' EXIT
-          uv venv "${smoke_dir}/venv"
-          uv pip install --python "${smoke_dir}/venv/bin/python" "${wheel}"
-          test "$("${smoke_dir}/venv/bin/afriend" --version)" = "afriend ${version}"
+      - name: Build and verify six release artifacts
+        run: ci/verify_release_distributions.sh dist
 
       # CI tests the checkout on this matrix too, but publishing must also
-      # prove the exact wheel imports and starts on every Python we claim to
-      # support. This blocks a tag before PyPI if an interpreter-specific
-      # import or console-entry-point failure escaped the default runtime.
+      # prove the exact canonical wheel imports and starts on every Python we
+      # claim to support. The compatibility packages are pure metadata and
+      # their exact resolution is verified by the prior release-artifact step.
       - name: Verify installed wheel on supported Python versions
         shell: bash
         run: |
@@ -112,10 +93,41 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      - name: Publish release distributions
+      - name: Stage afriend distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/afriend
+          cp dist/afriend-* publish/afriend/
+
+      - name: Publish afriend to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: dist/
+          packages-dir: publish/afriend/
+
+      - name: Stage adversarial-friends distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/adversarial-friends
+          cp dist/adversarial_friends-* publish/adversarial-friends/
+
+      - name: Publish adversarial-friends to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish/adversarial-friends/
+
+      - name: Stage afriends distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/afriends
+          cp dist/afriends-* publish/afriends/
+
+      - name: Publish afriends to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish/afriends/
 
   github-release:
     name: Create GitHub release

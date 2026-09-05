@@ -85,14 +85,14 @@ def test_release_build_validates_changelog_before_artifact_upload():
 def test_release_build_verifies_both_distributions_and_installed_cli():
     build = job_block("build")
 
-    assert "uv build --wheel --sdist" in build
-    assert "twine==7.0.0 twine check --strict dist/*" in build
-    assert "afriend-${version}-py3-none-any.whl" in build
-    assert "afriend-${version}.tar.gz" in build
-    assert "-name '*.whl'" in build
-    assert "-name '*.tar.gz'" in build
-    assert ' --version)" = "afriend ${version}"' in build
-    assert "/venv/bin/afriend" in build
+    assert "ci/verify_release_distributions.sh dist" in build
+    assert "Build and verify six release artifacts" in build
+
+
+def test_release_build_verifies_the_full_canonical_and_compatibility_set():
+    build = job_block("build")
+
+    assert "six release artifacts" in build
 
 
 def test_release_build_smokes_every_supported_python_before_publish():
@@ -121,6 +121,19 @@ def test_release_workflow_keeps_publish_identity_out_of_build_job():
     assert "pypa/gh-action-pypi-publish@" in publish
     assert "password:" not in publish
     assert "skip-existing:" not in publish
+
+
+def test_release_workflow_publishes_canonical_before_compatibility_distributions():
+    publish = job_block("publish")
+
+    canonical = publish.index("Publish afriend to PyPI")
+    former_name = publish.index("Publish adversarial-friends to PyPI")
+    typo_name = publish.index("Publish afriends to PyPI")
+    assert canonical < former_name < typo_name
+    assert publish.count("pypa/gh-action-pypi-publish@") == 3
+    assert "publish/afriend" in publish
+    assert "publish/adversarial-friends" in publish
+    assert "publish/afriends" in publish
 
 
 def test_github_release_uses_published_artifact_and_changelog():
