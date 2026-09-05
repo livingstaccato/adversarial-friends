@@ -1,4 +1,4 @@
-.PHONY: help install lint type-check test plugin-sync version-sync max-loc wheel-assets wheel-install diagrams plugin-sync-copy quality check act-dry act-ci
+.PHONY: help install lint type-check test plugin-sync version-sync max-loc wheel-assets wheel-install release-distributions diagrams plugin-sync-copy quality check act-dry act-ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -32,6 +32,9 @@ wheel-assets: ## Build the wheel and verify bundled assets
 wheel-install: ## Install the wheel outside the checkout and smoke-test afriend
 	ci/verify_wheel_install.sh
 
+release-distributions: ## Build and smoke-test canonical and compatibility distributions
+	ci/verify_release_distributions.sh
+
 # Materialize the composite skills projection, including deletions.
 plugin-sync-copy: ## Copy canonical skill projection into the plugin
 	python3 scripts/check_plugin_sync.py --copy
@@ -44,7 +47,7 @@ diagrams: ## Re-render docs/architecture/*.puml to PNG + SVG
 	plantuml -tpng docs/architecture/*.puml
 	plantuml -tsvg docs/architecture/*.puml
 
-quality: lint type-check max-loc plugin-sync version-sync wheel-assets wheel-install test ## Run all portable quality gates
+quality: lint type-check max-loc plugin-sync version-sync wheel-assets wheel-install release-distributions test ## Run all portable quality gates
 
 check: quality ## Alias for quality
 
