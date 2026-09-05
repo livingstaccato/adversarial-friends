@@ -109,10 +109,11 @@ def test_release_workflow_keeps_publish_identity_out_of_build_job():
     text = workflow_text()
     build = job_block("build")
     publish = job_block("publish")
+    alias = job_block("publish-afriends")
     release = job_block("github-release")
 
     assert "permissions:\n  contents: read" in text
-    assert text.count("id-token: write") == 1
+    assert text.count("id-token: write") == 2
     assert "id-token: write" not in build
     assert "id-token: write" not in release
     assert "needs: build" in publish
@@ -121,27 +122,33 @@ def test_release_workflow_keeps_publish_identity_out_of_build_job():
     assert "pypa/gh-action-pypi-publish@" in publish
     assert "password:" not in publish
     assert "skip-existing:" not in publish
+    assert "needs: publish" in alias
+    assert "name: pypi-afriends" in alias
+    assert "id-token: write" in alias
+    assert "password:" not in alias
+    assert "skip-existing:" not in alias
 
 
 def test_release_workflow_publishes_canonical_before_compatibility_distributions():
     publish = job_block("publish")
+    alias = job_block("publish-afriends")
 
     canonical = publish.index("Publish afriend to PyPI")
     former_name = publish.index("Publish adversarial-friends to PyPI")
-    typo_name = publish.index("Publish afriends to PyPI")
-    assert canonical < former_name < typo_name
-    assert publish.count("pypa/gh-action-pypi-publish@") == 3
+    assert canonical < former_name
+    assert publish.count("pypa/gh-action-pypi-publish@") == 2
+    assert alias.count("pypa/gh-action-pypi-publish@") == 1
     assert "publish/afriend" in publish
     assert "publish/adversarial-friends" in publish
-    assert "publish/afriends" in publish
+    assert "publish/afriends" in alias
 
 
 def test_github_release_uses_published_artifact_and_changelog():
     text = workflow_text()
     release = job_block("github-release")
 
-    assert text.count("name: python-package-distributions") == 3
-    assert "needs: publish" in release
+    assert text.count("name: python-package-distributions") == 4
+    assert "needs: publish-afriends" in release
     assert "contents: write" in release
     assert "CHANGELOG.md" in release
     assert "gh release create" in release

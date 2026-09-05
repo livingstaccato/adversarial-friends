@@ -117,6 +117,25 @@ jobs:
         with:
           packages-dir: publish/adversarial-friends/
 
+  publish-afriends:
+    name: Publish afriends compatibility distribution to PyPI
+    needs: publish
+    runs-on: ubuntu-latest
+    # PyPI requires a pending publisher's OIDC identity to be unique. This
+    # distinct environment reserves the typo alias without broadening the
+    # canonical publisher's authority.
+    environment:
+      name: pypi-afriends
+      url: https://pypi.org/p/afriends
+    permissions:
+      id-token: write
+    steps:
+      - name: Download release distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
       - name: Stage afriends distribution
         shell: bash
         run: |
@@ -131,7 +150,7 @@ jobs:
 
   github-release:
     name: Create GitHub release
-    needs: publish
+    needs: publish-afriends
     runs-on: ubuntu-latest
     permissions:
       contents: write
