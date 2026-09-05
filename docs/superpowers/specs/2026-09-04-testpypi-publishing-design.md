@@ -10,15 +10,16 @@ creating a GitHub release or changing the production PyPI path.
 
 `.github/workflows/test-release.yml` will run only when explicitly dispatched.
 Its build job will run the existing six-artifact verifier and upload the
-verified artifact bundle. A `testpypi` publishing job will upload `afriend`
-before `adversarial-friends`; a dependent `testpypi-afriends` job will upload
-`afriends`. Each publishing job has only `id-token: write` and passes
+verified artifact bundle. Three dependent publishing jobs will upload `afriend`,
+then `adversarial-friends`, then `afriends`. Each job has only `id-token: write`
+and exactly one invocation of the PyPA publishing action, passing
 `repository-url: https://test.pypi.org/legacy/` to the pinned PyPA publishing
 action.
 
-The separate `testpypi-afriends` GitHub environment gives the typo-reservation
-distribution a distinct OIDC identity, as required for pending trusted
-publishers. The workflow deliberately has no tag trigger, changelog
+The `testpypi-afriend`, `testpypi-adversarial-friends`, and `testpypi-afriends`
+GitHub environments give every pending trusted publisher a distinct OIDC
+identity. Separating the jobs also follows the PyPA action's documented limit
+of one publishing invocation per job. The workflow deliberately has no tag trigger, changelog
 requirement, main-ancestry requirement, or GitHub-release job: it is an index
 rehearsal, not a release.
 
@@ -28,8 +29,9 @@ rehearsal, not a release.
 - A given package version can be uploaded once to TestPyPI. That uniqueness is
   independent of PyPI: `0.6.1` is valid on TestPyPI if it is absent there.
 - TestPyPI trusted publishers use repository `livingstaccato/afriend`, workflow
-  `test-release.yml`, and environments `testpypi` (`afriend` and
-  `adversarial-friends`) or `testpypi-afriends` (`afriends`).
+  `test-release.yml`, and environments `testpypi-afriend` (`afriend`),
+  `testpypi-adversarial-friends` (`adversarial-friends`), and
+  `testpypi-afriends` (`afriends`).
 - A failed build prevents every upload; a failed canonical publication prevents
   the typo-alias publication.
 

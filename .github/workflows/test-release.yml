@@ -1,0 +1,120 @@
+name: TestPyPI rehearsal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the selected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.13"
+
+      - name: Build and verify six release artifacts
+        run: ci/verify_release_distributions.sh dist
+
+      - name: Store TestPyPI distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-afriend:
+    name: Publish afriend to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi-afriend
+      url: https://test.pypi.org/p/afriend
+    permissions:
+      id-token: write
+    steps:
+      - name: Download TestPyPI distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Stage afriend distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/afriend
+          cp dist/afriend-* publish/afriend/
+
+      - name: Publish afriend to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish/afriend/
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-adversarial-friends:
+    name: Publish adversarial-friends to TestPyPI
+    needs: publish-afriend
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi-adversarial-friends
+      url: https://test.pypi.org/p/adversarial-friends
+    permissions:
+      id-token: write
+    steps:
+      - name: Download TestPyPI distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Stage adversarial-friends distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/adversarial-friends
+          cp dist/adversarial_friends-* publish/adversarial-friends/
+
+      - name: Publish adversarial-friends to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish/adversarial-friends/
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-afriends:
+    name: Publish afriends compatibility distribution to TestPyPI
+    needs: publish-adversarial-friends
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi-afriends
+      url: https://test.pypi.org/p/afriends
+    permissions:
+      id-token: write
+    steps:
+      - name: Download TestPyPI distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Stage afriends distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p publish/afriends
+          cp dist/afriends-* publish/afriends/
+
+      - name: Publish afriends to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish/afriends/
+          repository-url: https://test.pypi.org/legacy/

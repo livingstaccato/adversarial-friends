@@ -4,12 +4,17 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+TEST_WORKFLOW = ROOT / ".github" / "workflows" / "test-release.yml"
 CHANGELOG = ROOT / "CHANGELOG.md"
 VERSION = ROOT / "VERSION"
 
 
 def workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8") if WORKFLOW.is_file() else ""
+
+
+def read_test_workflow() -> str:
+    return TEST_WORKFLOW.read_text(encoding="utf-8") if TEST_WORKFLOW.is_file() else ""
 
 
 def top_level_block(name: str) -> str:
@@ -49,6 +54,26 @@ def job_block(name: str) -> str:
 
 def test_release_workflow_is_triggered_only_by_version_tags():
     assert top_level_block("on") == 'on:\n  push:\n    tags: ["v*"]'
+
+
+def test_test_release_workflow_is_manual_and_testpypi_only():
+    text = read_test_workflow()
+
+    assert "workflow_dispatch:" in text
+    assert "Build and verify six release artifacts" in text
+    assert text.count("repository-url: https://test.pypi.org/legacy/") == 3
+    assert "name: testpypi-afriend" in text
+    assert "name: testpypi-adversarial-friends" in text
+    assert "name: testpypi-afriends" in text
+    assert text.count("id-token: write") == 3
+    assert "publish-afriend:" in text
+    assert "publish-adversarial-friends:" in text
+    assert "publish-afriends:" in text
+    assert "needs: publish-afriend" in text
+    assert "needs: publish-adversarial-friends" in text
+    assert text.count("pypa/gh-action-pypi-publish@") == 3
+    assert "password:" not in text
+    assert "github-release:" not in text
 
 
 def test_release_workflow_rejects_mismatched_or_unmerged_tags():

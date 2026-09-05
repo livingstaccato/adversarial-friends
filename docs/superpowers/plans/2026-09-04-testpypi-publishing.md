@@ -4,7 +4,7 @@
 
 **Goal:** Add a manual, OIDC-only TestPyPI rehearsal workflow for all three public distribution names.
 
-**Architecture:** A new top-level GitHub Actions workflow builds the exact same verified six-artifact bundle as production. Two least-privilege publishing jobs stage each distribution separately and upload to TestPyPI in canonical-first order; it has no GitHub release job.
+**Architecture:** A new top-level GitHub Actions workflow builds the exact same verified six-artifact bundle as production. Three serial, least-privilege publishing jobs stage and upload one distribution each in canonical-first order; this follows PyPA's one-publisher-action-per-job limitation and has no GitHub release job.
 
 **Tech Stack:** GitHub Actions, PyPA gh-action-pypi-publish, pytest.
 
@@ -18,7 +18,7 @@
 
 - [ ] **Step 1: Write the failing test**
 
-Add a `TEST_WORKFLOW` reader and a `test_test_release_workflow_is_manual_and_testpypi_only` test that requires `workflow_dispatch`, the `Build and verify six release artifacts` step, `repository-url: https://test.pypi.org/legacy/`, `testpypi`, `testpypi-afriends`, exactly two `id-token: write` permissions, and no `github-release` job.
+Add a `TEST_WORKFLOW` reader and a `test_test_release_workflow_is_manual_and_testpypi_only` test that requires `workflow_dispatch`, the `Build and verify six release artifacts` step, `repository-url: https://test.pypi.org/legacy/`, all three distinct TestPyPI environments, exactly three `id-token: write` permissions, and no `github-release` job.
 
 - [ ] **Step 2: Run the focused test to verify it fails**
 
@@ -28,7 +28,7 @@ Expected: FAIL because `.github/workflows/test-release.yml` does not exist.
 
 - [ ] **Step 3: Implement the minimal workflow**
 
-Create a manual `test-release.yml` with a build job that checks out the selected revision, installs uv, runs `ci/verify_release_distributions.sh dist`, and stores `python-package-distributions`. Add a `publish` job in `testpypi` that stages and publishes `afriend` then `adversarial-friends`; add a `publish-afriends` job in `testpypi-afriends` that depends on `publish` and publishes `afriends`. Pin every action to a 40-character SHA and provide `repository-url: https://test.pypi.org/legacy/` to every publishing action.
+Create a manual `test-release.yml` with a build job that checks out the selected revision, installs uv, runs `ci/verify_release_distributions.sh dist`, and stores `python-package-distributions`. Add one serial publishing job per distribution: `publish-afriend` in `testpypi-afriend`, `publish-adversarial-friends` in `testpypi-adversarial-friends`, and `publish-afriends` in `testpypi-afriends`. Each job stages and publishes exactly one distribution. Pin every action to a 40-character SHA and provide `repository-url: https://test.pypi.org/legacy/` to every publishing action.
 
 - [ ] **Step 4: Run the focused test to verify it passes**
 
@@ -66,8 +66,8 @@ In the authenticated TestPyPI session, add pending publishers:
 
 | Project | Repository | Workflow | Environment |
 | --- | --- | --- | --- |
-| `afriend` | `livingstaccato/afriend` | `test-release.yml` | `testpypi` |
-| `adversarial-friends` | `livingstaccato/afriend` | `test-release.yml` | `testpypi` |
+| `afriend` | `livingstaccato/afriend` | `test-release.yml` | `testpypi-afriend` |
+| `adversarial-friends` | `livingstaccato/afriend` | `test-release.yml` | `testpypi-adversarial-friends` |
 | `afriends` | `livingstaccato/afriend` | `test-release.yml` | `testpypi-afriends` |
 
 - [ ] **Step 4: Inspect the resulting TestPyPI publisher records**
