@@ -88,7 +88,12 @@ def test_compatibility_projects_must_match_the_canonical_version(monkeypatch, tm
     monkeypatch.setattr(module, "VERSION_FILE", version)
     monkeypatch.setattr(module, "MANIFESTS", manifests)
     monkeypatch.setattr(module, "CODEX_MANIFEST", manifests[-1], raising=False)
-    monkeypatch.setattr(module, "COMPATIBILITY_PROJECTS", [("adversarial-friends", old_name), ("afriends", typo_name)], raising=False)
+    monkeypatch.setattr(
+        module,
+        "COMPATIBILITY_PROJECTS",
+        [("adversarial-friends", old_name), ("afriends", typo_name)],
+        raising=False,
+    )
     monkeypatch.setattr(module, "cli_version", lambda: "0.6.1", raising=False)
 
     assert module.main() == 0

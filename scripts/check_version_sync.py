@@ -79,7 +79,9 @@ def _compatibility_mismatches(expected: str) -> list[str]:
         if project.get("name") != name:
             mismatches.append(f"  {project_file}: name {project.get('name')!r} != {name!r}")
         if project.get("version") != expected:
-            mismatches.append(f"  {project_file}: version {project.get('version')!r} != {expected!r}")
+            mismatches.append(
+                f"  {project_file}: version {project.get('version')!r} != {expected!r}"
+            )
         expected_dependencies = [f"afriend=={expected}"]
         if project.get("dependencies") != expected_dependencies:
             mismatches.append(
