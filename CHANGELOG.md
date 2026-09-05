@@ -1,9 +1,23 @@
 # Changelog
 
+## 0.6.1
+
+`afriend` is the canonical project identity on GitHub and PyPI.
+
+- Canonical repository: `livingstaccato/afriend`.
+- Canonical distribution, Python import, command, and Codex/Claude plugin:
+  `afriend`.
+- `adversarial-friends` and `afriends` are metadata-only PyPI distributions
+  that install exactly the matching `afriend` release. They provide no extra
+  import, command, runtime code, or plugin payload.
+- The release workflow builds, inspects, isolated-installs, and publishes all
+  three distributions in canonical-first order.
+
 ## 0.6.0
 
-The package and product are now named `afriend`. The GitHub repository remains
-`livingstaccato/adversarial-friends` so existing source URLs stay stable.
+The package and product were renamed to `afriend`. This source tag was not
+published to PyPI because the new canonical project was not yet configured for
+trusted publishing.
 
 ### Clean package identity
 
@@ -18,8 +32,8 @@ The package and product are now named `afriend`. The GitHub repository remains
 
 - Updated wheel checks, isolated-install smoke tests, release artifact names,
   current documentation, and architecture diagrams for the new package.
-- Retained the repository URLs and existing image asset filenames, which are
-  repository infrastructure rather than package identifiers.
+- The successor release moves first-party repository URLs and image asset names
+  to the canonical identity.
 
 ## 0.5.1
 

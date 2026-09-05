@@ -1,4 +1,4 @@
-![afriend](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/images/brand/adversarial-friends-banner.png)
+![afriend](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/images/brand/afriend-banner.png)
 
 # afriend
 
@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-none-brightgreen)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2192-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2198-brightgreen)](tests/)
 
 It automates a workflow you may already do by hand: run a review, paste the
 findings into a different model, ask whether they hold up, carry the argument
@@ -64,16 +64,20 @@ require two independent non-host friends. The runner itself is **stdlib-only**
 uv tool install afriend
 ```
 
+`afriend` is the canonical distribution. `adversarial-friends` and `afriends`
+are compatibility/reservation distributions that install the matching
+`afriend` release; they add no alternate import or command.
+
 <details>
 <summary>Other install methods</summary>
 
 ```bash
 # From git, for a version that is not yet released
-uv tool install git+https://github.com/livingstaccato/adversarial-friends
+uv tool install git+https://github.com/livingstaccato/afriend
 
 # From a local checkout
-git clone https://github.com/livingstaccato/adversarial-friends
-cd adversarial-friends
+git clone https://github.com/livingstaccato/afriend
+cd afriend
 uv tool install .
 
 # Without installing at all
@@ -241,7 +245,7 @@ stream remain inspectable from `run.json`, `claims.jsonl`, and `report.md`.
 
 ## ⚙️ How it works
 
-![module architecture](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/components.png)
+![module architecture](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/architecture/components.png)
 
 Every friend gets its **own** prompt built from its **own** lens, runs in its
 **own** isolated directory, in its **own** process group:
@@ -303,7 +307,7 @@ same-user filesystem read access.
 <details>
 <summary>Full run flow, step by step</summary>
 
-![run flow](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/run-flow.png)
+![run flow](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/architecture/run-flow.png)
 
 </details>
 
@@ -312,7 +316,7 @@ same-user filesystem read access.
 Two friends independently reaching the same conclusion is the strongest signal
 this tool produces, so deduplication is built to never destroy it:
 
-![claim lifecycle](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/claim-lifecycle.png)
+![claim lifecycle](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/architecture/claim-lifecycle.png)
 
 Dedup is **deliberately** exact-match — whitespace and case only. Two friends
 describing one defect in different words produce two claims, which costs a
@@ -324,14 +328,14 @@ Every claim `--mode crossexam` produces ends in one of eight states. Two of
 them — `deadlocked` and `settled-upheld` — deliberately need a human, and the
 report says so rather than quietly resolving them.
 
-![crossexam states](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/crossexam-states.png)
+![crossexam states](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/architecture/crossexam-states.png)
 
 ### The gate loop
 
 `--mode gate` is the one that fails a build, and clearing it is a
 back-and-forth rather than a single command:
 
-![gate workflow](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/architecture/gate-workflow.png)
+![gate workflow](https://raw.githubusercontent.com/livingstaccato/afriend/main/docs/architecture/gate-workflow.png)
 
 ---
 

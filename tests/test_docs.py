@@ -41,13 +41,13 @@ def test_modes_docs_explain_zero_response_failure_summary_output():
 
 def test_all_brand_sizes_exist():
     brand = REPO / "docs" / "images" / "brand"
-    banner = brand / "adversarial-friends-banner.png"
+    banner = brand / "afriend-banner.png"
     assert banner.stat().st_size > 100_000
     # Ceiling: a full-resolution PNG of this illustration is several MB, which
     # does not belong in git history. Regenerate at 1024 if this trips.
     assert banner.stat().st_size < 4_000_000, "banner too large for the repo"
     for size in (128, 256, 512):
-        derived = brand / f"adversarial-friends-logo-{size}.png"
+        derived = brand / f"afriend-logo-{size}.png"
         assert derived.exists(), derived
         assert derived.stat().st_size > 0
 
@@ -58,7 +58,7 @@ def test_derived_sizes_have_the_right_dimensions():
 
     brand = REPO / "docs" / "images" / "brand"
     for size in (128, 256, 512):
-        data = (brand / f"adversarial-friends-logo-{size}.png").read_bytes()[:24]
+        data = (brand / f"afriend-logo-{size}.png").read_bytes()[:24]
         assert data[:8] == b"\x89PNG\r\n\x1a\n"
         width, height = struct.unpack(">II", data[16:24])
         assert (width, height) == (size, size)
@@ -88,12 +88,12 @@ def test_readme_repo_hosted_images_use_raw_githubusercontent():
     repo_hosted = [
         t
         for t in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
-        if "adversarial-friends" in t and "shields.io" not in t
+        if "livingstaccato/afriend" in t and "shields.io" not in t
     ]
     assert repo_hosted, "expected the README to embed repo-hosted images"
     for target in repo_hosted:
         assert target.startswith(
-            "https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/"
+            "https://raw.githubusercontent.com/livingstaccato/afriend/main/"
         ), target
 
 
@@ -103,11 +103,29 @@ def test_readme_embedded_diagrams_exist_on_disk():
     import re
 
     text = REPO.joinpath("README.md").read_text()
-    prefix = "https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/"
+    prefix = "https://raw.githubusercontent.com/livingstaccato/afriend/main/"
     for target in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text):
         if not target.startswith(prefix):
             continue
         assert (REPO / target[len(prefix) :]).exists(), target
+
+
+def test_current_first_party_metadata_uses_the_canonical_repository() -> None:
+    current_files = [
+        REPO / "README.md",
+        REPO / "AGENTS.md",
+        REPO / "pyproject.toml",
+        REPO / ".agents/plugins/marketplace.json",
+        REPO / "plugins/.claude-plugin/marketplace.json",
+        REPO / "plugins/afriend/.claude-plugin/plugin.json",
+        REPO / "plugins/afriend/.codex-plugin/plugin.json",
+        REPO / "src/afriend/assets/entrypoints/afriend/SKILL.md",
+    ]
+    for path in current_files:
+        text = path.read_text(encoding="utf-8")
+        assert "livingstaccato/adversarial-friends" not in text, path
+        if "github.com/livingstaccato" in text:
+            assert "github.com/livingstaccato/afriend" in text, path
 
 
 def test_every_puml_source_has_committed_png_and_svg_renders():

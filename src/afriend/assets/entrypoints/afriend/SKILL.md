@@ -90,7 +90,7 @@ afriend run <artifact> --mode loop        # repeat until nothing new appears
 This skill drives the `afriend` console script, which comes from the
 `afriend` Python package. If `afriend` is not on `PATH`, the
 skill cannot run — install it with
-`uv tool install git+https://github.com/livingstaccato/adversarial-friends`
+`uv tool install git+https://github.com/livingstaccato/afriend`
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
 
 The CLI never runs automatically by itself. A plugin packages capabilities;

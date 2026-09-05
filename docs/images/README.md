@@ -6,10 +6,10 @@ docs.
 ```
 docs/images/
 └── brand/
-    ├── adversarial-friends-banner.png      (1024×1024, branded mark)
-    ├── adversarial-friends-logo-128.png    (derived size)
-    ├── adversarial-friends-logo-256.png
-    └── adversarial-friends-logo-512.png
+    ├── afriend-banner.png      (1024×1024, branded mark)
+    ├── afriend-logo-128.png    (derived size)
+    ├── afriend-logo-256.png
+    └── afriend-logo-512.png
 ```
 
 The banner is the source of truth; the numbered sizes are derived from it with
@@ -30,7 +30,7 @@ enforces this.
 ```bash
 for size in 128 256 512; do
   sips -s format png -z "$size" "$size" \
-       docs/images/brand/adversarial-friends-banner.png \
-       --out "docs/images/brand/adversarial-friends-logo-${size}.png"
+       docs/images/brand/afriend-banner.png \
+       --out "docs/images/brand/afriend-logo-${size}.png"
 done
 ```

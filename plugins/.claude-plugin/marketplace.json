@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "afriend",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory",
   "owner": {
     "name": "livingstaccato"
@@ -10,7 +10,7 @@
     {
       "name": "afriend",
       "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "source": "./afriend",
       "category": "development"
     }

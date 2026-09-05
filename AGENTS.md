@@ -49,7 +49,8 @@ Two gates are especially easy to trip:
 
 - **`plugin-sync`** fails if the canonical entrypoint/runtime projection and
   the plugin differ. After editing `assets/`, run `make plugin-sync-copy`.
-- **`version-sync`** fails if `VERSION` disagrees with the `version` field in
-  any plugin manifest under `plugins/`. Bump all of them together.
+- **`version-sync`** fails if `VERSION` disagrees with plugin metadata or an
+  exact dependency/version in either compatibility distribution. Bump the
+  canonical package, plugins, and both compatibility projects together.
 
 `mypy --strict` runs against `src/` only; `tests/` is deliberately exempt.

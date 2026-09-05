@@ -1,13 +1,13 @@
 {
   "name": "afriend",
-  "version": "0.6.0+codex.20260904235900",
+  "version": "0.6.1+codex.20260904235900",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory.",
   "author": {
     "name": "Tim",
     "url": "https://github.com/livingstaccato"
   },
-  "homepage": "https://github.com/livingstaccato/adversarial-friends",
-  "repository": "https://github.com/livingstaccato/adversarial-friends",
+  "homepage": "https://github.com/livingstaccato/afriend",
+  "repository": "https://github.com/livingstaccato/afriend",
   "license": "MIT",
   "keywords": [
     "review",
@@ -25,7 +25,7 @@
       "Interactive",
       "Write"
     ],
-    "websiteURL": "https://github.com/livingstaccato/adversarial-friends",
+    "websiteURL": "https://github.com/livingstaccato/afriend",
     "defaultPrompt": [
       "/afriend README.md",
       "$afriend:review README.md",

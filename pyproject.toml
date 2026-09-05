@@ -41,8 +41,8 @@ dependencies = []
 afriend = "afriend.cli:main"
 
 [project.urls]
-Repository = "https://github.com/livingstaccato/adversarial-friends"
-Issues = "https://github.com/livingstaccato/adversarial-friends/issues"
+Repository = "https://github.com/livingstaccato/afriend"
+Issues = "https://github.com/livingstaccato/afriend/issues"
 
 [tool.setuptools]
 include-package-data = true
