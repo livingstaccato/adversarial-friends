@@ -1,6 +1,6 @@
 {
   "name": "afriend",
-  "version": "0.6.1+codex.20260904235900",
+  "version": "0.6.1+codex.20260905041716",
   "description": "Cross-examine artifacts with agent CLIs; Codex host self-review is advisory.",
   "author": {
     "name": "Tim",
