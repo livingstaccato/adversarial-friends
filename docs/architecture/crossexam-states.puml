@@ -1,6 +1,6 @@
 @startuml crossexam-states
 ' What a claim's state can become in --mode crossexam.
-' Traced against src/adversarial_friends/verdicts.py (state_for,
+' Traced against src/afriend/verdicts.py (state_for,
 ' should_discard, build_successor) and spec §7.1-§7.2.
 
 skinparam backgroundColor #FFFFFF

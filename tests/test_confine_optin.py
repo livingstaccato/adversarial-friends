@@ -16,8 +16,8 @@ left out deliberately; provoking its re-authentication has cost a login before.
 
 from pathlib import Path
 
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend.adapters import load_adapters
+from afriend.paths import ADAPTER_DIR
 
 
 def _registry():
@@ -49,7 +49,7 @@ def test_opting_in_is_off_by_default_for_a_new_adapter():
     CLI actually runs under a sandbox."""
     import tomllib
 
-    from adversarial_friends.adapters import load_adapters
+    from afriend.adapters import load_adapters
 
     directory = Path(__file__).parent / "_fresh_adapter"
     directory.mkdir(exist_ok=True)

@@ -2,9 +2,9 @@
 
 import pytest
 
-from adversarial_friends import presets
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend import presets
+from afriend.adapters import load_adapters
+from afriend.paths import ADAPTER_DIR
 
 
 @pytest.fixture

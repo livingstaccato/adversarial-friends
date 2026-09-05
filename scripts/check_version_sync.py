@@ -48,6 +48,14 @@ def _matches_expected_version(path: Path, version: str, expected: str) -> bool:
     return re.fullmatch(rf"{re.escape(expected)}\+codex\.[A-Za-z0-9._-]+", version) is not None
 
 
+def cli_version() -> str:
+    """Read the source CLI version, keeping the checker testable in isolation."""
+    sys.path.insert(0, str(Path("src")))
+    from afriend import __version__
+
+    return __version__
+
+
 def main() -> int:
     """Return 1 if any manifest's version disagrees with VERSION, 0 if all match."""
     if not VERSION_FILE.is_file():
@@ -66,15 +74,13 @@ def main() -> int:
                 mismatches.append(f"  {label}: {version} != {expected}")
 
     # The version the CLI reports. It was hardcoded in
-    # src/adversarial_friends/__init__.py and drifted two releases behind
+    # src/afriend/__init__.py and drifted two releases behind
     # VERSION before anything noticed -- `afriend --version` printed 0.1.0
     # from a 0.1.2 wheel. It is derived now, and checked here so a future
     # spelling that reintroduces a literal cannot go unnoticed.
-    sys.path.insert(0, str(Path("src")))
-    from adversarial_friends import __version__ as cli_version
-
-    if cli_version != expected:
-        mismatches.append(f"  adversarial_friends.__version__: {cli_version} != {expected}")
+    actual_cli_version = cli_version()
+    if actual_cli_version != expected:
+        mismatches.append(f"  afriend.__version__: {actual_cli_version} != {expected}")
 
     if not mismatches:
         return 0

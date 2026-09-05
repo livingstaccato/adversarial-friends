@@ -1,6 +1,6 @@
 @startuml run-flow
 ' Activity flow of `afriend run --mode report`, traced against
-' src/adversarial_friends/commands/run.py.
+' src/afriend/commands/run.py.
 ' Orange = a recorded downgrade (visible in run.json and report.md).
 
 skinparam backgroundColor #FFFFFF

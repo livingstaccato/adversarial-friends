@@ -7,7 +7,7 @@ skinparam rectangle {
   BorderColor #1565C0
   BackgroundColor #E3F2FD
 }
-title Adversarial Friends skill routing
+title afriend skill routing
 
 rectangle "/afriend\nsole router" as router
 rectangle "session preflight\nfirst review or new loop iteration" as preflight #FFF8E1

@@ -1,14 +1,14 @@
 import pytest
 
-from adversarial_friends import adapters, roster
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.errors import NoFriendsError, UsageError
-from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+from afriend import adapters, roster
+from afriend.cliargs import build_parser
+from afriend.errors import NoFriendsError, UsageError
+from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
 ADAPTER_DIR = (
     __import__("pathlib").Path(__file__).resolve().parents[1]
     / "src"
-    / "adversarial_friends"
+    / "afriend"
     / "assets"
     / "adapters"
 )

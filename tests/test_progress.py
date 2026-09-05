@@ -9,9 +9,9 @@ the one about the stream it must never touch.
 import io
 import time
 
-from adversarial_friends import progress
-from adversarial_friends.events import read_events
-from adversarial_friends.runstore import RunStore
+from afriend import progress
+from afriend.events import read_events
+from afriend.runstore import RunStore
 
 
 def _lines(stream: io.StringIO) -> list[str]:

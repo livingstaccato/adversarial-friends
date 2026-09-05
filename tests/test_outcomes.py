@@ -9,8 +9,8 @@ from types import MappingProxyType
 
 import pytest
 
-from adversarial_friends import outcomes as outcomes_module
-from adversarial_friends.outcomes import (
+from afriend import outcomes as outcomes_module
+from afriend.outcomes import (
     StopReason,
     terminal_outcome,
 )

@@ -5,18 +5,18 @@ import threading
 
 import pytest
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Adapter, Capability, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.commands.checkpoint import normalize_friend_rows
-from adversarial_friends.errors import UsageError
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.report import render
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.rounds import persist_result
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
-from adversarial_friends.workspaceassets import (
+from afriend import rounds as rounds_mod
+from afriend.adapters import Adapter, Capability, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.commands.checkpoint import normalize_friend_rows
+from afriend.errors import UsageError
+from afriend.normalize import NormalizeResult
+from afriend.report import render
+from afriend.reviewstate import ReviewState
+from afriend.rounds import persist_result
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
+from afriend.workspaceassets import (
     WorkspaceAsset,
     WorkspaceAssetAudit,
     WorkspaceAssetStagingError,
@@ -471,7 +471,7 @@ def test_staging_failure_refuses_only_affected_friend_before_dispatch_and_cleans
         return spec, Capability(False, True, "none"), _success(), ExternalToolPolicy.DENY
 
     monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
-    monkeypatch.setattr("adversarial_friends.workspaceassets.assets_root", lambda: source_root)
+    monkeypatch.setattr("afriend.workspaceassets.assets_root", lambda: source_root)
 
     batch = rounds_mod.dispatch_round(
         specs,
@@ -536,7 +536,7 @@ def test_successful_asset_is_staged_before_dispatch_audited_and_cleaned(monkeypa
         )
 
     monkeypatch.setattr(rounds_mod, "_dispatch", fake_dispatch)
-    monkeypatch.setattr("adversarial_friends.workspaceassets.assets_root", lambda: source_root)
+    monkeypatch.setattr("afriend.workspaceassets.assets_root", lambda: source_root)
 
     batch = rounds_mod.dispatch_round(
         [spec],
@@ -574,7 +574,7 @@ def test_staged_audit_survives_an_unexpected_dispatch_failure(monkeypatch, tmp_p
         raise RuntimeError("dispatch broke")
 
     monkeypatch.setattr(rounds_mod, "_dispatch", broken_dispatch)
-    monkeypatch.setattr("adversarial_friends.workspaceassets.assets_root", lambda: source_root)
+    monkeypatch.setattr("afriend.workspaceassets.assets_root", lambda: source_root)
 
     batch = rounds_mod.dispatch_round(
         [spec],

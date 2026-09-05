@@ -10,9 +10,9 @@ import json
 
 from e2e_helpers import run_af
 
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.ceilings import Budget, within_deadline
-from adversarial_friends.dispatch import KILL_GRACE_S
+from afriend.adapters import FriendSpec
+from afriend.ceilings import Budget, within_deadline
+from afriend.dispatch import KILL_GRACE_S
 
 
 def _spec(timeout):

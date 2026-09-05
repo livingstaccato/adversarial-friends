@@ -13,11 +13,11 @@ the operator has, which is worse than the gap it closes.
 
 import json
 
-from adversarial_friends import failures
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.normalize import normalize
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.spawn import SpawnResult
+from afriend import failures
+from afriend.adapters import load_adapters
+from afriend.normalize import normalize
+from afriend.paths import ADAPTER_DIR
+from afriend.spawn import SpawnResult
 
 # Verbatim shape from the capture, trimmed to the fields that matter.
 CAPTURED = json.dumps(

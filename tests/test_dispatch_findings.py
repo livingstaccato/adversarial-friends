@@ -5,10 +5,10 @@ import time
 
 import pytest
 
-from adversarial_friends import http_transport, trust
-from adversarial_friends.authority import ExternalToolPolicy, enforce
-from adversarial_friends.dispatch import _FAKE_CAPABILITY, _UNKNOWN_CAPABILITY
-from adversarial_friends.errors import UsageError
+from afriend import http_transport, trust
+from afriend.authority import ExternalToolPolicy, enforce
+from afriend.dispatch import _FAKE_CAPABILITY, _UNKNOWN_CAPABILITY
+from afriend.errors import UsageError
 
 
 def test_denied_values_are_refused_when_they_arrive_via_extra_args():
@@ -53,8 +53,8 @@ def test_an_http_friend_stops_when_the_run_is_aborted(tmp_path):
     """
     import dataclasses
 
-    from adversarial_friends.adapters import FriendSpec, load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import FriendSpec, load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     # The shipped adapter, pointed at a port nothing answers on, so this
     # exercises the real HTTP transport rather than a stand-in.
@@ -92,7 +92,7 @@ def test_a_bare_url_in_stderr_is_not_left_clickable():
     reach it. A friend's stderr is attacker-influenced text: the artifact
     under review steers what the CLI prints.
     """
-    from adversarial_friends.dispatch import _stderr_tail
+    from afriend.dispatch import _stderr_tail
 
     tail = _stderr_tail("auth failed, see https://evil.example/steal for help")
     assert "https://" not in tail
@@ -101,20 +101,20 @@ def test_a_bare_url_in_stderr_is_not_left_clickable():
 
 
 def test_a_www_autolink_is_defanged_too():
-    from adversarial_friends.dispatch import _stderr_tail
+    from afriend.dispatch import _stderr_tail
 
     assert "www.evil.example" not in _stderr_tail("contact www.evil.example now")
 
 
 def test_strikethrough_delimiters_are_stripped():
     """`~~` was outside the strip set, so it still rendered."""
-    from adversarial_friends.dispatch import _stderr_tail
+    from afriend.dispatch import _stderr_tail
 
     assert "~" not in _stderr_tail("token ~~expired~~ actually fine")
 
 
 def test_an_ordinary_diagnostic_survives_readable():
-    from adversarial_friends.dispatch import _stderr_tail
+    from afriend.dispatch import _stderr_tail
 
     tail = _stderr_tail("Error: model 'qwen3' not found; run 'ollama pull qwen3'")
     assert "model 'qwen3' not found" in tail
@@ -127,8 +127,8 @@ def test_synthetic_capabilities_do_not_claim_enforcement():
 
 
 def test_http_capability_comes_from_the_actual_authority_decision(tmp_path):
-    from adversarial_friends.adapters import load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     adapter = load_adapters(ADAPTER_DIR)["ollama"]
     denied = enforce(adapter, ExternalToolPolicy.DENY)

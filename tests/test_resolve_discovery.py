@@ -7,10 +7,10 @@ import shlex
 
 import pytest
 
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands.resolve import cmd_resolve
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import MAX_LEDGER_LINE_BYTES, Claim, Ledger, Resolution
+from afriend.cliargs import build_parser
+from afriend.commands.resolve import cmd_resolve
+from afriend.errors import UsageError
+from afriend.ledger import MAX_LEDGER_LINE_BYTES, Claim, Ledger, Resolution
 
 
 def _claim(claim_id: str, severity: str, *, location: str = "src/app.py:12") -> Claim:

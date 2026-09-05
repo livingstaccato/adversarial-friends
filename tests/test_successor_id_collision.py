@@ -14,8 +14,8 @@ Fixed where the id is chosen rather than by asking the caller to preserve
 state it discards on purpose.
 """
 
-from adversarial_friends import verdicts as vd
-from adversarial_friends.ledger import Claim, Verdict
+from afriend import verdicts as vd
+from afriend.ledger import Claim, Verdict
 
 
 def _claim(cid: str, text: str = "the original") -> Claim:

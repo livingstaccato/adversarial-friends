@@ -10,9 +10,9 @@ able to forge the slice around itself.
 
 import json
 
-from adversarial_friends import judgeprompt
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.ledger import Claim, Verdict
+from afriend import judgeprompt
+from afriend.adapters import FriendSpec
+from afriend.ledger import Claim, Verdict
 
 
 def claim(cid="c-0001@1", **overrides):
@@ -216,7 +216,7 @@ def test_a_doc_scope_judge_is_told_it_has_nothing_else():
 
 
 def test_a_critique_prompt_carries_the_same_note():
-    from adversarial_friends.prompt import _build_friend_prompt
+    from afriend.prompt import _build_friend_prompt
 
     repo_spec = FriendSpec(
         name="codex-ops-0",

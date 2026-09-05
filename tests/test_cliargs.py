@@ -4,13 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import adapters, cliargs
-from adversarial_friends.commands.runmeta import _RESUMABLE_ARGS
-from adversarial_friends.errors import UsageError
+from afriend import adapters, cliargs
+from afriend.commands.runmeta import _RESUMABLE_ARGS
+from afriend.errors import UsageError
 
-ADAPTER_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets" / "adapters"
-)
+ADAPTER_DIR = Path(__file__).resolve().parents[1] / "src" / "afriend" / "assets" / "adapters"
 
 
 @pytest.fixture

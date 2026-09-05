@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import sessionconfig
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands.run import cmd_run
-from adversarial_friends.commands.runmeta import validate_run_args
-from adversarial_friends.errors import UsageError
+from afriend import sessionconfig
+from afriend.cliargs import build_parser
+from afriend.commands.run import cmd_run
+from afriend.commands.runmeta import validate_run_args
+from afriend.errors import UsageError
 
 
 def _artifact(tmp_path: Path) -> Path:

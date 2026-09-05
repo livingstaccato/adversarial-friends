@@ -30,7 +30,7 @@ afriend resolve <run-id> --claim c-0001@1 \
 ```
 
 Before resolving a supplied run ID, read its default directory
-`${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/<run-id>`: inspect
+`${XDG_STATE_HOME:-~/.local/state}/afriend/runs/<run-id>`: inspect
 `report.md`, `run.json`, and `claims.jsonl`. If the run used `--out`, ask for
 its run directory instead. Ask for any missing run, claim identifier (for
 example `c-0001@1`), disposition, or evidence; never invent any of them. A recorded resolution is

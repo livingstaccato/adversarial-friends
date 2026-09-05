@@ -19,8 +19,8 @@ import threading
 from e2e_helpers import FAKE, REPO, _env, _git_commit, _git_repo, run_af
 import pytest
 
-from adversarial_friends import adapters, cli
-from adversarial_friends.commands import friends as friends_module
+from afriend import adapters, cli
+from afriend.commands import friends as friends_module
 
 # --- I2: corroboration must survive exact-merge, end to end ---------------
 #
@@ -130,9 +130,9 @@ def _in_repo_symlink_to_outside(tmp_path):
 def test_snapshot_refuses_if_symlink_target_changes_during_capture(
     monkeypatch, tmp_path, source_change
 ):
-    from adversarial_friends import isolation
-    from adversarial_friends.errors import UsageError
-    from adversarial_friends.snapshots import SnapshotIdentity
+    from afriend import isolation
+    from afriend.errors import UsageError
+    from afriend.snapshots import SnapshotIdentity
 
     repo = _git_repo(tmp_path / "repo")
     inside = repo / "inside.md"
@@ -192,7 +192,7 @@ def test_in_repo_symlink_to_outside_records_a_complete_no_repo_identity_for_doc_
 
 
 def test_in_repo_symlink_to_outside_skips_creating_a_throwaway_git_snapshot(monkeypatch, tmp_path):
-    from adversarial_friends import isolation
+    from afriend import isolation
 
     _repo, link, _outside = _in_repo_symlink_to_outside(tmp_path)
     monkeypatch.setenv("AF_FAKE_FRIEND", f"{sys.executable} {FAKE}")
@@ -233,8 +233,8 @@ def test_in_repo_symlink_to_outside_reconciles_a_mixed_roster_consistently(tmp_p
 
 
 def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypatch, tmp_path):
-    from adversarial_friends import isolation
-    from adversarial_friends.commands import run as run_module
+    from afriend import isolation
+    from afriend.commands import run as run_module
 
     repo = _git_repo(tmp_path / "repo")
     inside = repo / "inside.md"
@@ -306,7 +306,7 @@ def test_loop_successor_reconciles_scope_when_symlink_retargets_outside(monkeypa
 def test_loop_reports_doc_scope_warning_once_when_scope_drops_after_first_iteration(
     monkeypatch, tmp_path
 ):
-    from adversarial_friends.commands import run as run_module
+    from afriend.commands import run as run_module
 
     repo = _git_repo(tmp_path / "repo")
     inside = repo / "inside.md"
@@ -382,8 +382,8 @@ def test_doc_scope_friend_actually_runs_inside_its_own_private_directory(tmp_pat
 def test_fresh_dispatch_uses_the_frozen_copy_if_live_source_changes_after_freeze(
     monkeypatch, tmp_path
 ):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import run as run_module
+    from afriend import cli
+    from afriend.commands import run as run_module
 
     artifact = tmp_path / "spec.md"
     original = "# immutable dispatch bytes\n"
@@ -532,7 +532,7 @@ def test_explicit_repo_scope_uses_selected_code_for_an_ignored_artifact_in_anoth
 def test_explicit_repo_scope_stays_unbound_when_a_loop_restores_an_old_artifact(
     monkeypatch, tmp_path
 ):
-    from adversarial_friends.commands import run as run_module
+    from afriend.commands import run as run_module
 
     repo = _git_repo(tmp_path / "reviewed-repo")
     (repo / ".gitignore").write_text("*.secret\n")

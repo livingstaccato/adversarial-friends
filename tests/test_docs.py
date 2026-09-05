@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 
 REPO = Path(__file__).resolve().parents[1]
-ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+ASSETS = REPO / "src" / "afriend" / "assets"
 ENTRYPOINTS = ASSETS / "entrypoints"
 AFRIEND = ENTRYPOINTS / "afriend"
 OPERATOR_DOCS = [AFRIEND / "SKILL.md", *(AFRIEND / "references").glob("*.md")]
@@ -18,7 +18,7 @@ OPERATOR_DOCS = [AFRIEND / "SKILL.md", *(AFRIEND / "references").glob("*.md")]
 
 def test_readme_leads_with_the_banner():
     first = REPO.joinpath("README.md").read_text().splitlines()[0]
-    assert first.startswith("![adversarial-friends]")
+    assert first.startswith("![afriend]")
 
 
 def test_scope_selection_docs_explain_artifact_location_and_snapshot_rules():
@@ -197,7 +197,7 @@ def test_shipped_docs_never_invoke_a_bare_af_command():
         REPO / "README.md",
         REPO / "docs" / "README.md",
         REPO / "AGENTS.md",
-        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+        *(REPO / "src" / "afriend" / "assets").rglob("*.md"),
         *(REPO / "plugins").rglob("*.md"),
     ]
     # A bare `af` followed by one of this tool's subcommands. `bin/af` is
@@ -235,14 +235,14 @@ def test_shipped_docs_do_not_call_implemented_features_absent():
     help_text = ""
     for sub in ("run", "doctor", "resolve", "init"):
         help_text += subprocess.run(
-            [sys.executable, "-m", "adversarial_friends", sub, "--help"],
+            [sys.executable, "-m", "afriend", sub, "--help"],
             capture_output=True,
             text=True,
         ).stdout
 
     shipped = [
         REPO / "README.md",
-        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+        *(REPO / "src" / "afriend" / "assets").rglob("*.md"),
     ]
     # Anything a doc says is absent, that --help proves is present.
     offenders = []
@@ -286,7 +286,7 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
     assert "/afriend" in positive_prompts
     assert "afriend to" in positive_prompts
     assert "ask a friend to" in positive_prompts
-    assert "adversarial friends" in positive_prompts
+    assert "use afriend" in positive_prompts
     assert "$afriend:afriend" in positive_prompts
     for phrase in (
         "review this",
@@ -298,7 +298,7 @@ def test_evals_cover_narrow_positive_and_negative_activation_boundaries():
         assert phrase in negative_prompts, phrase
     assert all("af run" not in case["expected_output"].lower() for case in evals)
     assert "afriend" not in negative_prompts
-    assert "adversarial friends" not in negative_prompts
+    assert "use afriend" not in negative_prompts
 
 
 def test_evals_cover_guided_session_and_focused_current_workflows():
@@ -523,8 +523,8 @@ def test_no_shipped_doc_calls_a_shipped_mode_unimplemented():
     claiming absence is checked against the modes and record types the code
     actually has.
     """
-    from adversarial_friends.commands.runmeta import IMPLEMENTED_MODES
-    from adversarial_friends.ledger import _TYPE_NAMES
+    from afriend.commands.runmeta import IMPLEMENTED_MODES
+    from afriend.ledger import _TYPE_NAMES
 
     shipped_names = {m.lower() for m in IMPLEMENTED_MODES}
     shipped_names |= {n.lower() for n in _TYPE_NAMES.values()}
@@ -538,7 +538,7 @@ def test_no_shipped_doc_calls_a_shipped_mode_unimplemented():
         REPO / "README.md",
         REPO / "AGENTS.md",
         REPO / "docs" / "README.md",
-        *(REPO / "src" / "adversarial_friends" / "assets").rglob("*.md"),
+        *(REPO / "src" / "afriend" / "assets").rglob("*.md"),
     ]
     offenders = []
     for path in docs:

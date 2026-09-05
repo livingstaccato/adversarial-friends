@@ -1,6 +1,6 @@
 """The ledger identity is the roster unit (§8.1), not `cli/lens`."""
 
-from adversarial_friends.adapters import FriendSpec, friend_key
+from afriend.adapters import FriendSpec, friend_key
 
 
 def _spec(model=None, effort=None):

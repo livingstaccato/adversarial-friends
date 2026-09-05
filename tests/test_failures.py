@@ -7,10 +7,10 @@ repeat detection merely disables one friend, so it is allowed to infer.
 
 from pathlib import Path
 
-from adversarial_friends import failures
-from adversarial_friends.adapters import Adapter, AuthMarkers
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.spawn import SpawnResult
+from afriend import failures
+from afriend.adapters import Adapter, AuthMarkers
+from afriend.normalize import NormalizeResult
+from afriend.spawn import SpawnResult
 
 
 def outcome(reason="exit 1", exit_code=1, payload=None, timed_out=False):
@@ -263,8 +263,8 @@ def test_timeout_still_outranks_a_stderr_marker():
 
 
 def test_agy_ships_the_captured_marker():
-    from adversarial_friends.adapters import load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     agy = load_adapters(ADAPTER_DIR)["agy"]
     assert agy.auth.declared()
@@ -276,8 +276,8 @@ def test_agy_ships_the_captured_marker():
 
 
 def _opencode():
-    from adversarial_friends.adapters import load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     return load_adapters(ADAPTER_DIR)["opencode"]
 

@@ -1,6 +1,6 @@
 @startuml components
-' Module architecture of the adversarial_friends package.
-' Mirrors the real layout under src/adversarial_friends/.
+' Module architecture of the afriend package.
+' Mirrors the real layout under src/afriend/.
 
 skinparam backgroundColor #FFFFFF
 skinparam defaultFontName "Helvetica"
@@ -24,7 +24,7 @@ skinparam package {
   FontStyle bold
 }
 
-title adversarial_friends — module architecture
+title afriend — module architecture
 
 package "Entry" {
   rectangle "cli.py\n<size:11>thin entry + re-exports</size>" as CLI

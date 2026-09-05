@@ -1,6 +1,6 @@
-# Adversarial Friends
+# afriend
 
-This repository ships a Python package (`adversarial_friends`) whose console
+This repository ships a Python package (`afriend`) whose console
 script is `afriend`, plus a skill/plugin payload that challenges specs, plans,
 and reviews by dispatching them to other agent CLIs as independent adversarial
 reviewers.
@@ -15,16 +15,16 @@ for a review, `afriend status <run-id-or-path>` for a run, and `afriend doctor`
 for readiness. Use `afriend init --guided` for a no-write setup preview and
 `afriend profiles` for safe named profiles. All four modes -- `report`,
 `crossexam`, `gate`, `loop` -- ship; see
-`src/adversarial_friends/assets/entrypoints/afriend/references/modes.md`.
+`src/afriend/assets/entrypoints/afriend/references/modes.md`.
 `afriend resume <run-id>` routes to `afriend run --resume <run-id>`, not to
 claim resolution; it requires neither disposition nor evidence.
 
 ## Layout
 
-- `src/adversarial_friends/` — the runtime package (stdlib-only, no runtime
+- `src/afriend/` — the runtime package (stdlib-only, no runtime
   dependencies). `cli.py` is a thin entry point; the work lives in
   `cliargs.py`, `prompt.py`, `dispatch.py`, and `commands/`.
-- `src/adversarial_friends/assets/` — canonical package data: runtime
+- `src/afriend/assets/` — canonical package data: runtime
   `adapters/`, `harnesses/`, `lenses/`, plus five `entrypoints/` skills.
 - `plugins/afriend/skills/` — the composite projection: focused
   skills map directly; router references and runtime data live below

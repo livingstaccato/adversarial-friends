@@ -70,8 +70,8 @@ def test_verdicts_reach_the_ledger(tmp_path):
 
 
 def test_advisory_host_verdict_is_persisted_but_cannot_settle(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
+    from afriend import cli
+    from afriend.commands import friends as friends_module
 
     for name, value in _env().items():
         monkeypatch.setenv(name, value)
@@ -122,8 +122,8 @@ def test_advisory_host_verdict_is_persisted_but_cannot_settle(monkeypatch, tmp_p
 
 
 def test_advisory_host_omission_does_not_make_judging_incomplete(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
+    from afriend import cli
+    from afriend.commands import friends as friends_module
 
     for name, value in _env().items():
         monkeypatch.setenv(name, value)

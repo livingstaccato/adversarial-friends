@@ -6,7 +6,7 @@ shipped defaults tripped their own ceiling the moment a fourth friend was
 present, converting a normal run into a truncated one.
 """
 
-from adversarial_friends import ceilings
+from afriend import ceilings
 
 
 def test_max_calls_is_derived_from_the_roster():
@@ -68,7 +68,7 @@ def test_the_unreachable_warning_counts_loop_iterations():
     `derive_max_calls` already multiplied by iterations, so the default and
     the warning disagreed about what the same run costs.
     """
-    from adversarial_friends.ceilings import warn_if_unreachable
+    from afriend.ceilings import warn_if_unreachable
 
     # 4 friends x 3 rounds x 5 iterations = 60 calls, not 12.
     assert warn_if_unreachable(4, 3, 12, iterations=1) is None
@@ -81,7 +81,7 @@ def test_the_unreachable_warning_counts_loop_iterations():
 def test_a_single_iteration_warning_does_not_mention_iterations():
     """Every non-loop run passes 1. Saying "x 1 iterations" would be noise
     in the common case."""
-    from adversarial_friends.ceilings import warn_if_unreachable
+    from afriend.ceilings import warn_if_unreachable
 
     warning = warn_if_unreachable(4, 3, 5, iterations=1)
     assert warning is not None

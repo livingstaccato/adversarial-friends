@@ -1,4 +1,4 @@
-"""Enables `python -m adversarial_friends`, for running without installation."""
+"""Enables `python -m afriend`, for running without installation."""
 
 import sys
 

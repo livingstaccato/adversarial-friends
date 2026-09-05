@@ -5,22 +5,22 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends.adapters import Adapter, FriendSpec, build_argv, load_adapters
-from adversarial_friends.authority import (
+from afriend.adapters import Adapter, FriendSpec, build_argv, load_adapters
+from afriend.authority import (
     AuthorityPolicy,
     ExternalToolPolicy,
     PolicyError,
     enforce,
 )
-from adversarial_friends.commands.checkpoint import legacy_successful_friend_ids
-from adversarial_friends.commands.runmeta import _restore_args
-from adversarial_friends.dispatch import _dispatch
-from adversarial_friends.errors import UsageError
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.providerconfig import ProviderPolicy
-from adversarial_friends.readiness import ReadinessState, assess_all
-from adversarial_friends.spawn import SpawnResult
+from afriend.commands.checkpoint import legacy_successful_friend_ids
+from afriend.commands.runmeta import _restore_args
+from afriend.dispatch import _dispatch
+from afriend.errors import UsageError
+from afriend.normalize import NormalizeResult
+from afriend.paths import ADAPTER_DIR
+from afriend.providerconfig import ProviderPolicy
+from afriend.readiness import ReadinessState, assess_all
+from afriend.spawn import SpawnResult
 
 
 @pytest.fixture
@@ -217,7 +217,7 @@ def test_denial_refuses_unvalidated_argv_that_can_reverse_authority(
     monkeypatch, tmp_path, registry, files, name, extra_args
 ):
     """Denial flags cannot be audited as effective if later argv may undo them."""
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     monkeypatch.setattr(dispatch.shutil, "which", lambda _binary: None)
     monkeypatch.setattr(
@@ -244,7 +244,7 @@ def test_denial_refuses_unvalidated_argv_that_can_reverse_authority(
 def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
     monkeypatch, tmp_path, registry, files
 ):
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     captured: list[str] = []
 
@@ -282,7 +282,7 @@ def test_allow_policy_keeps_extra_argv_and_reports_explicit_authority(
 
 
 def test_dispatch_carries_each_provider_local_policy(monkeypatch, tmp_path, registry, files):
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     def run_process(argv, *_args, **_kwargs):
         return SpawnResult(

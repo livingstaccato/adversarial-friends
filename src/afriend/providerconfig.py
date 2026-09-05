@@ -41,7 +41,7 @@ def config_path(env: Mapping[str, str] | None = None) -> Path:
     fallback = Path.home() / ".config"
     candidate = Path(configured).expanduser() if configured else fallback
     root = candidate if candidate.is_absolute() else fallback
-    return root / "adversarial-friends" / "config.json"
+    return root / "afriend" / "config.json"
 
 
 def _invalid(path: Path, field: str, detail: str, *, got: object = _NO_VALUE) -> UsageError:

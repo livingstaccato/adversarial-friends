@@ -9,8 +9,8 @@ not a convenience.
 
 import pytest
 
-from adversarial_friends import rosterfile
-from adversarial_friends.errors import NoFriendsError, UsageError
+from afriend import rosterfile
+from afriend.errors import NoFriendsError, UsageError
 
 VALID = """
 [[friend]]
@@ -73,24 +73,24 @@ def test_friend_must_be_a_list_of_tables(tmp_path):
 
 def test_the_trusted_path_is_under_user_config(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert rosterfile.default_roster_path() == tmp_path / "adversarial-friends" / "roster.toml"
+    assert rosterfile.default_roster_path() == tmp_path / "afriend" / "roster.toml"
 
 
 def test_discovery_finds_the_user_roster(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    target = tmp_path / "adversarial-friends" / "roster.toml"
+    target = tmp_path / "afriend" / "roster.toml"
     target.parent.mkdir(parents=True)
     target.write_text(VALID)
     assert rosterfile.discover() == target
 
 
 def test_discovery_never_looks_in_the_repository(monkeypatch, tmp_path):
-    """§13: repo-local `.adversarial-friends/` is untrusted. A cloned repo
+    """§13: repo-local `.afriend/` is untrusted. A cloned repo
     must not be able to choose who reviews it, on what, with what flags.
     Naming one with --roster is an explicit act; finding one is not."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
     monkeypatch.chdir(tmp_path)
-    hostile = tmp_path / ".adversarial-friends"
+    hostile = tmp_path / ".afriend"
     hostile.mkdir()
     (hostile / "roster.toml").write_text(VALID)
     assert rosterfile.discover() is None

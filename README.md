@@ -1,6 +1,6 @@
-![adversarial-friends](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/images/brand/adversarial-friends-banner.png)
+![afriend](https://raw.githubusercontent.com/livingstaccato/adversarial-friends/main/docs/images/brand/adversarial-friends-banner.png)
 
-# Adversarial Friends
+# afriend
 
 > Hand your spec, plan, or review to agent CLIs — `claude`, `codex`,
 > Antigravity (`agy`),
@@ -61,7 +61,7 @@ require two independent non-host friends. The runner itself is **stdlib-only**
 — zero runtime dependencies.
 
 ```bash
-uv tool install adversarial-friends
+uv tool install afriend
 ```
 
 <details>
@@ -77,7 +77,7 @@ cd adversarial-friends
 uv tool install .
 
 # Without installing at all
-python -m adversarial_friends doctor
+python -m afriend doctor
 ```
 
 </details>
@@ -97,7 +97,7 @@ reachability alone is insufficient because dispatch also requires a model.
 
 ## 🚀 Quickstart
 
-In an agent host, select `/afriend` to route an explicit Adversarial Friends
+In an agent host, select `/afriend` to route an explicit afriend
 request, or select `$afriend:afriend` directly. It hands review,
 status, setup/configuration, and resolution requests to focused skills:
 `review`, `status`, `configure`, and `resolve`.
@@ -373,7 +373,7 @@ as a reproducible defect.
     └── <friend>.sandbox ← the OS policy it ran under, when one was applied
 ```
 
-Runs land under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
+Runs land under `${XDG_STATE_HOME:-~/.local/state}/afriend/runs/`,
 or wherever `--out` points.
 
 Everything a friend was asked and everything it said is on disk. When a run
@@ -432,7 +432,7 @@ also never restored from `run.json`: options such as
 repeated as the same normalized set.
 
 Tired of `--friend` flags? `afriend init` writes a roster from what is
-actually installed, and `~/.config/adversarial-friends/roster.toml` is picked
+actually installed, and `~/.config/afriend/roster.toml` is picked
 up automatically. A repo-local roster never is — a cloned repo does not get
 to choose who reviews it (§13).
 
@@ -488,12 +488,12 @@ A ceiling outranks everything below it, so a CI wrapper can read `11` as
 | Where | What |
 |---|---|
 | [docs/](docs/README.md) | Documentation index |
-| [/afriend router](src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | Explicit product router and review workflow |
-| [review](src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Start and interpret a review run |
-| [status](src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only provider and named-run status |
-| [configure](src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Explicit provider-default changes |
-| [resolve](src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Named-run claim resolutions |
-| [modes](src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | `report`, `crossexam`, `gate`, and `loop` |
+| [/afriend router](src/afriend/assets/entrypoints/afriend/SKILL.md) | Explicit product router and review workflow |
+| [review](src/afriend/assets/entrypoints/review/SKILL.md) | Start and interpret a review run |
+| [status](src/afriend/assets/entrypoints/status/SKILL.md) | Read-only provider and named-run status |
+| [configure](src/afriend/assets/entrypoints/configure/SKILL.md) | Explicit provider-default changes |
+| [resolve](src/afriend/assets/entrypoints/resolve/SKILL.md) | Named-run claim resolutions |
+| [modes](src/afriend/assets/entrypoints/afriend/references/modes.md) | `report`, `crossexam`, `gate`, and `loop` |
 | [architecture/](docs/architecture/README.md) | Diagrams and their sources |
 | [design spec](docs/superpowers/specs/2026-08-22-adversarial-friends-design.md) | The full design, including the adversarial review that produced it |
 
@@ -504,10 +504,10 @@ under [`plugins/`](plugins/) for loaders that can't install a Python package:
 
 ```bash
 # Claude Code
-/plugin marketplace add /path/to/adversarial-friends/plugins
+/plugin marketplace add /path/to/afriend/plugins
 ```
 
-Plugins package capabilities; the Adversarial Friends plugin provides exactly
+Plugins package capabilities; the afriend plugin provides exactly
 five skills: `/afriend`, `review`, `status`, `configure`, and `resolve`.
 `/afriend` is the only router and short slash selector; direct qualified
 selection is `$afriend:afriend`. The CLI never runs automatically
@@ -536,7 +536,7 @@ specific assertion locally. Use `make act-ci` for the closest local Linux run.
 
 Two gates catch drift that is otherwise silent:
 
-- **`plugin-sync`** — `src/adversarial_friends/assets/` is canonical; its
+- **`plugin-sync`** — `src/afriend/assets/` is canonical; its
   entrypoints project directly to plugin skills and runtime assets project
   beneath `skills/afriend/`. Edit assets, then `make plugin-sync-copy`.
 - **`version-sync`** — `VERSION` must match the `version` field in every

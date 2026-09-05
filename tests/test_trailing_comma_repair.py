@@ -18,7 +18,7 @@ comma-space runs occurring INSIDE JSON string literals.
 
 import time
 
-from adversarial_friends.normalize import drop_trailing_commas
+from afriend.normalize import drop_trailing_commas
 
 
 def test_a_trailing_comma_run_is_dropped():

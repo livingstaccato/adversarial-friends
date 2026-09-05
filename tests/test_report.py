@@ -5,14 +5,14 @@ import subprocess
 import pytest
 from report_helpers import claim, meta
 
-from adversarial_friends.ledger import Claim
-from adversarial_friends.report import (
+from afriend.ledger import Claim
+from afriend.report import (
     _code_span,
     _escape_block,
     _escape_cell,
     render as render_review,
 )
-from adversarial_friends.reviewstate import ReviewState
+from afriend.reviewstate import ReviewState
 
 CMARK = shutil.which("cmark")
 

@@ -18,14 +18,14 @@ from typing import ClassVar
 from e2e_helpers import AF, FAKE, _env, _git_commit, _git_repo, run_af
 import pytest
 
-from adversarial_friends import adapters, cli, dispatch
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.commands import (
+from afriend import adapters, cli, dispatch
+from afriend.adapters import FriendSpec
+from afriend.commands import (
     friends as friends_module,
     setup as run_setup_module,
     status,
 )
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend.paths import ADAPTER_DIR
 
 
 class _OllamaStub(BaseHTTPRequestHandler):

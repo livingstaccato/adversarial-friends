@@ -5,14 +5,14 @@ import math
 
 import pytest
 
-from adversarial_friends.authority import DENY_ALL
-from adversarial_friends.commands.runmeta import _base_meta, _checkpoint_themes
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim
-from adversarial_friends.outcomes import MAX_JSON_NODES
-from adversarial_friends.snapshots import SnapshotIdentity
-import adversarial_friends.themes as themes_module
-from adversarial_friends.themes import (
+from afriend.authority import DENY_ALL
+from afriend.commands.runmeta import _base_meta, _checkpoint_themes
+from afriend.errors import UsageError
+from afriend.ledger import Claim
+from afriend.outcomes import MAX_JSON_NODES
+from afriend.snapshots import SnapshotIdentity
+import afriend.themes as themes_module
+from afriend.themes import (
     THEME_THRESHOLD,
     ThemeProposal,
     classify_novel,

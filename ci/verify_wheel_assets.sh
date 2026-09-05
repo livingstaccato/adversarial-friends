@@ -22,11 +22,11 @@ import zipfile
 
 repo = Path(sys.argv[1])
 wheel = Path(sys.argv[2])
-assets = repo / "src" / "adversarial_friends" / "assets"
+assets = repo / "src" / "afriend" / "assets"
 expected: set[str] = set()
 for directory, pattern in (("adapters", "*.toml"), ("harnesses", "*.md"), ("lenses", "*.md"), ("entrypoints", "*.md")):
     for path in (assets / directory).rglob(pattern):
-        expected.add(str(Path("adversarial_friends/assets") / path.relative_to(assets)))
+        expected.add(str(Path("afriend/assets") / path.relative_to(assets)))
 
 with zipfile.ZipFile(wheel) as archive:
     names = archive.namelist()
@@ -37,7 +37,7 @@ with zipfile.ZipFile(wheel) as archive:
     actual = {
         name
         for name in names
-        if name.startswith("adversarial_friends/assets/") and name.endswith((".md", ".toml"))
+        if name.startswith("afriend/assets/") and name.endswith((".md", ".toml"))
     }
 
 missing = sorted(expected - actual)

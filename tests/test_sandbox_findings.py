@@ -8,7 +8,7 @@ within a minute.
 
 from pathlib import Path
 
-from adversarial_friends import sandbox
+from afriend import sandbox
 
 
 def test_the_install_root_is_readable_when_the_binary_is_under_bin(tmp_path):
@@ -99,7 +99,7 @@ def test_a_confined_process_really_cannot_see_withheld_secrets(tmp_path):
 
         pytest.skip("no OS sandbox mechanism on this machine")
 
-    from adversarial_friends import childenv
+    from afriend import childenv
 
     workdir = tmp_path / "iso"
     workdir.mkdir()

@@ -2,8 +2,8 @@
 
 import pytest
 
-from adversarial_friends.commands.exits import decide_exit
-from adversarial_friends.outcomes import terminal_outcome
+from afriend.commands.exits import decide_exit
+from afriend.outcomes import terminal_outcome
 
 
 def _outcome(**facts):

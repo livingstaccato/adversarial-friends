@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import reviewprofiles, sessionconfig
-from adversarial_friends.errors import UsageError
+from afriend import reviewprofiles, sessionconfig
+from afriend.errors import UsageError
 
 
 def test_missing_session_config_defaults_to_quick(tmp_path, monkeypatch):
@@ -40,13 +40,13 @@ def test_set_default_refuses_an_unknown_profile(tmp_path, monkeypatch):
 def test_config_path_honors_absolute_xdg_home_and_rejects_relative(tmp_path, monkeypatch):
     absolute = tmp_path / "absolute-config"
     assert sessionconfig.config_path({"XDG_CONFIG_HOME": str(absolute)}) == (
-        absolute / "adversarial-friends" / "session.json"
+        absolute / "afriend" / "session.json"
     )
 
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
     assert sessionconfig.config_path({"XDG_CONFIG_HOME": ".relative-config"}) == (
-        tmp_path / "home" / ".config" / "adversarial-friends" / "session.json"
+        tmp_path / "home" / ".config" / "afriend" / "session.json"
     )
 
 

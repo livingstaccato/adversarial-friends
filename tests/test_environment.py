@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from adversarial_friends.commands.environment import resolve_run_repo
-from adversarial_friends.errors import UsageError
+from afriend.commands.environment import resolve_run_repo
+from afriend.errors import UsageError
 
 
 def _git_repo(root: Path) -> Path:

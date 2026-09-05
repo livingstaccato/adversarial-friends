@@ -5,15 +5,15 @@ import threading
 
 import pytest
 
-from adversarial_friends import rounds as rounds_mod, workspaceassets
-from adversarial_friends.adapters import Adapter, Capability, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.commands.checkpoint import normalize_friend_rows
-from adversarial_friends.errors import UsageError
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
-from adversarial_friends.workspaceassets import (
+from afriend import rounds as rounds_mod, workspaceassets
+from afriend.adapters import Adapter, Capability, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.commands.checkpoint import normalize_friend_rows
+from afriend.errors import UsageError
+from afriend.normalize import NormalizeResult
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
+from afriend.workspaceassets import (
     WorkspaceAsset,
     parse_workspace_assets,
     stage_workspace_assets,

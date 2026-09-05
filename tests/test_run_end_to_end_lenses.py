@@ -19,8 +19,8 @@ import tempfile
 from e2e_helpers import FAKE, _safe_path_dir, run_af
 import pytest
 
-from adversarial_friends import adapters, cli, dispatch
-from adversarial_friends.commands import friends as friends_module
+from afriend import adapters, cli, dispatch
+from afriend.commands import friends as friends_module
 
 # --- Lens wiring (Task 13 coordinator finding) ----------------------------
 #

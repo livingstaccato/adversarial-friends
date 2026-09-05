@@ -11,8 +11,8 @@ import json
 import sys
 import time
 
-from adversarial_friends import spawn
-from adversarial_friends.envelopes import Envelope, answer_is_complete
+from afriend import spawn
+from afriend.envelopes import Envelope, answer_is_complete
 
 JSON_PATH = Envelope(kind="json_path", path="response")
 NDJSON = Envelope(kind="ndjson")

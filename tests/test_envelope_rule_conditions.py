@@ -13,9 +13,9 @@ own comment disagreeing.
 
 import json
 
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.envelopes import Envelope, EnvelopeRule, parse_envelope, unwrap_envelope
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend.adapters import load_adapters
+from afriend.envelopes import Envelope, EnvelopeRule, parse_envelope, unwrap_envelope
+from afriend.paths import ADAPTER_DIR
 
 
 def _event(item: dict) -> str:

@@ -7,7 +7,7 @@ on, 61 variables were exposed, including four API tokens for services that
 have nothing to do with reviewing code.
 """
 
-from adversarial_friends import childenv
+from afriend import childenv
 
 SHELL = {
     "PATH": "/usr/bin",

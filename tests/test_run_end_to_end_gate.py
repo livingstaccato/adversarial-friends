@@ -109,8 +109,8 @@ def test_a_refuted_claim_does_not_block(tmp_path):
 
 
 def test_advisory_host_refutation_cannot_clear_gate(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
+    from afriend import cli
+    from afriend.commands import friends as friends_module
 
     repo = _repo(tmp_path)
     for name, value in _env().items():

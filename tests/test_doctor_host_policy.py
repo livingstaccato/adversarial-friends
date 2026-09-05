@@ -5,10 +5,10 @@ import json
 
 import pytest
 
-from adversarial_friends import adapters, readiness as readiness_module
-from adversarial_friends.commands import doctor as doctor_module
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+from afriend import adapters, readiness as readiness_module
+from afriend.commands import doctor as doctor_module
+from afriend.paths import ADAPTER_DIR
+from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
 
 @pytest.mark.parametrize(

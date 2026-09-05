@@ -2,9 +2,9 @@ import hashlib
 
 import pytest
 
-from adversarial_friends import adapters, trust
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.errors import UsageError
+from afriend import adapters, trust
+from afriend.authority import ExternalToolPolicy
+from afriend.errors import UsageError
 
 
 def argv_contains_sequence(argv, seq):
@@ -21,7 +21,7 @@ def argv_contains_sequence(argv, seq):
 ADAPTER_DIR = (
     __import__("pathlib").Path(__file__).resolve().parents[1]
     / "src"
-    / "adversarial_friends"
+    / "afriend"
     / "assets"
     / "adapters"
 )
@@ -302,7 +302,7 @@ def test_duplicate_adapter_name_raises(tmp_path):
 
 
 def test_adapter_loads_validated_workspace_assets(monkeypatch, tmp_path):
-    from adversarial_friends import workspaceassets
+    from afriend import workspaceassets
 
     payload = b"controlled harness\n"
     source_root = tmp_path / "package-assets"

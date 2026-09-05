@@ -1,6 +1,6 @@
 """Shared construction helpers for report rendering tests."""
 
-from adversarial_friends.ledger import Claim
+from afriend.ledger import Claim
 
 
 def claim(cid: str, severity: str = "high") -> Claim:

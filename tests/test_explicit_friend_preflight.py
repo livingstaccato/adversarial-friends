@@ -3,11 +3,11 @@
 from e2e_helpers import run_af
 import pytest
 
-from adversarial_friends import adapters, cli, readiness
-from adversarial_friends.commands import friends as friends_module, setup as run_setup_module
-from adversarial_friends.errors import NoFriendsError
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+from afriend import adapters, cli, readiness
+from afriend.commands import friends as friends_module, setup as run_setup_module
+from afriend.errors import NoFriendsError
+from afriend.paths import ADAPTER_DIR
+from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
 
 @pytest.fixture(autouse=True)

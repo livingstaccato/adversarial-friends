@@ -1,4 +1,4 @@
-# 📚 Adversarial Friends — Documentation
+# 📚 afriend — Documentation
 
 Reference documentation for users and contributors. For the introduction and
 quickstart, see the [top-level README](../README.md); come here for detail.
@@ -9,12 +9,12 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 
 | Document | What it covers |
 |---|---|
-| [/afriend](../src/adversarial_friends/assets/entrypoints/afriend/SKILL.md) | The sole router, session preflight, lifecycle completion feedback, and stable CLI routing |
-| [review](../src/adversarial_friends/assets/entrypoints/review/SKILL.md) | Artifact reviews with `afriend run` and task-only profile/mode choices |
-| [status](../src/adversarial_friends/assets/entrypoints/status/SKILL.md) | Read-only readiness with `doctor` and named-run inspection with `status` |
-| [configure](../src/adversarial_friends/assets/entrypoints/configure/SKILL.md) | Guided setup, explicit provider defaults, and safe named profiles |
-| [resolve](../src/adversarial_friends/assets/entrypoints/resolve/SKILL.md) | Read-only claim discovery and named-run resolutions with supplied evidence |
-| [modes](../src/adversarial_friends/assets/entrypoints/afriend/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus claim states, ceilings, and exit codes |
+| [/afriend](../src/afriend/assets/entrypoints/afriend/SKILL.md) | The sole router, session preflight, lifecycle completion feedback, and stable CLI routing |
+| [review](../src/afriend/assets/entrypoints/review/SKILL.md) | Artifact reviews with `afriend run` and task-only profile/mode choices |
+| [status](../src/afriend/assets/entrypoints/status/SKILL.md) | Read-only readiness with `doctor` and named-run inspection with `status` |
+| [configure](../src/afriend/assets/entrypoints/configure/SKILL.md) | Guided setup, explicit provider defaults, and safe named profiles |
+| [resolve](../src/afriend/assets/entrypoints/resolve/SKILL.md) | Read-only claim discovery and named-run resolutions with supplied evidence |
+| [modes](../src/afriend/assets/entrypoints/afriend/references/modes.md) | All four modes — `report`, `crossexam`, `gate`, `loop` — plus claim states, ceilings, and exit codes |
 
 `afriend resume <run-id>` routes through `/afriend` to `afriend run --resume
 <run-id>`; it is not a claim-resolution disposition and needs no evidence.
@@ -30,7 +30,7 @@ quickstart, see the [top-level README](../README.md); come here for detail.
 
 | Document | What it covers |
 |---|---|
-| [ledger](../src/adversarial_friends/assets/entrypoints/afriend/references/ledger.md) | Claim, verdict, alias, and resolution records — and how to read `claims.jsonl` directly |
+| [ledger](../src/afriend/assets/entrypoints/afriend/references/ledger.md) | Claim, verdict, alias, and resolution records — and how to read `claims.jsonl` directly |
 | [architecture/](architecture/README.md) | Diagrams: module architecture, run flow, claim lifecycle |
 
 ### The diagrams

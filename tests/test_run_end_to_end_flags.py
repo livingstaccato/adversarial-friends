@@ -103,7 +103,7 @@ def test_doctor_text_uses_the_same_readiness_state_and_reason(tmp_path):
 def test_doctor_preserves_http_discovery_opt_out(monkeypatch, capsys):
     import argparse
 
-    from adversarial_friends.commands import doctor as doctor_module
+    from afriend.commands import doctor as doctor_module
 
     probes: list[str] = []
     monkeypatch.setenv("AF_NO_HTTP_DISCOVERY", "1")
@@ -132,10 +132,10 @@ def test_doctor_reports_disabled_uncontrolled_provider_without_enforcing_or_buil
 ):
     import argparse
 
-    from adversarial_friends import adapters
-    from adversarial_friends.commands import doctor as doctor_module
-    from adversarial_friends.paths import ADAPTER_DIR
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.commands import doctor as doctor_module
+    from afriend.paths import ADAPTER_DIR
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     adapter = adapters.load_adapters(ADAPTER_DIR)[provider]
     monkeypatch.setattr(doctor_module, "load_adapters", lambda _path: {provider: adapter})
@@ -200,15 +200,15 @@ def test_same_provider_cannot_be_enabled_and_disabled_for_one_run(tmp_path):
 
 
 def test_explicit_friend_bypasses_disabled_and_host_excluded_provider(monkeypatch, tmp_path):
-    from adversarial_friends import adapters
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -225,15 +225,15 @@ def test_explicit_friend_bypasses_disabled_and_host_excluded_provider(monkeypatc
 
 
 def test_per_run_enable_overrides_persistently_disabled_provider(monkeypatch, tmp_path):
-    from adversarial_friends import adapters
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -264,16 +264,16 @@ def test_per_run_enable_overrides_persistently_disabled_provider(monkeypatch, tm
 
 
 def test_per_run_disable_overrides_persistently_enabled_provider(monkeypatch, tmp_path):
-    from adversarial_friends import adapters
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.errors import NoFriendsError
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.errors import NoFriendsError
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -298,10 +298,10 @@ def test_per_run_disable_overrides_persistently_enabled_provider(monkeypatch, tm
 
 
 def test_frozen_resume_roster_still_validates_restored_provider_controls(monkeypatch):
-    from adversarial_friends.adapters import FriendSpec
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.errors import UsageError
+    from afriend.adapters import FriendSpec
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.errors import UsageError
 
     frozen = FriendSpec(
         name="codex-ops",
@@ -342,15 +342,15 @@ def test_model_and_effort_override_everything(monkeypatch, tmp_path):
         '[[friend]]\nname = "codex-ops"\ncli = "codex"\nlens = "ops"\n'
         'model = "from-roster"\neffort = "low"\n'
     )
-    from adversarial_friends import adapters
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -401,15 +401,15 @@ def test_global_model_uses_the_friend_model_allowlist(tmp_path):
 
 
 def test_global_model_makes_reachable_http_provider_discoverable(monkeypatch, tmp_path):
-    from adversarial_friends import adapters, readiness as readiness_module
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters, readiness as readiness_module
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -475,15 +475,15 @@ def test_max_friends_caps_and_says_so(monkeypatch, tmp_path):
         '[[friend]]\nname = "a"\ncli = "codex"\nlens = "ops"\n'
         '[[friend]]\nname = "b"\ncli = "claude"\nlens = "security"\n'
     )
-    from adversarial_friends import adapters
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.cliargs import build_parser
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(
         __import__("pathlib").Path(__file__).resolve().parents[1]
         / "src"
-        / "adversarial_friends"
+        / "afriend"
         / "assets"
         / "adapters"
     )
@@ -752,7 +752,7 @@ def test_a_downgrade_is_recorded_once_not_twice(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _verified_deny_probe(monkeypatch):
-    from adversarial_friends import readiness
+    from afriend import readiness
 
     monkeypatch.setattr(
         readiness,

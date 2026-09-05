@@ -2,19 +2,19 @@
 
 import threading
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Capability, FriendSpec, load_adapters
-from adversarial_friends.authority import AuthorityPolicy, ExternalToolPolicy
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands import critique as critique_mod, crossexam as crossexam_mod
-from adversarial_friends.commands.critique import run_critique
-from adversarial_friends.commands.crossexam import run_rounds
-from adversarial_friends.ledger import Claim
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
+from afriend import rounds as rounds_mod
+from afriend.adapters import Capability, FriendSpec, load_adapters
+from afriend.authority import AuthorityPolicy, ExternalToolPolicy
+from afriend.ceilings import Budget
+from afriend.commands import critique as critique_mod, crossexam as crossexam_mod
+from afriend.commands.critique import run_critique
+from afriend.commands.crossexam import run_rounds
+from afriend.ledger import Claim
+from afriend.normalize import NormalizeResult
+from afriend.paths import ADAPTER_DIR
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
 
 
 def _success() -> SpawnResult:

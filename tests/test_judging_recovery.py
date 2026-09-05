@@ -3,21 +3,21 @@ import threading
 
 import pytest
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Capability, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands import crossexam as crossexam_mod
-from adversarial_friends.commands.crossexam import run_rounds
-from adversarial_friends.errors import UsageError
-from adversarial_friends.judgebatch import persist_judging_batch, recover_judging_batch
-from adversarial_friends.ledger import Claim, Verdict
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.rounds import persist_result
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
-from adversarial_friends.verdicts import build_successor
+from afriend import rounds as rounds_mod
+from afriend.adapters import Capability, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.ceilings import Budget
+from afriend.commands import crossexam as crossexam_mod
+from afriend.commands.crossexam import run_rounds
+from afriend.errors import UsageError
+from afriend.judgebatch import persist_judging_batch, recover_judging_batch
+from afriend.ledger import Claim, Verdict
+from afriend.normalize import NormalizeResult
+from afriend.reviewstate import ReviewState
+from afriend.rounds import persist_result
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
+from afriend.verdicts import build_successor
 
 
 def _spec(name: str, lens: str) -> FriendSpec:

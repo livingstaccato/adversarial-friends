@@ -12,8 +12,8 @@ from test_run_end_to_end_orchestrator import (
     _write_run_json,
 )
 
-from adversarial_friends.commands.checkpoint import normalize_resume_report_state
-from adversarial_friends.errors import UsageError
+from afriend.commands.checkpoint import normalize_resume_report_state
+from afriend.errors import UsageError
 
 
 def _remove_task6_success_checkpoint(tmp_path):

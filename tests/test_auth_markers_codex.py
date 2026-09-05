@@ -7,11 +7,11 @@ auth failure: you need the ABSENCE of credentials, so copying real ones
 somewhere else would both authenticate successfully and spread secrets.
 """
 
-from adversarial_friends import failures
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.spawn import SpawnResult
+from afriend import failures
+from afriend.adapters import load_adapters
+from afriend.normalize import NormalizeResult
+from afriend.paths import ADAPTER_DIR
+from afriend.spawn import SpawnResult
 
 # Verbatim, trimmed only for length.
 CAPTURED = (

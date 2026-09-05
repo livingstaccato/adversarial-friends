@@ -47,7 +47,7 @@ def test_the_reported_version_matches_the_file_that_drives_the_build():
     the plugin manifests and the wheel metadata all agreed. It is derived
     now -- from VERSION in a checkout, from distribution metadata when
     installed -- and check_version_sync.py compares it too."""
-    from adversarial_friends import __version__
+    from afriend import __version__
 
     expected = (REPO / "VERSION").read_text(encoding="utf-8").strip()
     assert __version__ == expected

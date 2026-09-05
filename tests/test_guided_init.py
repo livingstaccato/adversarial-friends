@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from adversarial_friends import providerconfig, readiness, reviewprofiles, sessionconfig
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands import init as init_module
-from adversarial_friends.errors import NoFriendsError, UsageError
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend import providerconfig, readiness, reviewprofiles, sessionconfig
+from afriend.cliargs import build_parser
+from afriend.commands import init as init_module
+from afriend.errors import NoFriendsError, UsageError
+from afriend.paths import ADAPTER_DIR
 
 
 def _args(*argv: str):

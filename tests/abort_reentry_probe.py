@@ -16,7 +16,7 @@ import os
 import signal
 import threading
 
-from adversarial_friends.commands.environment import install_abort_handlers
+from afriend.commands.environment import install_abort_handlers
 
 
 class _SignalWhileLocked(threading.Event):

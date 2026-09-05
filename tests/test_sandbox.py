@@ -21,7 +21,7 @@ import sys
 
 import pytest
 
-from adversarial_friends import sandbox
+from afriend import sandbox
 
 
 @pytest.fixture
@@ -393,7 +393,7 @@ def _unconfinable_adapter(binary="sh"):
     branch depending on that is worse than no test -- these two first passed
     locally and failed on CI for exactly that reason.
     """
-    from adversarial_friends import adapters
+    from afriend import adapters
 
     return adapters.Adapter(
         name="unconfinable",
@@ -412,7 +412,7 @@ def _unconfinable_adapter(binary="sh"):
 
 
 def _spec_for(name="unconfinable"):
-    from adversarial_friends.adapters import FriendSpec
+    from afriend.adapters import FriendSpec
 
     return FriendSpec(
         name="unconfinable-ops-0",
@@ -434,8 +434,8 @@ def test_only_adapters_without_a_readonly_mode_are_confined():
     sandbox on the capability would therefore refuse every friend for any
     artifact outside a repo.
     """
-    from adversarial_friends.adapters import load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     registry = load_adapters(ADAPTER_DIR)
     needs_sandbox = {
@@ -447,8 +447,8 @@ def test_only_adapters_without_a_readonly_mode_are_confined():
 def test_an_unconfinable_adapter_declares_where_its_credentials_live():
     """A sandbox missing a credential path does not fail loudly: the CLI
     starts, fails to authenticate, and looks like a broken friend."""
-    from adversarial_friends.adapters import load_adapters
-    from adversarial_friends.paths import ADAPTER_DIR
+    from afriend.adapters import load_adapters
+    from afriend.paths import ADAPTER_DIR
 
     registry = load_adapters(ADAPTER_DIR)
     assert registry["opencode"].sandbox_read, "opencode must declare its config paths"
@@ -461,7 +461,7 @@ def test_a_friend_with_no_readonly_mode_is_refused_without_a_mechanism(monkeypat
     friend must not end a run that has three usable ones. The security
     property is identical either way -- the process is never started.
     """
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: None)
     registry = {"unconfinable": _unconfinable_adapter()}
@@ -478,7 +478,7 @@ def test_a_friend_with_no_readonly_mode_is_refused_without_a_mechanism(monkeypat
 def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
     """--allow-unsandboxed-friend accepts the risk explicitly, and the
     friend then actually runs."""
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: None)
     registry = {"unconfinable": _unconfinable_adapter(binary="true")}
@@ -499,7 +499,7 @@ def test_the_override_lets_it_run_unconfined(monkeypatch, tmp_path):
 
 
 def test_override_does_not_disable_available_confinement(monkeypatch, tmp_path):
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     wrapped = []
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: sandbox.BWRAP)
@@ -527,7 +527,7 @@ def test_override_does_not_disable_available_confinement(monkeypatch, tmp_path):
 
 
 def test_confinement_is_recorded_only_after_the_command_is_wrapped(monkeypatch, tmp_path):
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     wrapped = []
     monkeypatch.setattr(sandbox, "detect", lambda *a, **k: sandbox.BWRAP)
@@ -555,7 +555,7 @@ def test_a_friend_whose_binary_is_missing_is_not_sandboxed(tmp_path):
     succeeds and "binary not found" becomes an opaque exit code from
     sandbox-exec. A missing agent CLI is this tool's most common setup
     problem."""
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     registry = {"unconfinable": _unconfinable_adapter(binary="af-nonexistent-xyz")}
     prompt = tmp_path / "p.prompt"
@@ -571,7 +571,7 @@ def test_a_confined_friend_gets_the_sandbox_prefix(tmp_path):
     """With a mechanism available, the friend's argv is actually wrapped --
     and the profile it ran under is written next to its prompt for a human
     to read."""
-    from adversarial_friends import dispatch
+    from afriend import dispatch
 
     registry = {"unconfinable": _unconfinable_adapter(binary="true")}
     prompt = tmp_path / "p.prompt"

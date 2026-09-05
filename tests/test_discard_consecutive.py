@@ -10,10 +10,10 @@ import dataclasses
 
 from verdict_helpers import claim, verdict
 
-from adversarial_friends import verdicts as vd
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.commands.crossexam import CrossexamOutcome, _settle_round
-from adversarial_friends.reviewstate import ReviewState
+from afriend import verdicts as vd
+from afriend.adapters import FriendSpec
+from afriend.commands.crossexam import CrossexamOutcome, _settle_round
+from afriend.reviewstate import ReviewState
 
 
 def _spec(cli, lens):

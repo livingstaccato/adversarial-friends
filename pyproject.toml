@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel>=0.43"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "adversarial-friends"
+name = "afriend"
 dynamic = ["version"]
 description = "Cross-examine specs, plans, and reviews using other agent CLIs as adversarial reviewers"
 readme = "README.md"
@@ -38,7 +38,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-afriend = "adversarial_friends.cli:main"
+afriend = "afriend.cli:main"
 
 [project.urls]
 Repository = "https://github.com/livingstaccato/adversarial-friends"
@@ -49,13 +49,13 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["adversarial_friends*"]
+include = ["afriend*"]
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
 
 [tool.setuptools.package-data]
-adversarial_friends = [
+afriend = [
     "assets/adapters/*.toml",
     "assets/harnesses/**/*",
     "assets/lenses/*.md",
@@ -87,7 +87,7 @@ select = ["E", "F", "W", "I", "UP", "ANN", "B", "SIM", "PTH", "RUF"]
 ignore = ["ANN401", "E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["adversarial_friends", "tests"]
+known-first-party = ["afriend", "tests"]
 force-sort-within-sections = true
 combine-as-imports = true
 

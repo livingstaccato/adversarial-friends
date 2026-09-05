@@ -19,12 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import orchestrator
-from adversarial_friends.ids import format_claim_id
-from adversarial_friends.ledger import Alias, Claim, Verdict
-from adversarial_friends.merge import canonical_claims, next_claim_number
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.verdicts import judges_for
+from afriend import orchestrator
+from afriend.ids import format_claim_id
+from afriend.ledger import Alias, Claim, Verdict
+from afriend.merge import canonical_claims, next_claim_number
+from afriend.reviewstate import ReviewState
+from afriend.verdicts import judges_for
 
 
 def _claim(number: int, text: str = "a finding") -> Claim:
@@ -89,7 +89,7 @@ def test_a_dry_halted_round_advances_the_streak():
     always False -- so the streak `loop_position` had just restored was
     zeroed on every resume. `loop_should_terminate` needs two consecutive
     dry rounds, so a resumed loop could not converge at all."""
-    from adversarial_friends.commands.haltstate import resumed_streak
+    from afriend.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=True, halted_round_failed=False), 1) == 2
 
@@ -97,14 +97,14 @@ def test_a_dry_halted_round_advances_the_streak():
 def test_a_round_that_learned_something_resets_the_streak():
     """The other half. A streak that only ever advanced would terminate a
     loop that was still finding new claims."""
-    from adversarial_friends.commands.haltstate import resumed_streak
+    from afriend.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=False, halted_round_failed=False), 1) == 0
 
 
 def test_a_failed_halted_round_resets_the_streak():
     """§7.3: a round that did not complete is not evidence of convergence."""
-    from adversarial_friends.commands.haltstate import resumed_streak
+    from afriend.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(halted_round_dry=True, halted_round_failed=True), 1) == 0
 
@@ -114,14 +114,14 @@ def test_a_halt_with_no_recorded_dryness_is_treated_as_failed():
     and a run.json written by an older version has neither key. Assuming
     convergence there is the dangerous guess; assuming a failed round only
     costs an extra iteration."""
-    from adversarial_friends.commands.haltstate import resumed_streak
+    from afriend.commands.haltstate import resumed_streak
 
     assert resumed_streak(_args(), 1) == 0
 
 
 def test_carried_discard_signature_excludes_advisory_host_verdicts():
-    from adversarial_friends.commands.haltstate import carried_outcome
-    from adversarial_friends.verdicts import UNPROVEN, verdict_set_signature
+    from afriend.commands.haltstate import carried_outcome
+    from afriend.verdicts import UNPROVEN, verdict_set_signature
 
     claim = _claim(1)
     peer = Verdict(
@@ -188,8 +188,8 @@ def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):
     The rendered report is stubbed: what is under test is what reaches
     run.json, and building a meta complete enough for the renderer would
     make this a test of the renderer instead."""
-    from adversarial_friends.commands import haltstate
-    from adversarial_friends.runstore import RunStore
+    from afriend.commands import haltstate
+    from afriend.runstore import RunStore
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = RunStore(tmp_path, "run-x")
@@ -217,10 +217,10 @@ def test_write_halt_records_what_the_round_actually_did(monkeypatch, tmp_path):
 def test_write_halt_refuses_conflicting_snapshot_compatibility_keys(monkeypatch, tmp_path):
     """A halt must not silently choose between conflicting authoritative and
     compatibility identities."""
-    from adversarial_friends.commands import haltstate
-    from adversarial_friends.errors import UsageError
-    from adversarial_friends.runstore import RunStore
-    from adversarial_friends.snapshots import SnapshotIdentity
+    from afriend.commands import haltstate
+    from afriend.errors import UsageError
+    from afriend.runstore import RunStore
+    from afriend.snapshots import SnapshotIdentity
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = RunStore(tmp_path, "run-snapshot")
@@ -267,13 +267,13 @@ def test_a_consumed_response_is_renamed_so_a_second_resume_cannot_reapply_it(tmp
     path, where the defect is real. Renaming covers both -- and a resume
     that finds nothing left to apply beats the merge path's loud refusal.
     """
-    from adversarial_friends.commands.resume import (
+    from afriend.commands.resume import (
         CONSUMED_SUFFIX,
         PreparedResponse,
         _mark_response_consumed,
         _response_digest,
     )
-    from adversarial_friends.runstore import RunStore
+    from afriend.runstore import RunStore
 
     store = RunStore(tmp_path, "run-consume")
     round_dir = store.round_dir(1)
@@ -293,8 +293,8 @@ def test_a_consumed_response_is_renamed_so_a_second_resume_cannot_reapply_it(tmp
 def test_marking_a_missing_response_is_not_an_error(tmp_path):
     """Called on every resume, including modes that never wrote one. It must
     not turn a completed resume into a traceback."""
-    from adversarial_friends.commands.resume import PreparedResponse, _mark_response_consumed
-    from adversarial_friends.runstore import RunStore
+    from afriend.commands.resume import PreparedResponse, _mark_response_consumed
+    from afriend.runstore import RunStore
 
     store = RunStore(tmp_path, "run-missing-response")
     round_dir = store.round_dir(1)
@@ -304,12 +304,12 @@ def test_marking_a_missing_response_is_not_an_error(tmp_path):
 def test_the_consumed_copy_is_kept_rather_than_deleted(tmp_path):
     """It is the operator's own written judgment. A run directory that
     discards it cannot be audited afterwards."""
-    from adversarial_friends.commands.resume import (
+    from afriend.commands.resume import (
         PreparedResponse,
         _mark_response_consumed,
         _response_digest,
     )
-    from adversarial_friends.runstore import RunStore
+    from afriend.runstore import RunStore
 
     store = RunStore(tmp_path, "run-kept-response")
     round_dir = store.round_dir(1)
@@ -337,7 +337,7 @@ def test_the_resumed_judging_round_is_handed_the_prior_outcome(monkeypatch, tmp_
     The same call was also missing `tracker`, `keep`, `extra_args` and
     `pass_env`: one omission, five behaviours.
     """
-    from adversarial_friends.commands import resume as resume_mod
+    from afriend.commands import resume as resume_mod
 
     seen: dict[str, object] = {}
 
@@ -393,7 +393,7 @@ def test_the_resumed_judging_round_is_handed_the_prior_outcome(monkeypatch, tmp_
 
 
 def test_resume_excludes_every_transitive_origin_from_judging(monkeypatch, tmp_path):
-    from adversarial_friends.commands import resume as resume_mod
+    from afriend.commands import resume as resume_mod
 
     seen: dict[str, object] = {}
 
@@ -452,7 +452,7 @@ def test_resume_excludes_every_transitive_origin_from_judging(monkeypatch, tmp_p
 
 
 def _budget():
-    from adversarial_friends.ceilings import Budget
+    from afriend.ceilings import Budget
 
     return Budget(max_calls=100, max_wall_clock_s=3600.0, started=0.0)
 
@@ -463,8 +463,8 @@ def _budget():
 def test_a_malformed_clock_offset_is_a_usage_error_not_a_traceback(monkeypatch):
     """It was a bare `float(os.environ.get(...))` in the middle of cmd_run,
     so `AF_CLOCK_OFFSET_S=abc` came out as an unhandled ValueError."""
-    from adversarial_friends.commands.environment import CLOCK_OFFSET_VAR, clock_offset
-    from adversarial_friends.errors import UsageError
+    from afriend.commands.environment import CLOCK_OFFSET_VAR, clock_offset
+    from afriend.errors import UsageError
 
     monkeypatch.setenv(CLOCK_OFFSET_VAR, "abc")
     try:
@@ -479,7 +479,7 @@ def test_a_set_clock_offset_is_recorded_in_the_run(monkeypatch):
     """It shortens every wall-clock ceiling. An ambient value in CI made a
     run report budget-exhausted while the downgrade blamed --max-wall-clock,
     a ceiling the operator had set correctly."""
-    from adversarial_friends.commands.environment import CLOCK_OFFSET_VAR, clock_offset
+    from afriend.commands.environment import CLOCK_OFFSET_VAR, clock_offset
 
     monkeypatch.setenv(CLOCK_OFFSET_VAR, "3600")
     notes: list[str] = []
@@ -489,7 +489,7 @@ def test_a_set_clock_offset_is_recorded_in_the_run(monkeypatch):
 
 def test_an_unset_clock_offset_says_nothing(monkeypatch):
     """The normal case must stay silent, or every run carries a downgrade."""
-    from adversarial_friends.commands.environment import CLOCK_OFFSET_VAR, clock_offset
+    from afriend.commands.environment import CLOCK_OFFSET_VAR, clock_offset
 
     monkeypatch.delenv(CLOCK_OFFSET_VAR, raising=False)
     notes: list[str] = []
@@ -510,7 +510,7 @@ def test_run_json_is_never_left_half_written(tmp_path):
     the implementation: the temporary file must be a sibling that is not
     itself run.json, so no reader ever opens a partial one.
     """
-    from adversarial_friends.runstore import RunStore
+    from afriend.runstore import RunStore
 
     store = RunStore(tmp_path, "run-atomic")
     store.lock()
@@ -524,7 +524,7 @@ def test_run_json_is_never_left_half_written(tmp_path):
 
 
 def test_the_report_is_written_the_same_way(tmp_path):
-    from adversarial_friends.runstore import RunStore
+    from afriend.runstore import RunStore
 
     store = RunStore(tmp_path, "run-atomic-2")
     store.lock()

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from adversarial_friends import claimschema
+from afriend import claimschema
 
 
 def test_schema_file_is_written_and_is_valid_json(tmp_path):

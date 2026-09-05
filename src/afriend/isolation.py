@@ -28,7 +28,7 @@ NO_HOOKS = ["-c", "core.hooksPath=/dev/null"]
 # Deliberately not the operator's own identity: the object is internal, never
 # pushed, and depending on ambient git config made repo scope fail wherever
 # none was set.
-SNAPSHOT_IDENTITY_NAME = "adversarial-friends"
+SNAPSHOT_IDENTITY_NAME = "afriend"
 SNAPSHOT_IDENTITY_EMAIL = "af-snapshot@localhost"
 
 

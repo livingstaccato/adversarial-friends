@@ -8,8 +8,8 @@ import tempfile
 from e2e_helpers import AF, _env
 import pytest
 
-from adversarial_friends.errors import UsageError
-from adversarial_friends.runstore import RunStore
+from afriend.errors import UsageError
+from afriend.runstore import RunStore
 
 
 def _mode(path: Path) -> int:

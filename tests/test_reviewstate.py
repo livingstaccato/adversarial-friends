@@ -2,10 +2,10 @@ import dataclasses
 
 import pytest
 
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Alias, Claim, Resolution, Verdict
-from adversarial_friends.merge import canonical_claims
-from adversarial_friends.reviewstate import ReviewState
+from afriend.errors import UsageError
+from afriend.ledger import Alias, Claim, Resolution, Verdict
+from afriend.merge import canonical_claims
+from afriend.reviewstate import ReviewState
 
 
 def claim(cid: str, *, text: str = "claim", supersedes: str | None = None) -> Claim:

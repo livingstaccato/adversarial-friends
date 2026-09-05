@@ -252,7 +252,7 @@ cost of asking a human to adjudicate every merge.
 thing, checked in:
 
 ```toml
-# ~/.config/adversarial-friends/roster.toml
+# ~/.config/afriend/roster.toml
 [[friend]]
 name = "codex-ops"
 cli  = "codex"
@@ -274,9 +274,9 @@ repository is hostile input, and a roster decides who reviews your code:
 
 | Location | Picked up automatically? |
 |---|---|
-| `~/.config/adversarial-friends/roster.toml` | **Yes** — your own machine-wide config |
+| `~/.config/afriend/roster.toml` | **Yes** — your own machine-wide config |
 | Anywhere named with `--roster FILE` | Yes — naming it is your explicit act |
-| Repo-local `.adversarial-friends/` | **Never** |
+| Repo-local `.afriend/` | **Never** |
 
 A roster supplies *values only*, for `name`, `cli`, `lens`, `model`,
 `effort`, `scope` and `timeout`. There is no mechanism for a file to inject a

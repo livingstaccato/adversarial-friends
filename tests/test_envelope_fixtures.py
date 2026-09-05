@@ -37,10 +37,10 @@ constructed to reproduce the regression, not the envelope shape itself.
 
 from pathlib import Path
 
-from adversarial_friends import adapters, envelopes, normalize
+from afriend import adapters, envelopes, normalize
 
 REPO = Path(__file__).resolve().parents[1]
-ADAPTER_DIR = REPO / "src" / "adversarial_friends" / "assets" / "adapters"
+ADAPTER_DIR = REPO / "src" / "afriend" / "assets" / "adapters"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 

@@ -1,6 +1,6 @@
-from adversarial_friends.ledger import Alias, Claim
-from adversarial_friends.merge import canonical_claims, exact_merge
-from adversarial_friends.themes import classify_novel
+from afriend.ledger import Alias, Claim
+from afriend.merge import canonical_claims, exact_merge
+from afriend.themes import classify_novel
 
 
 def claim(cid, text, location="src/a.py:1", origin=None, failure="f"):

@@ -10,9 +10,9 @@ import json
 
 import pytest
 
-from adversarial_friends import orchestrator
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim
+from afriend import orchestrator
+from afriend.errors import UsageError
+from afriend.ledger import Claim
 
 
 def claim(cid, text="the guard is missing", origin=("codex/ops",)):

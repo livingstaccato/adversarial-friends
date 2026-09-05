@@ -1,6 +1,6 @@
 """The bounded, persisted zero-response review projection."""
 
-from adversarial_friends.reviewcompleteness import from_friends
+from afriend.reviewcompleteness import from_friends
 
 
 def test_zero_independent_answers_are_persisted_as_incomplete():

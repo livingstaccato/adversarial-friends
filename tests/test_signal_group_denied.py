@@ -27,7 +27,7 @@ import sys
 
 import pytest
 
-from adversarial_friends import procgroup
+from afriend import procgroup
 
 
 @pytest.fixture

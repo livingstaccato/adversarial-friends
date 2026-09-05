@@ -8,18 +8,18 @@ import sys
 from e2e_helpers import FAKE
 import pytest
 
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands import run as run_command, runmeta, status
-from adversarial_friends.commands.critique import CritiqueOutcome
-from adversarial_friends.commands.crossexam import CrossexamOutcome
-from adversarial_friends.commands.resume import ResumedRun, ResumedStep
-from adversarial_friends.errors import UsageError
-from adversarial_friends.failures import RepeatTracker
-from adversarial_friends.orchestrator import NeedsOrchestrator
-from adversarial_friends.outcomes import RunOutcome, terminal_outcome
-from adversarial_friends.progress import Progress
-from adversarial_friends.runstore import RunStore
+from afriend.ceilings import Budget
+from afriend.cliargs import build_parser
+from afriend.commands import run as run_command, runmeta, status
+from afriend.commands.critique import CritiqueOutcome
+from afriend.commands.crossexam import CrossexamOutcome
+from afriend.commands.resume import ResumedRun, ResumedStep
+from afriend.errors import UsageError
+from afriend.failures import RepeatTracker
+from afriend.orchestrator import NeedsOrchestrator
+from afriend.outcomes import RunOutcome, terminal_outcome
+from afriend.progress import Progress
+from afriend.runstore import RunStore
 
 
 def _outcome(**facts):

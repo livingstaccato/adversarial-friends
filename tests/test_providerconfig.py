@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import providerconfig
-from adversarial_friends.errors import UsageError
+from afriend import providerconfig
+from afriend.errors import UsageError
 
 
 def _disable_ollama(config_home: str, ready) -> None:
@@ -183,14 +183,14 @@ def test_config_path_honors_explicit_environment_mapping(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "ambient"))
     explicit = tmp_path / "explicit"
     assert providerconfig.config_path({"XDG_CONFIG_HOME": str(explicit)}) == (
-        explicit / "adversarial-friends" / "config.json"
+        explicit / "afriend" / "config.json"
     )
 
 
 def test_config_path_expands_tilde_in_xdg_config_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     assert providerconfig.config_path({"XDG_CONFIG_HOME": "~/custom-config"}) == (
-        tmp_path / "home" / "custom-config" / "adversarial-friends" / "config.json"
+        tmp_path / "home" / "custom-config" / "afriend" / "config.json"
     )
 
 
@@ -198,7 +198,7 @@ def test_relative_xdg_config_home_falls_back_to_user_config(monkeypatch, tmp_pat
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
     assert providerconfig.config_path({"XDG_CONFIG_HOME": ".repo-config"}) == (
-        tmp_path / "home" / ".config" / "adversarial-friends" / "config.json"
+        tmp_path / "home" / ".config" / "afriend" / "config.json"
     )
 
 
@@ -208,7 +208,7 @@ def test_config_path_falls_back_to_user_config_not_repository(monkeypatch, tmp_p
     (tmp_path / "home").mkdir()
     monkeypatch.chdir(tmp_path / "home")
     assert providerconfig.config_path() == (
-        tmp_path / "home" / ".config" / "adversarial-friends" / "config.json"
+        tmp_path / "home" / ".config" / "afriend" / "config.json"
     )
 
 

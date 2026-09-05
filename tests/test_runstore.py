@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import runstore as runstore_module
-from adversarial_friends.errors import UsageError
-from adversarial_friends.outcomes import MAX_JSON_NODES
-from adversarial_friends.runstore import RunStore
+from afriend import runstore as runstore_module
+from afriend.errors import UsageError
+from afriend.outcomes import MAX_JSON_NODES
+from afriend.runstore import RunStore
 
 
 def test_layout_is_created(tmp_path):

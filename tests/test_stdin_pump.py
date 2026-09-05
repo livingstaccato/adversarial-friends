@@ -17,7 +17,7 @@ import os
 import threading
 import time
 
-from adversarial_friends import procio
+from afriend import procio
 
 
 class _FakeProcess:

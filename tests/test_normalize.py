@@ -1,7 +1,7 @@
 import json
 
-from adversarial_friends import envelopes, normalize
-from adversarial_friends.envelopes import Envelope, EnvelopeRule, parse_envelope
+from afriend import envelopes, normalize
+from afriend.envelopes import Envelope, EnvelopeRule, parse_envelope
 
 GOOD = (
     '{"findings": [{"severity": "low", "claim": "c", "location": null, '

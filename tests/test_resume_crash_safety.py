@@ -31,18 +31,18 @@ import threading
 
 import pytest
 
-from adversarial_friends import isolation, orchestrator
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands import resume as resume_mod
-from adversarial_friends.commands.crossexam import CrossexamOutcome
-from adversarial_friends.commands.resume import resume_round_one
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ids import format_claim_id
-from adversarial_friends.ledger import Alias, Claim, Resolution, Verdict
-from adversarial_friends.merge import canonical_claims
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.snapshots import SnapshotIdentity
+from afriend import isolation, orchestrator
+from afriend.ceilings import Budget
+from afriend.commands import resume as resume_mod
+from afriend.commands.crossexam import CrossexamOutcome
+from afriend.commands.resume import resume_round_one
+from afriend.errors import UsageError
+from afriend.ids import format_claim_id
+from afriend.ledger import Alias, Claim, Resolution, Verdict
+from afriend.merge import canonical_claims
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
+from afriend.snapshots import SnapshotIdentity
 
 _FINDING = {
     "severity": "high",

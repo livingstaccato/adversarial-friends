@@ -2,8 +2,8 @@
 
 from report_helpers import meta
 
-from adversarial_friends.report import render as render_review
-from adversarial_friends.reviewstate import ReviewState
+from afriend.report import render as render_review
+from afriend.reviewstate import ReviewState
 
 
 def render(claims, aliases, run_meta):

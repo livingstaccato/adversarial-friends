@@ -15,9 +15,9 @@ from types import SimpleNamespace
 import pytest
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
-from adversarial_friends import verdicts
-from adversarial_friends.commands.crossexam import _prior_verdicts_by_claim
-from adversarial_friends.commands.runmeta import unresolved_loop_states
+from afriend import verdicts
+from afriend.commands.crossexam import _prior_verdicts_by_claim
+from afriend.commands.runmeta import unresolved_loop_states
 
 # --- §7.2 discard rule -----------------------------------------------------
 

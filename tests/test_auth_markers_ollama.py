@@ -7,11 +7,11 @@ answers 401/403, and those are specified by RFC 9110 rather than chosen by a
 vendor, which is why declaring them is not the kind of guess §14 forbids.
 """
 
-from adversarial_friends import failures
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.spawn import SpawnResult
+from afriend import failures
+from afriend.adapters import load_adapters
+from afriend.normalize import NormalizeResult
+from afriend.paths import ADAPTER_DIR
+from afriend.spawn import SpawnResult
 
 
 def _outcome(status: int | None, reason: str = "http error") -> SpawnResult:

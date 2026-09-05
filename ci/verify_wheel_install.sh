@@ -46,6 +46,6 @@ for adapter in agy claude codex ollama opencode; do
 done
 
 # The no-install entry point, which the README documents separately.
-(cd /tmp && "$venv/bin/python" -m adversarial_friends --help >/dev/null)
+(cd /tmp && "$venv/bin/python" -m afriend --help >/dev/null)
 
 echo "ok: installed wheel reports $reported and runs outside the checkout"

@@ -6,7 +6,7 @@ halves both need the same claim/verdict builders.
 
 import dataclasses
 
-from adversarial_friends.ledger import Claim, Verdict
+from afriend.ledger import Claim, Verdict
 
 ROSTER = ["codex-ops", "claude-security", "agy-assumptions"]
 

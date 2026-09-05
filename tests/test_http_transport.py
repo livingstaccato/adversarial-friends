@@ -18,7 +18,7 @@ from typing import ClassVar
 
 import pytest
 
-from adversarial_friends import adapters, http_transport
+from afriend import adapters, http_transport
 
 GOOD_PAYLOAD = {
     "findings": [
@@ -231,7 +231,7 @@ def test_capability_never_claims_readonly():
     flag was emitted and nothing was enforced. Claiming True would assert an
     enforcement that does not exist -- exactly the drift capability
     reporting exists to prevent."""
-    from adversarial_friends.authority import AuthorityDecision, ExternalToolPolicy
+    from afriend.authority import AuthorityDecision, ExternalToolPolicy
 
     adapter = _adapter("http://127.0.0.1:11434/api/generate")
     decision = AuthorityDecision(ExternalToolPolicy.DENY, "denied", (), ("request",))

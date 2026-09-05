@@ -1,8 +1,8 @@
 """Verdict rendering split out after the core suite hit the then-current line cap."""
 
-from adversarial_friends.ledger import Claim, Verdict
-from adversarial_friends.report import render
-from adversarial_friends.reviewstate import ReviewState
+from afriend.ledger import Claim, Verdict
+from afriend.report import render
+from afriend.reviewstate import ReviewState
 
 
 def test_report_shows_every_conflicting_amendment():

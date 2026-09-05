@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from adversarial_friends import childenv, isolation, rounds, secureio
-from adversarial_friends.ledger import Claim
-from adversarial_friends.runstore import RunStore
+from afriend import childenv, isolation, rounds, secureio
+from afriend.ledger import Claim
+from afriend.runstore import RunStore
 
 
 def _replace_with_symlink(path, target) -> None:

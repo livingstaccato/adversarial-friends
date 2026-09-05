@@ -8,15 +8,15 @@ import threading
 
 from e2e_helpers import AF, _env, run_af
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Capability, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.commands import critique as critique_mod
-from adversarial_friends.commands.critique import run_critique
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
+from afriend import rounds as rounds_mod
+from afriend.adapters import Capability, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.commands import critique as critique_mod
+from afriend.commands.critique import run_critique
+from afriend.normalize import NormalizeResult
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
 
 
 def _spec(name: str = "friend-ops-0", lens: str = "ops") -> FriendSpec:
@@ -145,8 +145,8 @@ def test_advisory_host_success_does_not_satisfy_participation_floor(monkeypatch,
 
 
 def test_require_friends_does_not_count_a_successful_advisory_host(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
+    from afriend import cli
+    from afriend.commands import friends as friends_module
 
     for name, value in _env().items():
         monkeypatch.setenv(name, value)

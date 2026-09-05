@@ -1,6 +1,6 @@
 @startuml gate-workflow
 ' The gate loop: run, resolve, re-check. Traced against
-' src/adversarial_friends/commands/run.py (cmd_run's gate branch),
+' src/afriend/commands/run.py (cmd_run's gate branch),
 ' commands/resolve.py, and resolutions.py.
 
 skinparam backgroundColor #FFFFFF

@@ -87,8 +87,8 @@ def test_release_build_verifies_both_distributions_and_installed_cli():
 
     assert "uv build --wheel --sdist" in build
     assert "twine==7.0.0 twine check --strict dist/*" in build
-    assert "adversarial_friends-${version}-py3-none-any.whl" in build
-    assert "adversarial_friends-${version}.tar.gz" in build
+    assert "afriend-${version}-py3-none-any.whl" in build
+    assert "afriend-${version}.tar.gz" in build
     assert "-name '*.whl'" in build
     assert "-name '*.tar.gz'" in build
     assert ' --version)" = "afriend ${version}"' in build
@@ -144,7 +144,7 @@ def test_every_action_is_pinned_to_a_full_commit_sha():
 
 def test_wheel_asset_verifier_ignores_stale_intermediate_assets():
     """A deleted asset in setuptools' build/lib must not leak into a wheel."""
-    stale_asset = ROOT / "build/lib/adversarial_friends/assets/SKILL.md"
+    stale_asset = ROOT / "build/lib/afriend/assets/SKILL.md"
     stale_asset.parent.mkdir(parents=True, exist_ok=True)
     stale_asset.write_text("stale legacy asset\n", encoding="utf-8")
 

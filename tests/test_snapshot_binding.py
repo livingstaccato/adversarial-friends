@@ -10,11 +10,11 @@ import sys
 from e2e_helpers import AF, _env, run_af
 import pytest
 
-from adversarial_friends import isolation, snapshots
-from adversarial_friends.commands.runmeta_migration import migrate_meta
-from adversarial_friends.errors import UsageError
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.snapshots import SnapshotIdentity, history_from_meta
+from afriend import isolation, snapshots
+from afriend.commands.runmeta_migration import migrate_meta
+from afriend.errors import UsageError
+from afriend.runstore import RunStore
+from afriend.snapshots import SnapshotIdentity, history_from_meta
 
 
 def _git(repo: Path, *args: str) -> str:

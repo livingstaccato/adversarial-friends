@@ -1,7 +1,7 @@
 import pytest
 
-from adversarial_friends import ids
-from adversarial_friends.errors import UsageError
+from afriend import ids
+from afriend.errors import UsageError
 
 
 def test_format_and_parse_roundtrip():

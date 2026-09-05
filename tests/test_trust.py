@@ -1,7 +1,7 @@
 import pytest
 
-from adversarial_friends import trust
-from adversarial_friends.errors import UsageError
+from afriend import trust
+from afriend.errors import UsageError
 
 
 def test_valid_entry_passes():

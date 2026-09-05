@@ -12,8 +12,8 @@ successors, §7.3 termination -- lives in test_verdicts_lifecycle.py.
 from test_merge import chained_alias_records
 from verdict_helpers import ROSTER, claim, in_round, verdict
 
-from adversarial_friends import adapters, verdicts
-from adversarial_friends.merge import canonical_claims
+from afriend import adapters, verdicts
+from afriend.merge import canonical_claims
 
 
 def test_originator_is_excluded_from_the_judges():

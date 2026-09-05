@@ -1,4 +1,4 @@
-from adversarial_friends.errors import AfError, CeilingError, NoFriendsError, UsageError
+from afriend.errors import AfError, CeilingError, NoFriendsError, UsageError
 
 
 def test_default_exit_code_is_1():

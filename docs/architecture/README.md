@@ -39,4 +39,4 @@ These are the things that broke in review and are easy to reintroduce:
 - **Don't put `<size:...>` tags in `cloud`/`database` labels.** The closing
   `</size>` leaks into the rendered label as literal text.
 - Keep diagrams accurate to the code, not to intent. Every step in
-  `run-flow.puml` is traceable to `src/adversarial_friends/commands/run.py`.
+  `run-flow.puml` is traceable to `src/afriend/commands/run.py`.

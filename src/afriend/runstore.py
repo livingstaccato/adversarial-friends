@@ -39,7 +39,7 @@ from .trust import contain_path
 
 def default_root() -> Path:
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
-    return Path(state) / "adversarial-friends" / "runs"
+    return Path(state) / "afriend" / "runs"
 
 
 class RunLocked(UsageError):

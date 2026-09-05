@@ -21,15 +21,13 @@ cli = "codex"
 lens = "ops"
 scope = "doc"
 """
-ADAPTER_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets" / "adapters"
-)
+ADAPTER_DIR = Path(__file__).resolve().parents[1] / "src" / "afriend" / "assets" / "adapters"
 
 
 def _selection_fixture(monkeypatch, *, enabled, executables=(), models=None):
-    from adversarial_friends import adapters
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import adapters
+    from afriend.commands import friends as friends_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = adapters.load_adapters(ADAPTER_DIR)
     configured_models = models or {}
@@ -75,7 +73,7 @@ def _roster(tmp_path, text=ROSTER):
 
 
 def test_a_roster_file_replaces_discovery(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -135,9 +133,9 @@ def test_a_roster_cannot_smuggle_arbitrary_flags(tmp_path):
 
 
 def test_a_repo_local_roster_is_not_picked_up_on_its_own(tmp_path, monkeypatch):
-    """§13: repo-local `.adversarial-friends/` is untrusted. A cloned repo
+    """§13: repo-local `.afriend/` is untrusted. A cloned repo
     must not be able to choose who reviews it."""
-    hostile = tmp_path / ".adversarial-friends"
+    hostile = tmp_path / ".afriend"
     hostile.mkdir()
     (hostile / "roster.toml").write_text(ROSTER)
     result = run_af(
@@ -154,10 +152,10 @@ def test_a_repo_local_roster_is_not_picked_up_on_its_own(tmp_path, monkeypatch):
 def test_the_user_config_roster_is_picked_up(monkeypatch, tmp_path):
     """The trusted half of §13: this is the operator's own machine-wide
     configuration, and using it is the point of writing one."""
-    config = tmp_path / "config" / "adversarial-friends"
+    config = tmp_path / "config" / "afriend"
     config.mkdir(parents=True)
     (config / "roster.toml").write_text(ROSTER)
-    from adversarial_friends.cliargs import build_parser
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -174,8 +172,8 @@ def test_the_user_config_roster_is_picked_up(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("automatic", [False, True], ids=["explicit", "user-config"])
 def test_roster_files_filter_disabled_providers_before_dispatch(monkeypatch, tmp_path, automatic):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.errors import NoFriendsError
+    from afriend.cliargs import build_parser
+    from afriend.errors import NoFriendsError
 
     registry, friends_module = _selection_fixture(
         monkeypatch,
@@ -183,7 +181,7 @@ def test_roster_files_filter_disabled_providers_before_dispatch(monkeypatch, tmp
     )
     if automatic:
         config = tmp_path / "config"
-        roster = config / "adversarial-friends" / "roster.toml"
+        roster = config / "afriend" / "roster.toml"
         roster.parent.mkdir(parents=True)
         roster.write_text(ROSTER)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
@@ -213,9 +211,9 @@ def test_roster_files_filter_disabled_providers_before_dispatch(monkeypatch, tmp
 
 
 def test_codex_host_roster_is_included_by_default_unless_excluded(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.errors import NoFriendsError
-    from adversarial_friends.readiness import HOST_ENV_MARKERS
+    from afriend.cliargs import build_parser
+    from afriend.errors import NoFriendsError
+    from afriend.readiness import HOST_ENV_MARKERS
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -240,7 +238,7 @@ def test_codex_host_roster_is_included_by_default_unless_excluded(monkeypatch, t
 
 
 def test_explicit_host_friend_is_marked_even_though_flags_bypass_discovery(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -256,8 +254,8 @@ def test_explicit_host_friend_is_marked_even_though_flags_bypass_discovery(monke
 
 
 def test_explicit_exclude_self_overrides_explicit_codex_friend(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.errors import NoFriendsError
+    from afriend.cliargs import build_parser
+    from afriend.errors import NoFriendsError
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -279,8 +277,8 @@ def test_explicit_exclude_self_overrides_explicit_codex_friend(monkeypatch, tmp_
 
 
 def test_non_codex_explicit_host_defaults_excluded_but_include_wins(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.errors import NoFriendsError
+    from afriend.cliargs import build_parser
+    from afriend.errors import NoFriendsError
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"claude"}, executables={"claude"}
@@ -301,10 +299,10 @@ def test_non_codex_explicit_host_defaults_excluded_but_include_wins(monkeypatch,
 
 
 def test_judging_mode_requires_two_independent_friends_beside_host(tmp_path):
-    from adversarial_friends.adapters import FriendSpec
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands.friends import roster_for_run
-    from adversarial_friends.errors import NoFriendsError
+    from afriend.adapters import FriendSpec
+    from afriend.cliargs import build_parser
+    from afriend.commands.friends import roster_for_run
+    from afriend.errors import NoFriendsError
 
     args = build_parser().parse_args(["run", str(_artifact(tmp_path)), "--mode", "crossexam"])
     args._resume_meta = {}
@@ -318,9 +316,9 @@ def test_judging_mode_requires_two_independent_friends_beside_host(tmp_path):
 
 
 def test_report_mode_allows_host_as_its_only_friend(tmp_path):
-    from adversarial_friends.adapters import FriendSpec
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands.friends import roster_for_run
+    from afriend.adapters import FriendSpec
+    from afriend.cliargs import build_parser
+    from afriend.commands.friends import roster_for_run
 
     args = build_parser().parse_args(["run", str(_artifact(tmp_path))])
     args._resume_meta = {}
@@ -336,8 +334,8 @@ def test_report_mode_allows_host_as_its_only_friend(tmp_path):
 def test_unready_roster_entries_do_not_consume_capacity_or_trigger_duplicate_probes(
     monkeypatch, tmp_path
 ):
-    from adversarial_friends import readiness as readiness_module
-    from adversarial_friends.cliargs import build_parser
+    from afriend import readiness as readiness_module
+    from afriend.cliargs import build_parser
 
     selected = {"codex", "ollama", "opencode"}
     registry, friends_module = _selection_fixture(
@@ -377,8 +375,8 @@ def test_unready_roster_entries_do_not_consume_capacity_or_trigger_duplicate_pro
 
 
 def test_roster_file_projects_configured_http_model(monkeypatch, tmp_path):
-    from adversarial_friends import readiness as readiness_module
-    from adversarial_friends.cliargs import build_parser
+    from afriend import readiness as readiness_module
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch,
@@ -430,10 +428,10 @@ def test_init_refuses_to_clobber_without_force(tmp_path):
 
 
 def test_init_does_not_probe_disabled_http_provider(monkeypatch, tmp_path):
-    from adversarial_friends import providerconfig, readiness as readiness_module
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.errors import NoFriendsError
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import providerconfig, readiness as readiness_module
+    from afriend.commands import init as init_module
+    from afriend.errors import NoFriendsError
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
     monkeypatch.setattr(
@@ -462,9 +460,9 @@ def test_init_does_not_probe_disabled_http_provider(monkeypatch, tmp_path):
 
 
 def test_init_uses_configured_http_model(monkeypatch, tmp_path):
-    from adversarial_friends import providerconfig, readiness as readiness_module
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import providerconfig, readiness as readiness_module
+    from afriend.commands import init as init_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
     monkeypatch.setattr(
@@ -494,9 +492,9 @@ def test_init_uses_configured_http_model(monkeypatch, tmp_path):
 
 
 def test_init_includes_detected_codex_host_provider_by_normal_default(monkeypatch, tmp_path):
-    from adversarial_friends import providerconfig, readiness as readiness_module
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import providerconfig, readiness as readiness_module
+    from afriend.commands import init as init_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
     monkeypatch.setattr(
@@ -524,10 +522,10 @@ def test_init_includes_detected_codex_host_provider_by_normal_default(monkeypatc
 
 
 def test_init_excludes_detected_non_codex_host_provider_by_normal_default(monkeypatch, tmp_path):
-    from adversarial_friends import providerconfig, readiness as readiness_module
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.errors import NoFriendsError
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import providerconfig, readiness as readiness_module
+    from afriend.commands import init as init_module
+    from afriend.errors import NoFriendsError
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
     monkeypatch.setattr(
@@ -556,8 +554,8 @@ def test_init_excludes_detected_non_codex_host_provider_by_normal_default(monkey
 
 
 def test_init_projects_only_eligible_canonical_readiness_states(monkeypatch, tmp_path):
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.readiness import FriendReadiness, ReadinessState
+    from afriend.commands import init as init_module
+    from afriend.readiness import FriendReadiness, ReadinessState
 
     rows = {
         "codex": FriendReadiness("codex", ReadinessState.READY, "available", "/bin/codex", None),
@@ -602,7 +600,7 @@ def test_a_roster_effort_beats_the_preset(monkeypatch, tmp_path):
         tmp_path,
         '[[friend]]\nname = "codex-ops"\ncli = "codex"\nlens = "ops"\neffort = "medium"\n',
     )
-    from adversarial_friends.cliargs import build_parser
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch, enabled={"codex"}, executables={"codex"}
@@ -627,7 +625,7 @@ def test_a_roster_effort_beats_the_preset(monkeypatch, tmp_path):
 
 
 def test_capacity_is_applied_before_discarded_friend_preset_diagnostics(monkeypatch, tmp_path):
-    from adversarial_friends.cliargs import build_parser
+    from afriend.cliargs import build_parser
 
     registry, friends_module = _selection_fixture(
         monkeypatch,
@@ -673,9 +671,9 @@ def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
     considered. Describing a mechanism that never runs is worse than saying
     nothing, in a file the operator is meant to read and trust.
     """
-    from adversarial_friends import providerconfig, readiness as readiness_module
-    from adversarial_friends.commands import init as init_module
-    from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
+    from afriend import providerconfig, readiness as readiness_module
+    from afriend.commands import init as init_module
+    from afriend.providerconfig import ProviderPolicy, ProviderSetting
 
     registry = init_module.load_adapters(init_module.ADAPTER_DIR)
     monkeypatch.setattr(
@@ -702,7 +700,7 @@ def test_init_does_not_claim_an_http_friend_is_sandboxed(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _verified_deny_probe(monkeypatch):
-    from adversarial_friends import readiness
+    from afriend import readiness
 
     monkeypatch.setattr(
         readiness,

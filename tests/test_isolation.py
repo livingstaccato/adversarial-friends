@@ -2,8 +2,8 @@ import subprocess
 
 import pytest
 
-from adversarial_friends import isolation
-from adversarial_friends.errors import AfError
+from afriend import isolation
+from afriend.errors import AfError
 
 
 @pytest.fixture

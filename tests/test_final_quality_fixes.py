@@ -8,16 +8,16 @@ import threading
 
 import pytest
 
-from adversarial_friends import orchestrator
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands import crossexam as crossexam_mod, resume as resume_mod
-from adversarial_friends.commands.critique import build_prompts
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim
-from adversarial_friends.report import _escape_block, _escape_cell
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
+from afriend import orchestrator
+from afriend.adapters import FriendSpec
+from afriend.ceilings import Budget
+from afriend.commands import crossexam as crossexam_mod, resume as resume_mod
+from afriend.commands.critique import build_prompts
+from afriend.errors import UsageError
+from afriend.ledger import Claim
+from afriend.report import _escape_block, _escape_cell
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
 
 
 def _args() -> argparse.Namespace:

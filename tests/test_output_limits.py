@@ -17,7 +17,7 @@ because a prefix can still parse.
 import json
 import sys
 
-from adversarial_friends import spawn
+from afriend import spawn
 
 
 def test_output_past_the_cap_fails_the_round_instead_of_growing(tmp_path):

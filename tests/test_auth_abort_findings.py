@@ -15,22 +15,22 @@ from dataclasses import replace
 from pathlib import Path
 import threading
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Adapter, AuthMarkers, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands import critique as critique_mod, crossexam as crossexam_mod
-from adversarial_friends.commands.critique import run_critique
-from adversarial_friends.commands.crossexam import run_rounds
-from adversarial_friends.commands.exits import decide_exit
-from adversarial_friends.failures import RepeatTracker
-from adversarial_friends.ids import format_claim_id
-from adversarial_friends.ledger import Claim
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.outcomes import terminal_outcome
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
+from afriend import rounds as rounds_mod
+from afriend.adapters import Adapter, AuthMarkers, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.ceilings import Budget
+from afriend.commands import critique as critique_mod, crossexam as crossexam_mod
+from afriend.commands.critique import run_critique
+from afriend.commands.crossexam import run_rounds
+from afriend.commands.exits import decide_exit
+from afriend.failures import RepeatTracker
+from afriend.ids import format_claim_id
+from afriend.ledger import Claim
+from afriend.normalize import NormalizeResult
+from afriend.outcomes import terminal_outcome
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
 
 AUTH_MESSAGE = "broken-friend: authentication required -- run 'brokencli login'."
 

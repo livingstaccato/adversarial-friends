@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from adversarial_friends import verdicts as vd
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim, Ledger, Verdict
-from adversarial_friends.reviewstate import ReviewState
+from afriend import verdicts as vd
+from afriend.errors import UsageError
+from afriend.ledger import Claim, Ledger, Verdict
+from afriend.reviewstate import ReviewState
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -215,8 +215,8 @@ def _make_second_loop_halt(meta: dict[str, object]) -> None:
 
 
 def test_legacy_host_roles_are_restored_from_frozen_host_and_audit_rows_follow(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
-    from adversarial_friends.report import render
+    from afriend.commands.runmeta import _restore_args
+    from afriend.report import render
 
     run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=True))
 
@@ -238,8 +238,8 @@ def test_legacy_host_roles_are_restored_from_frozen_host_and_audit_rows_follow(t
 
 
 def test_legacy_resume_leaves_profile_absent_without_reading_session_default(tmp_path, monkeypatch):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands import runmeta
+    from afriend.cliargs import build_parser
+    from afriend.commands import runmeta
 
     run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=True))
 
@@ -259,9 +259,9 @@ def test_legacy_resume_leaves_profile_absent_without_reading_session_default(tmp
 
 @pytest.mark.parametrize("mode", ["crossexam", "gate", "loop"])
 def test_legacy_frozen_host_cannot_satisfy_judging_admission(monkeypatch, tmp_path, mode):
-    from adversarial_friends.commands import friends as friends_module
-    from adversarial_friends.commands.runmeta import _restore_args
-    from adversarial_friends.errors import NoFriendsError
+    from afriend.commands import friends as friends_module
+    from afriend.commands.runmeta import _restore_args
+    from afriend.errors import NoFriendsError
 
     run_dir = _run_dir(tmp_path, _legacy_host_resume_meta(mode, frozen_host=True))
     restored = _restore_args(_resume_args(run_dir))
@@ -274,7 +274,7 @@ def test_legacy_frozen_host_cannot_satisfy_judging_admission(monkeypatch, tmp_pa
 @pytest.mark.parametrize("mode", ["crossexam", "gate", "loop"])
 @pytest.mark.parametrize("host_cli", ["codex", "agy"])
 def test_ambiguous_legacy_host_role_fails_closed_for_judging_resume(tmp_path, mode, host_cli):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_host_resume_meta(mode, frozen_host=False)
     meta["roster"][0]["cli"] = host_cli
@@ -285,7 +285,7 @@ def test_ambiguous_legacy_host_role_fails_closed_for_judging_resume(tmp_path, mo
 
 
 def test_saved_friend_audit_role_must_match_frozen_roster(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_host_resume_meta("report", frozen_host=True)
     meta["friends"][0].update({"independent": True, "host_self_review": False})
@@ -296,7 +296,7 @@ def test_saved_friend_audit_role_must_match_frozen_roster(tmp_path):
 
 
 def test_resumed_participation_floor_excludes_successful_legacy_host(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_host_resume_meta("report", frozen_host=True)
     meta["invocation"]["require_friends"] = 1
@@ -313,7 +313,7 @@ def test_resumed_participation_floor_excludes_successful_legacy_host(tmp_path):
 
 
 def test_known_legacy_host_verdict_is_reduced_out_of_carried_claim_state(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -362,7 +362,7 @@ def test_known_legacy_host_verdict_is_reduced_out_of_carried_claim_state(tmp_pat
 
 
 def test_known_legacy_host_failure_does_not_keep_run_incomplete(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -401,8 +401,8 @@ def test_known_legacy_host_failure_does_not_keep_run_incomplete(tmp_path):
 
 
 def test_known_legacy_loop_halt_recomputes_independent_state_and_streak_inputs(tmp_path):
-    from adversarial_friends.commands.haltstate import resumed_streak
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.haltstate import resumed_streak
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     meta.update(
@@ -453,7 +453,7 @@ def test_known_legacy_loop_halt_recomputes_independent_state_and_streak_inputs(t
 
 
 def test_legacy_host_only_amendment_successor_fails_closed(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -489,7 +489,7 @@ def test_legacy_host_only_amendment_successor_fails_closed(tmp_path):
 
 
 def test_legacy_independent_amendment_successor_is_authenticated(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -541,7 +541,7 @@ def test_legacy_independent_amendment_successor_is_authenticated(tmp_path):
 def test_legacy_loop_health_ignores_failed_host_when_independent_reviewers_succeed(
     tmp_path,
 ):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -562,8 +562,8 @@ def test_legacy_loop_health_ignores_failed_host_when_independent_reviewers_succe
 def test_legacy_loop_health_rejects_host_only_success_when_independents_are_skipped(
     tmp_path,
 ):
-    from adversarial_friends.commands.haltstate import resumed_streak
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.haltstate import resumed_streak
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -585,7 +585,7 @@ def test_legacy_loop_health_rejects_host_only_success_when_independents_are_skip
 
 
 def test_known_legacy_judging_fails_closed_without_durable_replay_evidence(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     meta = _legacy_judging_meta("loop")
     _make_second_loop_halt(meta)
@@ -603,8 +603,8 @@ def test_known_legacy_judging_fails_closed_without_durable_replay_evidence(tmp_p
 
 
 def test_ambiguous_legacy_report_labels_possible_host_role_unknown(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
-    from adversarial_friends.report import render
+    from afriend.commands.runmeta import _restore_args
+    from afriend.report import render
 
     run_dir = _run_dir(tmp_path, _legacy_host_resume_meta("report", frozen_host=False))
 

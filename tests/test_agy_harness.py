@@ -8,11 +8,11 @@ import sys
 
 from e2e_helpers import _safe_path_dir, run_af
 
-from adversarial_friends.adapters import load_adapters
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend.adapters import load_adapters
+from afriend.paths import ADAPTER_DIR
 
 REPO = Path(__file__).resolve().parents[1]
-ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+ASSETS = REPO / "src" / "afriend" / "assets"
 AGENT = ASSETS / "harnesses" / "agy" / "afriend-reviewer.md"
 MIRROR_AGENT = (
     REPO

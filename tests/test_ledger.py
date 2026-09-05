@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import (
+from afriend.errors import UsageError
+from afriend.ledger import (
     Alias,
     Claim,
     Ledger,

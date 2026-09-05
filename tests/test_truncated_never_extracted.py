@@ -14,9 +14,9 @@ makes it the worst place for a truncated buffer to arrive.
 
 import json
 
-from adversarial_friends.commands.critique import extraction_candidates
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.spawn import SpawnResult
+from afriend.commands.critique import extraction_candidates
+from afriend.normalize import NormalizeResult
+from afriend.spawn import SpawnResult
 
 PREFIX = json.dumps({"findings": [{"severity": "high", "claim": "half a thought"}]})[:-2]
 

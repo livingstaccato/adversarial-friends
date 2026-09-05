@@ -25,7 +25,7 @@ import subprocess
 
 import pytest
 
-from adversarial_friends import childenv, sandbox
+from afriend import childenv, sandbox
 
 _MECHANISM = sandbox.detect()
 _REAL = pytest.mark.skipif(
@@ -148,7 +148,7 @@ def test_dispatch_redirects_scratch_outside_the_working_directory(tmp_path):
     path with a confinable adapter and reads back the environment the child
     would have received.
     """
-    from adversarial_friends import adapters, dispatch
+    from afriend import adapters, dispatch
 
     workdir = tmp_path / "iso" / "unconfinable-ops-0"
     workdir.mkdir(parents=True)

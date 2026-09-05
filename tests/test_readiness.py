@@ -2,23 +2,21 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends import adapters, workspaceassets
-from adversarial_friends.adapters import Adapter
-from adversarial_friends.authority import AuthorityPolicy
-from adversarial_friends.errors import UsageError
-from adversarial_friends.providerconfig import ProviderPolicy, ProviderSetting
-from adversarial_friends.readiness import (
+from afriend import adapters, workspaceassets
+from afriend.adapters import Adapter
+from afriend.authority import AuthorityPolicy
+from afriend.errors import UsageError
+from afriend.providerconfig import ProviderPolicy, ProviderSetting
+from afriend.readiness import (
     DenyProbeResult,
     FriendReadiness,
     ReadinessState,
     assess_all,
     detect_host,
 )
-from adversarial_friends.workspaceassets import WorkspaceAsset
+from afriend.workspaceassets import WorkspaceAsset
 
-ADAPTER_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "adversarial_friends" / "assets" / "adapters"
-)
+ADAPTER_DIR = Path(__file__).resolve().parents[1] / "src" / "afriend" / "assets" / "adapters"
 
 
 @pytest.fixture

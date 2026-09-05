@@ -9,11 +9,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from adversarial_friends import isolation
-from adversarial_friends.commands.environment import freeze_revision
-from adversarial_friends.errors import UsageError
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.snapshots import (
+from afriend import isolation
+from afriend.commands.environment import freeze_revision
+from afriend.errors import UsageError
+from afriend.runstore import RunStore
+from afriend.snapshots import (
     SnapshotIdentity,
     history_from_meta,
     record_snapshot,
@@ -265,7 +265,7 @@ def test_unusable_nested_snapshot_preserves_malformed_legacy_field_error(halted_
 )
 def test_invalid_commit_is_rejected_before_any_git_subprocess(monkeypatch, halted_run, commit):
     git = Mock(side_effect=AssertionError("git invoked"))
-    monkeypatch.setattr("adversarial_friends.snapshots.subprocess.run", git)
+    monkeypatch.setattr("afriend.snapshots.subprocess.run", git)
     with pytest.raises(UsageError, match="40 hexadecimal"):
         SnapshotIdentity.from_meta({**halted_run.meta, "snapshot_sha": commit}).verify(
             halted_run.frozen
@@ -275,7 +275,7 @@ def test_invalid_commit_is_rejected_before_any_git_subprocess(monkeypatch, halte
 
 def test_artifact_hash_mismatch_fails_before_git(monkeypatch, halted_run):
     git = Mock(side_effect=AssertionError("git invoked"))
-    monkeypatch.setattr("adversarial_friends.snapshots.subprocess.run", git)
+    monkeypatch.setattr("afriend.snapshots.subprocess.run", git)
     identity = SnapshotIdentity.from_meta(
         {**halted_run.meta, "artifact_hash": "sha256:" + "1" * 64}
     )
@@ -310,7 +310,7 @@ def test_repository_filesystem_error_is_translated(monkeypatch, halted_run):
 def test_git_launch_filesystem_error_is_translated(monkeypatch, halted_run):
     identity = SnapshotIdentity.from_meta(halted_run.meta)
     monkeypatch.setattr(
-        "adversarial_friends.snapshots.subprocess.run",
+        "afriend.snapshots.subprocess.run",
         Mock(side_effect=OSError("argument list too long")),
     )
     with pytest.raises(UsageError, match=r"saved snapshot.*unavailable.*argument list"):

@@ -24,7 +24,7 @@ def _detect_version() -> str:
     if (root / "pyproject.toml").is_file() and (root / "VERSION").is_file():
         return (root / "VERSION").read_text(encoding="utf-8").strip()
     try:
-        return _installed_version("adversarial-friends")
+        return _installed_version("afriend")
     except PackageNotFoundError:
         # Importable but neither installed nor in a checkout: say so rather
         # than reporting a version that was never built.

@@ -12,8 +12,8 @@ import subprocess
 
 import pytest
 
-from adversarial_friends import resolutions, verdicts
-from adversarial_friends.ledger import Claim, Resolution
+from afriend import resolutions, verdicts
+from afriend.ledger import Claim, Resolution
 
 
 def claim(cid="c-0001@1", advisory=False):

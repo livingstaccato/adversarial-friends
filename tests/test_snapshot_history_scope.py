@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends.errors import UsageError
-from adversarial_friends.snapshots import (
+from afriend.errors import UsageError
+from afriend.snapshots import (
     SnapshotIdentity,
     history_from_meta,
     validate_repository_scope,

@@ -8,7 +8,7 @@ one friend's prompt), and commands/run.py + commands/doctor.py (the two
 subcommands); this file is the thin entry point that ties them together.
 
 Several names below are re-exported (not just imported for local use) so
-that `adversarial_friends.cli.<name>` keeps resolving to the same names it
+that `afriend.cli.<name>` keeps resolving to the same names it
 always has -- both for external callers and for this project's own tests,
 several of which reach into cli.py's namespace directly (e.g.
 `cli.build_parser()`, `cli._dispatch(...)`, `cli.KILL_GRACE_S`).

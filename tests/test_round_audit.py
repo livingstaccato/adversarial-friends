@@ -6,26 +6,26 @@ import time
 
 import pytest
 
-from adversarial_friends import rounds as rounds_mod
-from adversarial_friends.adapters import Capability, FriendSpec
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.ceilings import KILL_GRACE_S, Budget
-from adversarial_friends.commands import critique as critique_mod, crossexam as crossexam_mod
-from adversarial_friends.commands.checkpoint import (
+from afriend import rounds as rounds_mod
+from afriend.adapters import Capability, FriendSpec
+from afriend.authority import ExternalToolPolicy
+from afriend.ceilings import KILL_GRACE_S, Budget
+from afriend.commands import critique as critique_mod, crossexam as crossexam_mod
+from afriend.commands.checkpoint import (
     legacy_successful_friend_ids,
     normalize_friend_rows,
 )
-from adversarial_friends.commands.critique import run_critique
-from adversarial_friends.commands.crossexam import run_rounds
-from adversarial_friends.dispatch import _stderr_tail
-from adversarial_friends.errors import UsageError
-from adversarial_friends.failures import RepeatTracker
-from adversarial_friends.ledger import Claim
-from adversarial_friends.normalize import NormalizeResult
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.rounds import persist_result
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import SpawnResult
+from afriend.commands.critique import run_critique
+from afriend.commands.crossexam import run_rounds
+from afriend.dispatch import _stderr_tail
+from afriend.errors import UsageError
+from afriend.failures import RepeatTracker
+from afriend.ledger import Claim
+from afriend.normalize import NormalizeResult
+from afriend.reviewstate import ReviewState
+from afriend.rounds import persist_result
+from afriend.runstore import RunStore
+from afriend.spawn import SpawnResult
 
 
 def _spec(name: str = "friend-ops-0", lens: str = "ops") -> FriendSpec:

@@ -13,8 +13,8 @@ sibling bug it was written to fix -- two verdicts from one judge rendering as
 two reviewers -- and never considered the recipient.
 """
 
-from adversarial_friends.commands import judging
-from adversarial_friends.ledger import Verdict
+from afriend.commands import judging
+from afriend.ledger import Verdict
 
 
 def _verdict(claim_id: str, judge: str, round_no: int, text: str) -> Verdict:

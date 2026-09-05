@@ -16,7 +16,7 @@ timeout rather than the real cause.
 import os
 import threading
 
-from adversarial_friends import procio
+from afriend import procio
 
 
 def _pump(stream, chunks, *, limit=1 << 20):

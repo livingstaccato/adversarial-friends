@@ -21,8 +21,8 @@ an earlier one. So position wins only where the source is ordered.
 
 import json
 
-from adversarial_friends.envelopes import Envelope, EnvelopeRule
-from adversarial_friends.normalize import normalize
+from afriend.envelopes import Envelope, EnvelopeRule
+from afriend.normalize import normalize
 
 FINDING = {
     "severity": "high",

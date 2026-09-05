@@ -7,9 +7,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from adversarial_friends import isolation
-from adversarial_friends.errors import UsageError
-from adversarial_friends.snapshots import SnapshotIdentity
+from afriend import isolation
+from afriend.errors import UsageError
+from afriend.snapshots import SnapshotIdentity
 
 
 def _git(repo: Path, *args: str) -> str:

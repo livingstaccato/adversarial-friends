@@ -137,8 +137,8 @@ def test_genuinely_new_theme_resets_a_prior_dry_streak(tmp_path):
 
 
 def test_advisory_host_novelty_cannot_block_independent_convergence(monkeypatch, tmp_path):
-    from adversarial_friends import cli
-    from adversarial_friends.commands import friends as friends_module
+    from afriend import cli
+    from afriend.commands import friends as friends_module
 
     for name, value in _env().items():
         monkeypatch.setenv(name, value)

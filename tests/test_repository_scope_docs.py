@@ -3,7 +3,7 @@
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-AFRIEND = REPO / "src" / "adversarial_friends" / "assets" / "entrypoints" / "afriend"
+AFRIEND = REPO / "src" / "afriend" / "assets" / "entrypoints" / "afriend"
 
 
 def test_operator_docs_explain_explicit_repository_review_context():

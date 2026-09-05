@@ -10,7 +10,7 @@ directory the sandbox exists to remove.
 
 from pathlib import Path
 
-from adversarial_friends import sandbox
+from afriend import sandbox
 
 
 def _tool(directory: Path, name: str = "tool") -> Path:

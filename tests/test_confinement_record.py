@@ -11,8 +11,8 @@ import dataclasses
 
 import pytest
 
-from adversarial_friends.adapters import Adapter, FriendSpec
-from adversarial_friends.commands.confinement import confinement_downgrades
+from afriend.adapters import Adapter, FriendSpec
+from afriend.commands.confinement import confinement_downgrades
 
 
 def _adapter(name, *, readonly=(), env_pass=()):
@@ -54,7 +54,7 @@ def test_a_variable_the_adapter_passes_is_not_reported_as_withheld(env, monkeypa
     keys in `pass`, dispatch hands all six to the child, and all six were
     reported withheld. The record asserted a protection that had not
     happened."""
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: "sandbox-exec")
     registry = {"opencode": _adapter("opencode", env_pass=("OPENAI_API_KEY",))}
     downgrades: list[str] = []
     withheld = confinement_downgrades(_args(), [_spec("opencode")], registry, downgrades)
@@ -68,7 +68,7 @@ def test_no_mechanism_means_no_filesystem_confinement_but_still_a_filtered_env(e
     passing an explicit `env`, not something the sandbox does, and reporting
     otherwise would understate the protection as badly as the original
     defect overstated it."""
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: None)
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: None)
     registry = {"opencode": _adapter("opencode")}
     downgrades: list[str] = []
     withheld = confinement_downgrades(_args(), [_spec("opencode")], registry, downgrades)
@@ -78,7 +78,7 @@ def test_no_mechanism_means_no_filesystem_confinement_but_still_a_filtered_env(e
 
 
 def test_explicit_unsandboxed_override_records_retained_read_authority(env, monkeypatch):
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: None)
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: None)
     registry = {"opencode": _adapter("opencode")}
     downgrades: list[str] = []
 
@@ -94,7 +94,7 @@ def test_explicit_unsandboxed_override_records_retained_read_authority(env, monk
 
 
 def test_override_with_available_confinement_records_no_unconfined_warning(env, monkeypatch):
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: "sandbox-exec")
     registry = {"opencode": _adapter("opencode")}
     downgrades: list[str] = []
 
@@ -110,7 +110,7 @@ def test_a_variable_only_one_adapter_receives_is_named_not_folded_in(env, monkey
     """Withheld means no executable friend got it. One that a single adapter's
     pass list lets through is reported separately rather than counted as
     kept back from everyone."""
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: "sandbox-exec")
     registry = {
         "opencode": _adapter("opencode", env_pass=("OPENAI_API_KEY",)),
         "other": _adapter("other"),
@@ -129,7 +129,7 @@ def test_a_self_confining_friend_still_has_its_environment_filtered(env, monkeyp
     CLI writing files and does nothing about what it reads out of its own
     environment. The two were gated on one condition, so codex, claude and
     agy inherited every exported secret while the run recorded nothing."""
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: "sandbox-exec")
     registry = {"codex": _adapter("codex", readonly=("--sandbox", "read-only"))}
     downgrades: list[str] = []
     withheld = confinement_downgrades(_args(), [_spec("codex")], registry, downgrades)
@@ -141,7 +141,7 @@ def test_a_self_confining_friend_still_has_its_environment_filtered(env, monkeyp
 def test_an_http_friend_has_no_child_environment_to_filter(env, monkeypatch):
     """ollama is reached over HTTP: there is no child process, so it cannot
     be named in a record about what a child was denied."""
-    monkeypatch.setattr("adversarial_friends.sandbox.detect", lambda *a, **k: "sandbox-exec")
+    monkeypatch.setattr("afriend.sandbox.detect", lambda *a, **k: "sandbox-exec")
     http = _adapter("ollama")
     registry = {"ollama": dataclasses.replace(http, transport="http")}
     downgrades: list[str] = []

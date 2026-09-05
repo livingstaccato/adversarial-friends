@@ -1,8 +1,8 @@
 import dataclasses
 import random
 
-from adversarial_friends.ledger import Alias, Claim, Record, Resolution, Verdict
-from adversarial_friends.reviewstate import ReviewState
+from afriend.ledger import Alias, Claim, Record, Resolution, Verdict
+from afriend.reviewstate import ReviewState
 
 
 def make_generated_claim(number: int, origin: list[str]) -> Claim:

@@ -1,4 +1,4 @@
-"""Read-only inspection of persisted Adversarial Friends runs."""
+"""Read-only inspection of persisted afriend runs."""
 
 import argparse
 import json
@@ -9,11 +9,11 @@ import sys
 from e2e_helpers import _git_commit, _git_repo
 import pytest
 
-from adversarial_friends import cli
-from adversarial_friends.commands import run as run_module, status
-from adversarial_friends.errors import UsageError
-from adversarial_friends.events import MAX_EVENT_LOG_BYTES, EventRecord, EventWriter
-from adversarial_friends.progress import Progress
+from afriend import cli
+from afriend.commands import run as run_module, status
+from afriend.errors import UsageError
+from afriend.events import MAX_EVENT_LOG_BYTES, EventRecord, EventWriter
+from afriend.progress import Progress
 
 
 def _args(run_id: str, *, out: Path | None = None, json_output: bool = False, watch: bool = False):

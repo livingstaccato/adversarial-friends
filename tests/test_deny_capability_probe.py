@@ -2,15 +2,15 @@ import dataclasses
 
 import pytest
 
-from adversarial_friends.adapters import FriendSpec, load_adapters
-from adversarial_friends.authority import DENY_ALL, AuthorityPolicy
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands import friends as friends_module
-from adversarial_friends.commands.friends import validate_resume_capabilities
-from adversarial_friends.errors import UsageError
-from adversarial_friends.paths import ADAPTER_DIR
-from adversarial_friends.providerconfig import ProviderPolicy
-from adversarial_friends.readiness import (
+from afriend.adapters import FriendSpec, load_adapters
+from afriend.authority import DENY_ALL, AuthorityPolicy
+from afriend.cliargs import build_parser
+from afriend.commands import friends as friends_module
+from afriend.commands.friends import validate_resume_capabilities
+from afriend.errors import UsageError
+from afriend.paths import ADAPTER_DIR
+from afriend.providerconfig import ProviderPolicy
+from afriend.readiness import (
     DenyProbeResult,
     ReadinessState,
     assess_all,
@@ -237,7 +237,7 @@ def test_resume_reprobes_frozen_provider_without_discovery_policy(registry, tmp_
 
 
 def test_resume_capability_validation_does_not_rediscover_current_host(monkeypatch, registry):
-    from adversarial_friends import readiness
+    from afriend import readiness
 
     def host_detection_is_forbidden(*_args, **_kwargs):
         raise AssertionError("resume capability validation rediscovered the current host")

@@ -8,8 +8,8 @@ import sys
 import threading
 import time
 
-from adversarial_friends import spawn
-from adversarial_friends.envelopes import Envelope
+from afriend import spawn
+from afriend.envelopes import Envelope
 
 JSON_PATH = Envelope(kind="json_path", path="response")
 NDJSON = Envelope(kind="ndjson")

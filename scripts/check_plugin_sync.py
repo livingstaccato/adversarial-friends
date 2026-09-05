@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify or safely materialize the composite Adversarial Friends plugin skills."""
+"""Verify or safely materialize the composite afriend plugin skills."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
-ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+ASSETS = REPO / "src" / "afriend" / "assets"
 PLUGIN_ROOT = REPO / "plugins" / "afriend"
 SKILLS = PLUGIN_ROOT / "skills"
 

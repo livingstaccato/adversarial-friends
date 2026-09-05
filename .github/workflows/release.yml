@@ -54,8 +54,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
-          wheel="dist/adversarial_friends-${version}-py3-none-any.whl"
-          sdist="dist/adversarial_friends-${version}.tar.gz"
+          wheel="dist/afriend-${version}-py3-none-any.whl"
+          sdist="dist/afriend-${version}.tar.gz"
           test -f "${wheel}"
           test -f "${sdist}"
           dist_count="$(find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) | wc -l | tr -d ' ')"
@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
-          wheel="dist/adversarial_friends-${version}-py3-none-any.whl"
+          wheel="dist/afriend-${version}-py3-none-any.whl"
           smoke_dir="$(mktemp -d)"
           trap 'rm -rf "${smoke_dir}"' EXIT
           for python_version in 3.11 3.12 3.13; do
@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/adversarial-friends
+      url: https://pypi.org/p/afriend
     permissions:
       id-token: write
     steps:
@@ -158,12 +158,12 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" \
-              --title "Adversarial Friends ${version}" \
+              --title "afriend ${version}" \
               --notes-file release-notes.md
             gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
           else
             gh release create "${GITHUB_REF_NAME}" dist/* \
               --verify-tag \
-              --title "Adversarial Friends ${version}" \
+              --title "afriend ${version}" \
               --notes-file release-notes.md
           fi

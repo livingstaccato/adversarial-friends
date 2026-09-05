@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands import setup
-from adversarial_friends.commands.runmeta import _restore_args
-from adversarial_friends.errors import UsageError
+from afriend.authority import ExternalToolPolicy
+from afriend.cliargs import build_parser
+from afriend.commands import setup
+from afriend.commands.runmeta import _restore_args
+from afriend.errors import UsageError
 
 
 def _write_resume_fixture(

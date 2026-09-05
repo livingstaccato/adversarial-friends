@@ -1,6 +1,6 @@
 ---
 name: afriend
-description: Use for /afriend, when the user directly selects this skill, explicit afriend requests, operative “ask/use a friend to …” requests, and explicit requests to use Adversarial Friends. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, architecture requests, or incidental mentions of a friend.
+description: Use for /afriend, when the user directly selects this skill, explicit afriend requests, or operative “ask/use a friend to …” requests. It is the sole router for review, status, configuration, and resolution; do not use for generic review, challenge, poke-holes, second-opinion, architecture requests, or incidental mentions of a friend.
 ---
 
 # /afriend router
@@ -17,9 +17,9 @@ they disagree are usually where the real problem is.
 
 `/afriend` is the short direct selector and the only router. Activate only for
 direct selection, command-like intent that starts with `afriend` or uses
-`afriend to ...`, an operative “ask/use a friend to …” request, or an explicit
-request to use **Adversarial Friends**. An incidental mention such as “a friend
-sent me this” does not activate this skill. Equivalent review forms include `afriend this plan`,
+`afriend to ...`, or an operative “ask/use a friend to …” request. An
+incidental mention such as “a friend sent me this” does not activate this
+skill. Equivalent review forms include `afriend this plan`,
 `afriend to this plan`, `afriend docs/design.md`, and `afriend to
 docs/design.md with crossexam`.
 
@@ -50,7 +50,8 @@ the artifact.
 
 Generic requests such as `review this`, `poke holes in this`, `give me a
 second opinion`, or architectural-decision language do not activate the skill
-when `afriend` and the full product name are absent. Those remain ordinary
+when `afriend` and an operative “ask/use a friend to …” request are absent.
+Those remain ordinary
 Codex work. Do not use this skill to generate a first review of code.
 
 ## Session preflight and feedback
@@ -87,7 +88,7 @@ afriend run <artifact> --mode loop        # repeat until nothing new appears
 ```
 
 This skill drives the `afriend` console script, which comes from the
-`adversarial-friends` Python package. If `afriend` is not on `PATH`, the
+`afriend` Python package. If `afriend` is not on `PATH`, the
 skill cannot run — install it with
 `uv tool install git+https://github.com/livingstaccato/adversarial-friends`
 (or `uv tool install .` from a checkout), then confirm with `afriend doctor`.
@@ -106,7 +107,7 @@ semantics.
 
 `quick` is the default built-in profile and keeps one report fan-out.
 `balanced` selects `crossexam`; `thorough` selects `loop`. The user can set a
-persistent default in `~/.config/adversarial-friends/session.json`, or select
+persistent default in `~/.config/afriend/session.json`, or select
 one task-only with `afriend run <artifact> --profile NAME`. An explicit
 `--mode` wins over the profile's mode, as do explicit safe run settings.
 
@@ -137,7 +138,7 @@ deliberately excluded from automatic Git-blob binding; use the explicit form
 when they need the named repository's code context.
 
 Every mode dispatches the artifact to every discovered friend in parallel and
-writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/`,
+writes a run directory (under `${XDG_STATE_HOME:-~/.local/state}/afriend/runs/`,
 or `--out DIR`) containing `events.jsonl`, `claims.jsonl`, `report.md`,
 `run.json`, a frozen `artifact/` copy, and per friend under `round-N/`:
 `<friend>.prompt` (exactly

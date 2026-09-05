@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
-ASSETS = REPO / "src" / "adversarial_friends" / "assets"
+ASSETS = REPO / "src" / "afriend" / "assets"
 ENTRYPOINTS = ASSETS / "entrypoints"
 SKILL_NAMES = {"afriend", "review", "status", "configure", "resolve"}
 PLUGIN_SKILLS = REPO / "plugins" / "afriend" / "skills"
@@ -58,7 +58,6 @@ def test_afriend_is_the_only_router_and_short_slash_selector():
     for trigger in (
         "explicit afriend",
         "ask/use a friend",
-        "adversarial friends",
         "directly selects",
     ):
         assert trigger in description, trigger
@@ -121,7 +120,7 @@ def test_status_and_resolve_explain_how_to_inspect_a_named_run():
     resolve = " ".join((ENTRYPOINTS / "resolve" / "SKILL.md").read_text().lower().split())
 
     for phrase in (
-        "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
+        "${xdg_state_home:-~/.local/state}/afriend/runs/<run-id>",
         "--out",
         "run.json",
         "claims.jsonl",
@@ -131,7 +130,7 @@ def test_status_and_resolve_explain_how_to_inspect_a_named_run():
     assert "or reads a report as lifecycle evidence" in status
 
     for phrase in (
-        "${xdg_state_home:-~/.local/state}/adversarial-friends/runs/<run-id>",
+        "${xdg_state_home:-~/.local/state}/afriend/runs/<run-id>",
         "--out",
         "report.md",
         "run.json",
@@ -183,7 +182,7 @@ def test_afriend_console_script_is_installed_and_runs():
 
 
 def test_lens_filenames_match_roster_expectations():
-    from adversarial_friends import cli as af_cli
+    from afriend import cli as af_cli
 
     names = {p.stem for p in (ASSETS / "lenses").glob("*.md")}
     assert names == set(af_cli.available_lenses())

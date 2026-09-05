@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from adversarial_friends.commands.resolve import _load_meta
-from adversarial_friends.errors import UsageError
-from adversarial_friends.jsonio import MAX_JSON_FILE_BYTES, load_json_object
-from adversarial_friends.outcomes import (
+from afriend.commands.resolve import _load_meta
+from afriend.errors import UsageError
+from afriend.jsonio import MAX_JSON_FILE_BYTES, load_json_object
+from afriend.outcomes import (
     MAX_JSON_SCALAR_BYTES,
     MAX_JSON_STRING_BYTES,
     json_node_count,

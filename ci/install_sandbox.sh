@@ -34,7 +34,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from adversarial_friends import sandbox
+from afriend import sandbox
 
 workdir = Path(tempfile.mkdtemp())
 policy = sandbox.policy_for(workdir, "true", ())

@@ -2,7 +2,7 @@
 
 import pytest
 
-from adversarial_friends.commands.runmeta import CURRENT_SCHEMA_VERSION, migrate_meta
+from afriend.commands.runmeta import CURRENT_SCHEMA_VERSION, migrate_meta
 
 
 @pytest.mark.parametrize("marker_field", ["repository_scope_audit", "downgrades"])

@@ -6,8 +6,8 @@ about itself.
 
 import dataclasses
 
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.ceilings import within_deadline
+from afriend.adapters import FriendSpec
+from afriend.ceilings import within_deadline
 
 
 def _spec(name: str, timeout: int = 600) -> FriendSpec:
@@ -34,14 +34,14 @@ def test_the_cap_reserves_the_kill_grace(**_):
     full extra minute, so a cap that ignored it made the wall-clock ceiling
     a ceiling only for friends that behaved: one hung friend overshot it by
     that minute plus the group escalation windows."""
-    from adversarial_friends.dispatch import KILL_GRACE_S
+    from afriend.dispatch import KILL_GRACE_S
 
     got = within_deadline([_spec("a", timeout=600)], 90.7)
     assert [s.timeout for s in got] == [90 - KILL_GRACE_S]
 
 
 def test_nothing_is_dispatched_when_only_the_grace_would_fit():
-    from adversarial_friends.dispatch import KILL_GRACE_S
+    from afriend.dispatch import KILL_GRACE_S
 
     assert within_deadline([_spec("a")], float(KILL_GRACE_S)) == []
 
@@ -67,7 +67,7 @@ def test_a_disabled_friend_is_announced_once_per_run_not_per_iteration(tmp_path)
     run. It now lives on the outcome, seeded from the previous block, exactly
     as `signatures` already was.
     """
-    from adversarial_friends.commands.crossexam import CrossexamOutcome
+    from afriend.commands.crossexam import CrossexamOutcome
 
     first = CrossexamOutcome()
     first.dropped.add("codex-ops-0")
@@ -78,7 +78,7 @@ def test_a_disabled_friend_is_announced_once_per_run_not_per_iteration(tmp_path)
 
 
 def test_the_outcome_carries_dropped_across_blocks():
-    from adversarial_friends.commands.crossexam import CrossexamOutcome
+    from afriend.commands.crossexam import CrossexamOutcome
 
     fresh = CrossexamOutcome()
     assert fresh.dropped == set()

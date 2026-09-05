@@ -8,7 +8,7 @@ dispositive verdict that never says whether the evidence was checked.
 
 import pytest
 
-from adversarial_friends import verdictschema
+from afriend import verdictschema
 
 
 def entry(**overrides):
@@ -184,7 +184,7 @@ def test_no_enum_anywhere_contains_null():
     unusable with every schema-enforcing friend and no test noticed, because
     they all used fakes (no schema) or ollama (schema=False).
     """
-    from adversarial_friends.claimschema import CLAIM_OUTPUT_SCHEMA
+    from afriend.claimschema import CLAIM_OUTPUT_SCHEMA
 
     def walk(node, path="$"):
         if isinstance(node, dict):
@@ -223,7 +223,7 @@ def test_both_schemas_are_strict_mode_safe():
     noticed, because every test used the fake friend (no schema) or ollama
     (schema=False). Verified by bisecting variants against the real CLI.
     """
-    from adversarial_friends.claimschema import CLAIM_OUTPUT_SCHEMA
+    from afriend.claimschema import CLAIM_OUTPUT_SCHEMA
 
     def walk(node, path):
         if not isinstance(node, dict):

@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from adversarial_friends import spawn
+from afriend import spawn
 
 FAKE = str(Path(__file__).resolve().parent / "fake_friend.py")
 
@@ -196,7 +196,7 @@ def test_missing_binary_returns_a_spawn_result_not_an_exception():
     FileNotFoundError straight out of Popen(). Task 12 calls this inside a
     thread pool, where an escaping exception would take down the whole
     dispatch instead of marking one friend failed."""
-    missing = "/usr/bin/nope-does-not-exist-adversarial-friends"
+    missing = "/usr/bin/nope-does-not-exist-afriend"
     result = spawn.run_process([missing, "--anything"], None, 5, Path.cwd())
     assert result.exit_code is None
     assert result.timed_out is False

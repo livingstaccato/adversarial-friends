@@ -17,14 +17,14 @@ import argparse
 import json
 import threading
 
-from adversarial_friends import orchestrator
-from adversarial_friends.ceilings import Budget
-from adversarial_friends.commands.haltstate import write_halt
-from adversarial_friends.commands.resume import resume_round_one
-from adversarial_friends.failures import RepeatTracker
-from adversarial_friends.reviewstate import ReviewState
-from adversarial_friends.runstore import RunStore
-from adversarial_friends.spawn import NormalizeResult, SpawnResult
+from afriend import orchestrator
+from afriend.ceilings import Budget
+from afriend.commands.haltstate import write_halt
+from afriend.commands.resume import resume_round_one
+from afriend.failures import RepeatTracker
+from afriend.reviewstate import ReviewState
+from afriend.runstore import RunStore
+from afriend.spawn import NormalizeResult, SpawnResult
 
 
 def _store(tmp_path, name):
@@ -79,7 +79,7 @@ def _resume(store, base_round, budget, resume_meta):
 
 
 def test_write_halt_records_the_budgets_true_spend(monkeypatch, tmp_path):
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-spend")
@@ -97,7 +97,7 @@ def test_write_halt_records_the_budgets_true_spend(monkeypatch, tmp_path):
 
 
 def test_write_halt_records_exact_checkpoint_counters_and_active_elapsed(monkeypatch, tmp_path):
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-counters")
@@ -144,7 +144,7 @@ def test_budget_composes_prior_active_elapsed_without_counting_inactive_wait():
 def test_write_halt_without_a_budget_omits_the_field(monkeypatch, tmp_path):
     """Backward compatible: existing callers that pass no budget must not
     write a field that claims a number nobody measured."""
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-no-budget")
@@ -188,7 +188,7 @@ def test_cumulative_spend_compounds_across_two_halts(monkeypatch, tmp_path):
     """The end-to-end shape: iteration 1 halts having spent 9, gets
     resumed and spends 5 more before iteration 2 halts -- the SECOND halt
     must persist 14, the running total, not 5."""
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-compound")
@@ -214,7 +214,7 @@ def test_cumulative_spend_compounds_across_two_halts(monkeypatch, tmp_path):
 
 
 def test_write_halt_persists_the_repeat_tracker(monkeypatch, tmp_path):
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-tracker")
@@ -242,7 +242,7 @@ def test_write_halt_persists_the_repeat_tracker(monkeypatch, tmp_path):
 
 
 def test_write_halt_without_a_tracker_omits_the_field(monkeypatch, tmp_path):
-    from adversarial_friends.commands import haltstate
+    from afriend.commands import haltstate
 
     monkeypatch.setattr(haltstate, "render", lambda *a, **k: "")
     store = _store(tmp_path, "run-halt-no-tracker")

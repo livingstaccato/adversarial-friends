@@ -1,4 +1,4 @@
-"""Migration coverage for run.json files written by adversarial-friends 0.2.0."""
+"""Migration coverage for run.json files written by afriend 0.2.0."""
 
 import copy
 import json
@@ -8,19 +8,19 @@ from types import SimpleNamespace
 import pytest
 from runmeta_helpers import _resume_args, _resume_meta, _run_dir, load_fixture
 
-from adversarial_friends.adapters import FriendSpec
-from adversarial_friends.authority import DENY_ALL
-from adversarial_friends.cliargs import build_parser
-from adversarial_friends.commands.runmeta import (
+from afriend.adapters import FriendSpec
+from afriend.authority import DENY_ALL
+from afriend.cliargs import build_parser
+from afriend.commands.runmeta import (
     CURRENT_SCHEMA_VERSION,
     _base_meta,
     _validated_roster_entries,
     migrate_meta,
     validate_run_args,
 )
-from adversarial_friends.errors import UsageError
-from adversarial_friends.ledger import Claim, Ledger
-from adversarial_friends.snapshots import SnapshotIdentity
+from afriend.errors import UsageError
+from afriend.ledger import Claim, Ledger
+from afriend.snapshots import SnapshotIdentity
 
 
 def test_v020_terminal_meta_is_readable_and_marks_unknowns():
@@ -298,7 +298,7 @@ def test_resume_keeps_the_saved_profile_without_reading_a_new_default(tmp_path, 
         max_rounds=3,
         model=None,
     )
-    monkeypatch.setattr("adversarial_friends.commands.runmeta._restore_args", lambda _args: saved)
+    monkeypatch.setattr("afriend.commands.runmeta._restore_args", lambda _args: saved)
 
     restored, _ = validate_run_args(SimpleNamespace(resume="saved-run"))
 
@@ -490,7 +490,7 @@ def _make_second_loop_halt(meta: dict[str, object]) -> None:
 def test_hostile_resume_shapes_are_rejected_before_namespace_construction(
     monkeypatch, tmp_path, field, value
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     meta[field] = value
@@ -529,7 +529,7 @@ def test_hostile_resume_shapes_are_rejected_before_namespace_construction(
 def test_saved_invocation_semantics_are_rejected_before_namespace(
     monkeypatch, tmp_path, changes, error
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     meta["invocation"].update(changes)
@@ -557,7 +557,7 @@ def test_saved_invocation_semantics_are_rejected_before_namespace(
 def test_saved_roster_semantics_are_rejected_before_friendspec(
     monkeypatch, tmp_path, field, value, error
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     meta["roster"][0][field] = value
@@ -573,7 +573,7 @@ def test_saved_roster_semantics_are_rejected_before_friendspec(
 
 @pytest.mark.parametrize("mode", ["report", "crossexam"])
 def test_saved_roster_uniqueness_is_checked_before_friendspec(monkeypatch, tmp_path, mode):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     first = meta["roster"][0]
@@ -610,7 +610,7 @@ def test_saved_roster_uniqueness_is_checked_before_friendspec(monkeypatch, tmp_p
 def test_checkpoint_numeric_semantics_are_rejected_before_namespace(
     monkeypatch, tmp_path, field, value
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     meta[field] = value
@@ -628,7 +628,7 @@ def test_checkpoint_numeric_semantics_are_rejected_before_namespace(
 def test_current_schema_requires_waiting_lifecycle_before_namespace(
     monkeypatch, tmp_path, lifecycle
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = migrate_meta(_resume_meta())
     if lifecycle is None:
@@ -649,7 +649,7 @@ def test_current_schema_requires_waiting_lifecycle_before_namespace(
 def test_legacy_resume_requires_a_valid_outstanding_request_before_namespace(
     monkeypatch, tmp_path, request_data
 ):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     run_dir = _run_dir(tmp_path, _resume_meta())
     request_path = run_dir / "round-1" / "REQUEST.json"
@@ -688,7 +688,7 @@ def test_legacy_resume_requires_a_valid_outstanding_request_before_namespace(
     ],
 )
 def test_snapshot_semantics_are_rejected_before_namespace(monkeypatch, tmp_path, snapshot):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = _resume_meta()
     meta["snapshot"] = snapshot
@@ -728,7 +728,7 @@ def test_migration_rejects_wide_metadata_without_mutating_input():
 
 
 def test_v020_security_grants_must_be_reacknowledged_by_the_current_cli(tmp_path):
-    from adversarial_friends.commands.runmeta import _restore_args
+    from afriend.commands.runmeta import _restore_args
 
     run_dir = _run_dir(tmp_path, load_fixture("run_meta_v020_halted.json"))
 
@@ -737,7 +737,7 @@ def test_v020_security_grants_must_be_reacknowledged_by_the_current_cli(tmp_path
 
 
 def test_sparse_legacy_snapshot_history_is_validated_before_namespace(monkeypatch, tmp_path):
-    from adversarial_friends.commands import runmeta
+    from afriend.commands import runmeta
 
     meta = {
         "invocation": {"artifact": "spec.md", "friend": []},

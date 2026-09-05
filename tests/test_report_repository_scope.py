@@ -3,8 +3,8 @@
 import pytest
 from report_helpers import meta
 
-from adversarial_friends.report import render
-from adversarial_friends.reviewstate import ReviewState
+from afriend.report import render
+from afriend.reviewstate import ReviewState
 
 _COMMIT = "a" * 40
 _TREE = "b" * 40

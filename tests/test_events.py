@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from adversarial_friends.commands.run import _validate_repository_scope_anchor
-from adversarial_friends.errors import UsageError
-from adversarial_friends.events import MAX_EVENT_BYTES, EventRecord, read_events
-from adversarial_friends.runstore import RunStore
+from afriend.commands.run import _validate_repository_scope_anchor
+from afriend.errors import UsageError
+from afriend.events import MAX_EVENT_BYTES, EventRecord, read_events
+from afriend.runstore import RunStore
 
 
 def test_event_records_reject_unsafe_payload_fields():

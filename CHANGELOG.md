@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0
+
+The package and product are now named `afriend`. The GitHub repository remains
+`livingstaccato/adversarial-friends` so existing source URLs stay stable.
+
+### Clean package identity
+
+- Published distribution: `afriend`.
+- Python import and source package: `afriend` in `src/afriend/`.
+- Console command, Codex plugin, Claude plugin, skills, configuration, and
+  runtime state: `afriend`.
+- Removed the old Python package identity rather than shipping a compatibility
+  alias; this is a deliberate clean cutover before external package adoption.
+
+### Release assurance
+
+- Updated wheel checks, isolated-install smoke tests, release artifact names,
+  current documentation, and architecture diagrams for the new package.
+- Retained the repository URLs and existing image asset filenames, which are
+  repository infrastructure rather than package identifiers.
+
 ## 0.5.1
 
 A compatibility hotfix for the Python versions Adversarial Friends declares

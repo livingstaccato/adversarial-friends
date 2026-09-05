@@ -1,7 +1,7 @@
 @startuml claim-lifecycle
 ' How independent findings become one corroborated claim.
-' Traced against src/adversarial_friends/merge.py (exact_merge) and
-' src/adversarial_friends/ledger.py.
+' Traced against src/afriend/merge.py (exact_merge) and
+' src/afriend/ledger.py.
 
 skinparam backgroundColor #FFFFFF
 skinparam defaultFontName "Helvetica"

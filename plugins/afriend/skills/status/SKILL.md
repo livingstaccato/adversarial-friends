@@ -23,7 +23,7 @@ afriend status <run-id-or-path> --json
 ```
 
 The default run root is
-`${XDG_STATE_HOME:-~/.local/state}/adversarial-friends/runs/<run-id>`; use
+`${XDG_STATE_HOME:-~/.local/state}/afriend/runs/<run-id>`; use
 `--out` for a run written elsewhere. Status reports lifecycle state, mode,
 scope, profile, per-friend completion/failure, current round, claims,
 downgrades, and a next action. `--watch` renders only new lifecycle events

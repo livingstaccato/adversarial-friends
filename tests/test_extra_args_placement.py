@@ -16,14 +16,14 @@ import tempfile
 
 import pytest
 
-from adversarial_friends.adapters import (
+from afriend.adapters import (
     FriendSpec,
     build_argv,
     load_adapters,
     place_extra_args,
 )
-from adversarial_friends.authority import ExternalToolPolicy
-from adversarial_friends.paths import ADAPTER_DIR
+from afriend.authority import ExternalToolPolicy
+from afriend.paths import ADAPTER_DIR
 
 EXTRA = ["-c", "model_reasoning_effort=high"]
 

@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from adversarial_friends import reviewprofiles, sessionconfig
-from adversarial_friends.cli import main
-from adversarial_friends.errors import UsageError
+from afriend import reviewprofiles, sessionconfig
+from afriend.cli import main
+from afriend.errors import UsageError
 
 
 def test_v1_session_config_is_loaded_as_no_custom_profiles(tmp_path, monkeypatch):
@@ -117,8 +117,8 @@ def test_profiles_list_prints_builtins_and_custom_inheritance(tmp_path, monkeypa
 
 
 def test_custom_profile_applies_defaults_without_overriding_explicit_flags(tmp_path, monkeypatch):
-    from adversarial_friends.cliargs import build_parser
-    from adversarial_friends.commands.runmeta import validate_run_args
+    from afriend.cliargs import build_parser
+    from afriend.commands.runmeta import validate_run_args
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     artifact = tmp_path / "spec.md"
@@ -134,7 +134,7 @@ def test_custom_profile_applies_defaults_without_overriding_explicit_flags(tmp_p
 
 
 def test_guided_setup_can_select_an_existing_custom_profile(tmp_path, monkeypatch):
-    from adversarial_friends.commands.init import cmd_init
+    from afriend.commands.init import cmd_init
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     sessionconfig.create_profile("ci", "quick", {"timeout": 60})
